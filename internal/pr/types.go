@@ -7,6 +7,7 @@ import "time"
 
 // Summary is the compact PR shape shown in the PR list.
 type Summary struct {
+	ID             string    `json:"id"` // GitHub GraphQL node ID
 	Number         int       `json:"number"`
 	Title          string    `json:"title"`
 	Author         User      `json:"author"`
@@ -15,6 +16,11 @@ type Summary struct {
 	ReviewDecision string    `json:"reviewDecision"`
 	HeadRefName    string    `json:"headRefName"`
 	UpdatedAt      time.Time `json:"updatedAt"`
+
+	// Conversation status is enriched in one GraphQL batch after the base list
+	// loads. Known distinguishes a resolved PR from a failed/unavailable lookup.
+	UnresolvedConversations int  `json:"-"`
+	ConversationsKnown      bool `json:"-"`
 
 	// Repo is "owner/name". A review queue spans repositories, so every
 	// subsequent call (view, diff, checks, comments) has to be told which one
@@ -25,26 +31,26 @@ type Summary struct {
 
 // Detail is the full PR shape shown in the detail view.
 type Detail struct {
-	Number           int       `json:"number"`
-	Title            string    `json:"title"`
-	Body             string    `json:"body"`
-	Author           User      `json:"author"`
-	State            string    `json:"state"`
-	IsDraft          bool      `json:"isDraft"`
-	BaseRefName      string    `json:"baseRefName"`
-	HeadRefName      string    `json:"headRefName"`
-	Additions        int       `json:"additions"`
-	Deletions        int       `json:"deletions"`
-	ChangedFiles     int       `json:"changedFiles"`
-	Mergeable        string    `json:"mergeable"`
-	MergeStateStatus string    `json:"mergeStateStatus"`
-	ReviewDecision   string    `json:"reviewDecision"`
-	Labels           []Label   `json:"labels"`
-	ReviewRequests   []User    `json:"reviewRequests"`
-	Reviews          []Review  `json:"reviews"`
-	Commits          []Commit  `json:"commits"`
+	Number           int        `json:"number"`
+	Title            string     `json:"title"`
+	Body             string     `json:"body"`
+	Author           User       `json:"author"`
+	State            string     `json:"state"`
+	IsDraft          bool       `json:"isDraft"`
+	BaseRefName      string     `json:"baseRefName"`
+	HeadRefName      string     `json:"headRefName"`
+	Additions        int        `json:"additions"`
+	Deletions        int        `json:"deletions"`
+	ChangedFiles     int        `json:"changedFiles"`
+	Mergeable        string     `json:"mergeable"`
+	MergeStateStatus string     `json:"mergeStateStatus"`
+	ReviewDecision   string     `json:"reviewDecision"`
+	Labels           []Label    `json:"labels"`
+	ReviewRequests   []User     `json:"reviewRequests"`
+	Reviews          []Review   `json:"reviews"`
+	Commits          []Commit   `json:"commits"`
 	Files            []FileStat `json:"files"`
-	URL              string    `json:"url"`
+	URL              string     `json:"url"`
 }
 
 // User is a GitHub user/bot.
@@ -65,12 +71,12 @@ type Label struct {
 
 // Review is a review-level metadata entry (no line positions).
 type Review struct {
-	ID                 string    `json:"id"`
-	Author             User      `json:"author"`
-	AuthorAssociation  string    `json:"authorAssociation"`
-	Body               string    `json:"body"`
-	State              string    `json:"state"` // APPROVED | COMMENTED | CHANGES_REQUESTED | PENDING | DISMISSED
-	SubmittedAt        time.Time `json:"submittedAt"`
+	ID                string    `json:"id"`
+	Author            User      `json:"author"`
+	AuthorAssociation string    `json:"authorAssociation"`
+	Body              string    `json:"body"`
+	State             string    `json:"state"` // APPROVED | COMMENTED | CHANGES_REQUESTED | PENDING | DISMISSED
+	SubmittedAt       time.Time `json:"submittedAt"`
 }
 
 // Commit is a PR commit entry.
@@ -102,16 +108,16 @@ type Check struct {
 
 // ReviewThread is an inline review thread with line-position data, fetched via GraphQL.
 type ReviewThread struct {
-	ID                 string          `json:"id"`
-	IsResolved         bool            `json:"isResolved"`
-	IsCollapsed        bool            `json:"isCollapsed"`
-	Path               string          `json:"path"`
-	Line               int             `json:"line"`
-	OriginalLine       int             `json:"originalLine"`
-	DiffSide           string          `json:"diffSide"` // "LEFT" | "RIGHT" — NOT "side"
-	StartLine          int             `json:"startLine"`
-	OriginalStartLine  int             `json:"originalStartLine"`
-	Comments           []ThreadComment `json:"comments"`
+	ID                string          `json:"id"`
+	IsResolved        bool            `json:"isResolved"`
+	IsCollapsed       bool            `json:"isCollapsed"`
+	Path              string          `json:"path"`
+	Line              int             `json:"line"`
+	OriginalLine      int             `json:"originalLine"`
+	DiffSide          string          `json:"diffSide"` // "LEFT" | "RIGHT" — NOT "side"
+	StartLine         int             `json:"startLine"`
+	OriginalStartLine int             `json:"originalStartLine"`
+	Comments          []ThreadComment `json:"comments"`
 }
 
 // ThreadComment is a single comment inside a review thread.

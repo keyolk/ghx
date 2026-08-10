@@ -25,7 +25,7 @@ func (c *Client) ListPRs(ctx context.Context, query string, limit int) ([]pr.Sum
 		args = append(args, "--search", leftover)
 	}
 	args = append(args,
-		"--json", "number,title,author,state,isDraft,reviewDecision,headRefName,updatedAt",
+		"--json", "id,number,title,author,state,isDraft,reviewDecision,headRefName,updatedAt",
 		"--limit", fmt.Sprintf("%d", limit),
 	)
 	var out []pr.Summary

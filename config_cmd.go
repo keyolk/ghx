@@ -92,6 +92,8 @@ const starterConfig = `# ghx configuration
 
 # PR list sources. Each becomes a tab; 1-9 jumps between them.
 sources:
+  - name: "My PRs"
+    query: "author:@me state:open"
   - name: "My reviews"
     query: "review-requested:@me state:open"
   - name: "Assigned"

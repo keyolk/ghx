@@ -36,7 +36,9 @@ func helpSections() []helpSection {
 			{"o", "open in browser (fold file, in the diff tab)"},
 		}},
 		{"PR actions", [][2]string{
-			{"a / x / L", "approve · close · labels — work on the selected list row too"},
+			{"space / A", "toggle row / all visible rows for multi-select"},
+			{"a / x", "approve · close/reopen selected PRs (asks first)"},
+			{"L", "edit labels on the focused row"},
 			{":checkout", "check the branch out locally"},
 			{":ready", "toggle ready-for-review"},
 			{":merge", "merge — blocked until :merge-unlock"},
@@ -49,9 +51,14 @@ func helpSections() []helpSection {
 			{"5 Commits", "commit list"},
 			{"6 Checks", "CI results; enter opens the log"},
 		}},
+		{"Filters & status", [][2]string{
+			{"M / A / C / U", "merged · approved · changes requested · unresolved"},
+			{"f", "filter by one or more PR statuses"},
+			{"/", "search text; combines with status filters"},
+			{"esc", "clear text, then status, then selection"},
+		}},
 		{"Other", [][2]string{
 			{"1-9", "source tab · * marks the repo you are in"},
-			{"/", "search the PR list"},
 			{":", "command palette"},
 			{"R", "refresh"},
 			{"?", "toggle this help"},

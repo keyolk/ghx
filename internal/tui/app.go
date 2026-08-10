@@ -59,8 +59,9 @@ type App struct {
 	// a keypress while scrolling cannot act on the wrong row.
 	confirm *confirmPrompt
 
-	// labels is the label picker overlay; nil when closed.
-	labels *labelPicker
+	// labels and statusFilter are modal list pickers; nil when closed.
+	labels       *labelPicker
+	statusFilter *statusFilterPicker
 
 	toast   string
 	toastAt time.Time
@@ -252,6 +253,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case bulkActionDoneMsg:
+		if a.list != nil {
+			for _, key := range msg.completed {
+				delete(a.list.selected, key)
+			}
+		}
+		if msg.err == nil {
+			a.setToast(msg.label)
+		} else if len(msg.completed) > 0 {
+			a.setToast(fmt.Sprintf("%s; some failed: %v", msg.label, msg.err))
+		} else {
+			return a, errCmd(msg.err)
+		}
+		if a.state == viewPRList && a.list != nil && len(msg.completed) > 0 {
+			return a, a.list.invalidateCachesAndRefresh()
+		}
+		return a, nil
+
 	case labelsLoadedMsg:
 		if a.labels == nil {
 			return a, nil
@@ -306,6 +325,9 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if a.confirm != nil {
 		return a.handleConfirmKey(msg)
 	}
+	if a.statusFilter != nil {
+		return a.handleStatusFilterKey(msg)
+	}
 	if a.labels != nil {
 		return a.handleLabelKey(msg)
 	}
@@ -341,6 +363,10 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 			a.search.open(a.list.query)
 		}
 		return nil
+	case "f":
+		if a.state == viewPRList {
+			return a.openStatusFilter()
+		}
 	case "q":
 		return tea.Quit
 	}
@@ -413,19 +439,38 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		return nil, false
 	}
 
+	switch key {
+	case "a":
+		targets, ok := a.actionTargets()
+		if !ok {
+			return errCmd(fmt.Errorf("no pull request selected")), true
+		}
+		return a.askConfirmTargets(confirmApprove, targets), true
+	case "x":
+		targets, ok := a.actionTargets()
+		if !ok {
+			return errCmd(fmt.Errorf("no pull request selected")), true
+		}
+		if a.state == viewPRList && a.list != nil && len(a.list.selected) > 0 {
+			kind := confirmClose
+			if len(targets) > 1 {
+				kind = confirmToggleState
+			} else if targets[0].state == "CLOSED" {
+				kind = confirmReopen
+			}
+			return a.askConfirmTargets(kind, targets), true
+		}
+		if targets[0].state == "CLOSED" {
+			return a.askConfirm(confirmReopen, targets[0]), true
+		}
+		return a.askConfirm(confirmClose, targets[0]), true
+	}
+
 	t, ok := a.currentTarget()
 	if !ok {
 		return errCmd(fmt.Errorf("no pull request selected")), true
 	}
-
 	switch key {
-	case "a":
-		return a.askConfirm(confirmApprove, t), true
-	case "x":
-		if t.state == "CLOSED" {
-			return a.askConfirm(confirmReopen, t), true
-		}
-		return a.askConfirm(confirmClose, t), true
 	case "L":
 		return a.openLabelPicker(t), true
 	case "r":

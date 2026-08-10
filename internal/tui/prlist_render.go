@@ -15,10 +15,12 @@ import (
 // misalign every column.
 
 // prListDelegate renders one row per PR straight to the writer.
-type prListDelegate struct{}
+type prListDelegate struct {
+	isSelected func(prSummary) bool
+}
 
-func (d prListDelegate) Height() int  { return 1 }
-func (d prListDelegate) Spacing() int { return 0 }
+func (d prListDelegate) Height() int                         { return 1 }
+func (d prListDelegate) Spacing() int                        { return 0 }
 func (d prListDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
 
 func (d prListDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
@@ -36,15 +38,22 @@ func (d prListDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 		repoW   = 18
 		authorW = 14
 		ageW    = 5 // "12mo" plus a digit of headroom
+		statusW = 7 // fixed "M A C U" status cell
 		// Past this a title is just whitespace; the leftover width is better
 		// spent as a gap than as a title column stretched across the terminal.
 		titleMaxW = 90
 	)
 	// The queue spans repositories, so the row has to say which one; without it
 	// two same-numbered PRs are indistinguishable.
-	fixed := numW + 1 + 1 + 1 + repoW + 1 + authorW + 1 + ageW
+	// Keep fixed cells for the multi-select mark and status flags so columns stay
+	// aligned as selections and PR states change.
+	fixed := 2 + numW + 1 + statusW + 1 + repoW + 1 + authorW + 1 + ageW
 	titleW := clamp(width-fixed, 10, titleMaxW)
 
+	mark := " "
+	if d.isSelected != nil && d.isSelected(p) {
+		mark = iconCheck
+	}
 	numCell := padCell("#"+itoa(p.Number), numW)
 	repoCell := padCell(fitCell(shortRepo(p.Repo), repoW), repoW)
 	titleCell := padCell(fitCell(p.Title, titleW), titleW)
@@ -56,7 +65,7 @@ func (d prListDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	// inside them, which is what made the selection nearly invisible: only the
 	// gaps between cells picked up the highlight.
 	if index == m.Index() {
-		plain := numCell + " " + reviewMark(p.ReviewDecision) + " " +
+		plain := mark + " " + numCell + " " + prStatusMark(p) + " " +
 			repoCell + " " + titleCell + " " + authorCell + " " + ageCell
 		plain, _ = truncateExact(plain, width)
 		if pad := width - lipglossWidth(plain); pad > 0 {
@@ -71,8 +80,12 @@ func (d prListDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 		titleStyle = prDraftStyle
 	}
 
-	row := prNumberStyle.Render(numCell) + " " +
-		reviewDot(p.ReviewDecision) + " " +
+	markCell := "  "
+	if mark != " " {
+		markCell = checkPassStyle.Render(mark) + " "
+	}
+	row := markCell + prNumberStyle.Render(numCell) + " " +
+		prStatusCell(p) + " " +
 		dimStyle.Render(repoCell) + " " +
 		titleStyle.Render(titleCell) + " " +
 		prAuthorStyle.Render(authorCell) + " " +
@@ -85,18 +98,51 @@ func (d prListDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	fmt.Fprint(w, row)
 }
 
-// reviewMark is the uncoloured form of reviewDot, for rows that get a theme
-// applied over the whole line.
-func reviewMark(decision string) string {
-	switch decision {
-	case "APPROVED":
-		return iconCheck
-	case "CHANGES_REQUESTED":
-		return iconFail
-	case "REVIEW_REQUIRED", "":
-		return iconPending
+// prStatusMark is the uncoloured fixed-width state cell used inside the cursor
+// row, where one theme is applied over the entire line.
+func prStatusMark(p prSummary) string {
+	flags := []struct {
+		status prStatus
+		mark   string
+	}{
+		{statusMerged, "M"},
+		{statusApproved, "A"},
+		{statusChangesRequested, "C"},
+		{statusUnresolved, "U"},
 	}
-	return "·"
+	parts := make([]string, 0, len(flags))
+	for _, flag := range flags {
+		if prHasStatus(p, flag.status) {
+			parts = append(parts, flag.mark)
+		} else {
+			parts = append(parts, "·")
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// prStatusCell styles each state independently while preserving the same seven
+// display cells as prStatusMark: Merged, Approved, Changes requested, Unresolved.
+func prStatusCell(p prSummary) string {
+	cell := []string{
+		dimStyle.Render("·"),
+		dimStyle.Render("·"),
+		dimStyle.Render("·"),
+		dimStyle.Render("·"),
+	}
+	if prHasStatus(p, statusMerged) {
+		cell[0] = prMergedStyle.Render("M")
+	}
+	if prHasStatus(p, statusApproved) {
+		cell[1] = prApprovedStyle.Render("A")
+	}
+	if prHasStatus(p, statusChangesRequested) {
+		cell[2] = prChangesStyle.Render("C")
+	}
+	if prHasStatus(p, statusUnresolved) {
+		cell[3] = prUnresolvedStyle.Render("U")
+	}
+	return strings.Join(cell, " ")
 }
 
 // shortRepo drops the owner prefix: within one org the owner repeats on every
@@ -165,4 +211,3 @@ func relTime(t time.Time) string {
 		return fmt.Sprintf("%dmo", int(d.Hours()/24/30))
 	}
 }
-

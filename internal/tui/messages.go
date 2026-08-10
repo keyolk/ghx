@@ -12,9 +12,11 @@ import (
 
 // prListMsg carries the result of fetching a source's PR list.
 type prListMsg struct {
-	sourceIdx int
-	prs       []prSummary
-	err       error
+	sourceIdx  int
+	generation uint64
+	prs        []prSummary
+	warning    error
+	err        error
 }
 
 // prListTickMsg fires the periodic background refresh of the current source.
@@ -105,6 +107,15 @@ type mergeResultMsg struct{ err error }
 type actionDoneMsg struct {
 	label string
 	err   error
+}
+
+// bulkActionDoneMsg reports a confirmed action across multiple selected PRs.
+// completed contains stable selection keys so successful targets can be cleared
+// while failures remain selected for inspection or retry.
+type bulkActionDoneMsg struct {
+	label     string
+	completed []string
+	err       error
 }
 
 // paletteRunMsg carries a submitted command line for app.go to dispatch.

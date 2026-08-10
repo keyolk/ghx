@@ -49,6 +49,9 @@ func (a *App) View() string {
 	if a.labels != nil {
 		content = overlayBody(content, a.renderLabelPicker(a.width, a.height), a.width, a.height)
 	}
+	if a.statusFilter != nil {
+		content = overlayBody(content, a.renderStatusFilter(a.width, a.height), a.width, a.height)
+	}
 	// The confirmation sits above everything else it can coexist with: it is the
 	// last thing between a keypress and an action that cannot be taken back.
 	if a.confirm != nil {
@@ -98,6 +101,10 @@ func (a *App) helpLine() string {
 	if a.labels != nil {
 		return truncateFooter(
 			fmtHints("sp", "toggle", "enter", "apply", "esc", "cancel"), a.width)
+	}
+	if a.statusFilter != nil {
+		return truncateFooter(
+			fmtHints("sp", "toggle", "enter", "apply", "c", "clear", "esc", "cancel"), a.width)
 	}
 	if a.mergePrompt != nil {
 		if a.mergePrompt.blocked {
@@ -163,4 +170,3 @@ func strategyChoice(cur string) string {
 	}
 	return strings.Join(parts, " ")
 }
-

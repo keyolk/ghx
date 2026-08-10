@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -317,5 +318,156 @@ func TestRequestChangesFromListCarriesPR(t *testing.T) {
 	if open.target.prNumber != 202 || open.target.repo != "acme/two" {
 		t.Errorf("composer target = #%d in %s, want #202 in acme/two",
 			open.target.prNumber, open.target.repo)
+	}
+}
+
+func TestListMultiSelectToggleAndClear(t *testing.T) {
+	a := testApp(t, sampleRows)
+
+	a.list.update(keyMsg("space"))
+	if len(a.list.selected) != 1 || !a.list.isSelected(sampleRows[0]) {
+		t.Fatalf("space selected %d rows, want only the first", len(a.list.selected))
+	}
+	a.list.list.Select(1)
+	a.list.update(keyMsg("space"))
+	if len(a.list.selected) != 2 || !a.list.isSelected(sampleRows[1]) {
+		t.Fatalf("second space selected %d rows, want both", len(a.list.selected))
+	}
+
+	a.list.update(keyMsg("esc"))
+	if len(a.list.selected) != 0 {
+		t.Errorf("esc left %d selections, want none", len(a.list.selected))
+	}
+}
+
+func TestListToggleAllVisible(t *testing.T) {
+	a := testApp(t, sampleRows)
+
+	a.list.update(keyMsg("A"))
+	if len(a.list.selected) != len(sampleRows) {
+		t.Fatalf("A selected %d rows, want %d", len(a.list.selected), len(sampleRows))
+	}
+	a.list.update(keyMsg("A"))
+	if len(a.list.selected) != 0 {
+		t.Errorf("second A left %d selections, want none", len(a.list.selected))
+	}
+}
+
+func TestBulkActionUsesExplicitCrossRepoSelection(t *testing.T) {
+	a := testApp(t, sampleRows)
+	a.list.update(keyMsg("A"))
+	a.list.list.Select(1)
+
+	cmd, handled := a.prActionKey(keyMsg("a"))
+	if !handled || cmd != nil {
+		t.Fatalf("bulk approve should only open confirmation; handled=%v cmd=%v", handled, cmd)
+	}
+	if a.confirm == nil || len(a.confirm.targets) != 2 {
+		t.Fatalf("confirmation has %d targets, want 2", len(a.confirm.targets))
+	}
+	if a.confirm.targets[0].repo != "acme/one" || a.confirm.targets[1].repo != "acme/two" {
+		t.Errorf("targets = %#v, want deterministic cross-repo order", a.confirm.targets)
+	}
+	out := a.renderConfirm(120, 24)
+	if !contains(out, "Approve 2 selected PRs") || !contains(out, "#101 in acme/one") || !contains(out, "#202 in acme/two") {
+		t.Errorf("bulk confirmation does not identify the selection: %s", out)
+	}
+}
+
+func TestSingleExplicitSelectionUsesBulkResultPath(t *testing.T) {
+	a := testApp(t, sampleRows)
+	a.list.update(keyMsg("space"))
+	a.prActionKey(keyMsg("a"))
+
+	if a.confirm == nil || !a.confirm.bulk || len(a.confirm.targets) != 1 {
+		t.Fatalf("single explicit selection must use bulk confirmation: %#v", a.confirm)
+	}
+}
+
+func TestBulkCloseUsesEachPRState(t *testing.T) {
+	rows := []pr.Summary{
+		{Number: 101, Repo: "acme/one", State: "OPEN"},
+		{Number: 202, Repo: "acme/two", State: "CLOSED"},
+	}
+	a := testApp(t, rows)
+	a.list.update(keyMsg("A"))
+	a.prActionKey(keyMsg("x"))
+
+	if a.confirm == nil || a.confirm.kind != confirmToggleState {
+		t.Fatalf("x confirmation kind = %v, want confirmToggleState", a.confirm.kind)
+	}
+	out := a.renderConfirm(120, 24)
+	if !contains(out, "Open PRs will close; closed PRs will reopen") {
+		t.Errorf("mixed-state confirmation must explain the action: %s", out)
+	}
+}
+
+func TestBulkResultClearsOnlyCompletedSelections(t *testing.T) {
+	a := testApp(t, sampleRows)
+	a.list.update(keyMsg("A"))
+	completed := selectionKey(sampleRows[0])
+
+	model, _ := a.Update(bulkActionDoneMsg{
+		label:     "approved 1 PR",
+		completed: []string{completed},
+		err:       fmt.Errorf("#202 failed"),
+	})
+	got := model.(*App)
+	if got.list.isSelected(sampleRows[0]) {
+		t.Error("completed PR stayed selected")
+	}
+	if !got.list.isSelected(sampleRows[1]) {
+		t.Error("failed PR should remain selected for retry")
+	}
+}
+
+func TestBulkResultInvalidatesAllSourceCaches(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Sources = []config.SourceDef{
+		{Name: "one", Query: "state:open", Repo: "acme/one"},
+		{Name: "two", Query: "state:open", Repo: "acme/two"},
+	}
+	a := NewApp(cfg, DefaultKeymap(), gh.NewClient(0))
+	a.list.caches[0] = []pr.Summary{sampleRows[0]}
+	a.list.caches[1] = []pr.Summary{sampleRows[1]}
+	a.list.syncListItems()
+	oldGenerations := append([]uint64(nil), a.list.generations...)
+
+	_, cmd := a.Update(bulkActionDoneMsg{
+		label:     "approved 1 PR",
+		completed: []string{selectionKey(sampleRows[0])},
+	})
+	if cmd == nil {
+		t.Fatal("bulk result should refresh the current source")
+	}
+	for i, cache := range a.list.caches {
+		if cache != nil {
+			t.Errorf("source %d cache was not invalidated", i)
+		}
+	}
+	if !a.list.loadings[0] {
+		t.Error("current source should begin reloading")
+	}
+	if a.list.loadings[1] {
+		t.Error("inactive source should wait until it is visited")
+	}
+	if a.list.generations[0] <= oldGenerations[0] || a.list.generations[1] <= oldGenerations[1] {
+		t.Errorf("generations = %v, want every source advanced past %v",
+			a.list.generations, oldGenerations)
+	}
+}
+
+func TestPRListIgnoresResponseFromInvalidatedGeneration(t *testing.T) {
+	a := testApp(t, sampleRows)
+	a.list.generations[0] = 7
+	a.list.caches[0] = nil
+
+	a.list.handlePRListMsg(prListMsg{
+		sourceIdx:  0,
+		generation: 6,
+		prs:        []pr.Summary{{Number: 999, Repo: "acme/stale"}},
+	})
+	if a.list.caches[0] != nil {
+		t.Errorf("stale response restored cache: %#v", a.list.caches[0])
 	}
 }

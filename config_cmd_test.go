@@ -17,8 +17,11 @@ func TestStarterConfigParses(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(starterConfig), &c); err != nil {
 		t.Fatalf("the starter config does not parse: %v", err)
 	}
-	if len(c.Sources) != 3 {
-		t.Errorf("sources = %d, want 3", len(c.Sources))
+	if len(c.Sources) != 4 {
+		t.Errorf("sources = %d, want 4", len(c.Sources))
+	}
+	if c.Sources[0].Name != "My PRs" || c.Sources[0].Query != "author:@me state:open" {
+		t.Errorf("first source = %#v, want My PRs with author:@me state:open", c.Sources[0])
 	}
 	if !c.RepoDetectionEnabled() {
 		t.Error("detect_repo should be on in the starter config")
@@ -44,8 +47,8 @@ func TestStarterConfigLoadsFromDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(got.Sources) != 3 {
-		t.Errorf("loaded %d sources, want 3", len(got.Sources))
+	if len(got.Sources) != 4 {
+		t.Errorf("loaded %d sources, want 4", len(got.Sources))
 	}
 	if _, statErr := os.Stat(p); statErr != nil {
 		t.Errorf("config was not written: %v", statErr)

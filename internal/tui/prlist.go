@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -33,15 +34,23 @@ type prListModel struct {
 	pane *SplitPane
 
 	// per-source cache so switching tabs is instant after the first load
-	caches   [][]pr.Summary
-	loadings []bool
+	caches      [][]pr.Summary
+	loadings    []bool
+	generations []uint64
 	// errs keeps the last failure per source so an empty pane can say why it is
 	// empty instead of implying the source has no PRs.
 	errs     []error
 	inFlight bool
 
-	// query filters the current source's rows client-side
-	query string
+	// query and statusFilters narrow the current source client-side. Statuses
+	// combine with OR, then intersect with the text query.
+	query         string
+	statusFilters map[prStatus]bool
+
+	// selected is keyed by owner/repo#number so cross-repo queues cannot collide.
+	// The summary value lets bulk actions retain their targets across tabs and
+	// filters; syncListItems refreshes it whenever newer row data arrives.
+	selected map[string]pr.Summary
 
 	missStreak int
 	stale      bool
@@ -73,16 +82,19 @@ func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km *Keymap, d
 		}
 	}
 	m := &prListModel{
-		cfg:          cfg,
-		client:       client,
-		km:           km,
-		sources:      sources,
-		detectedRepo: detectedRepo,
-		caches:       make([][]pr.Summary, len(sources)),
-		loadings:     make([]bool, len(sources)),
-		errs:         make([]error, len(sources)),
+		cfg:           cfg,
+		client:        client,
+		km:            km,
+		sources:       sources,
+		detectedRepo:  detectedRepo,
+		caches:        make([][]pr.Summary, len(sources)),
+		loadings:      make([]bool, len(sources)),
+		generations:   make([]uint64, len(sources)),
+		errs:          make([]error, len(sources)),
+		selected:      make(map[string]pr.Summary),
+		statusFilters: make(map[prStatus]bool),
 	}
-	l := list.New(nil, prListDelegate{}, 80, 20)
+	l := list.New(nil, prListDelegate{isSelected: m.isSelected}, 80, 20)
 	initListBase(&l)
 	configureListSearch(&l)
 	m.list = &l
@@ -110,6 +122,8 @@ func (m *prListModel) fetchSource(i int) tea.Cmd {
 	}
 	src := m.sources[i]
 	client := m.client
+	m.generations[i]++
+	generation := m.generations[i]
 	if src.Repo != "" {
 		scoped := client.WithRepo(src.Repo)
 		query, repo := src.Query, src.Repo
@@ -124,7 +138,11 @@ func (m *prListModel) fetchSource(i int) tea.Cmd {
 					prs[j].Repo = repo
 				}
 			}
-			return prListMsg{sourceIdx: i, prs: prs, err: err}
+			var warning error
+			if err == nil {
+				prs, warning = scoped.EnrichPRStatuses(c, prs)
+			}
+			return prListMsg{sourceIdx: i, generation: generation, prs: prs, warning: warning, err: err}
 		}
 	}
 	query := src.Query
@@ -132,7 +150,11 @@ func (m *prListModel) fetchSource(i int) tea.Cmd {
 		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		prs, err := client.SearchPRs(c, query, 50)
-		return prListMsg{sourceIdx: i, prs: prs, err: err}
+		var warning error
+		if err == nil {
+			prs, warning = client.EnrichPRStatuses(c, prs)
+		}
+		return prListMsg{sourceIdx: i, generation: generation, prs: prs, warning: warning, err: err}
 	}
 }
 
@@ -140,6 +162,20 @@ func (m *prListModel) fetchSource(i int) tea.Cmd {
 func (m *prListModel) refreshCurrent() tea.Cmd {
 	m.loadings[m.curTab] = true
 	return m.fetchSource(m.curTab)
+}
+
+// invalidateCachesAndRefresh drops every source after a bulk action because one
+// PR can appear in several queues. Only the visible source reloads immediately;
+// the others reload on their next visit.
+func (m *prListModel) invalidateCachesAndRefresh() tea.Cmd {
+	for i := range m.sources {
+		m.generations[i]++
+		m.caches[i] = nil
+		m.loadings[i] = false
+		m.errs[i] = nil
+	}
+	m.syncListItems()
+	return m.refreshCurrent()
 }
 
 func (m *prListModel) loading() bool {
@@ -161,6 +197,11 @@ func (m *prListModel) setSpinnerFrame(f int) { m.spinner = f }
 
 func (m *prListModel) handlePRListMsg(msg prListMsg) tea.Cmd {
 	if msg.sourceIdx < 0 || msg.sourceIdx >= len(m.sources) {
+		return nil
+	}
+	// A bulk action invalidates every source. Responses started before that point
+	// must not restore stale rows after the changed PRs have been refreshed.
+	if msg.generation != m.generations[msg.sourceIdx] {
 		return nil
 	}
 	m.loadings[msg.sourceIdx] = false
@@ -185,6 +226,11 @@ func (m *prListModel) handlePRListMsg(msg prListMsg) tea.Cmd {
 	m.caches[msg.sourceIdx] = msg.prs
 	if msg.sourceIdx == m.curTab {
 		m.syncListItems()
+	}
+	if msg.warning != nil {
+		return func() tea.Msg {
+			return toastMsg{text: "PR status warning: " + msg.warning.Error()}
+		}
 	}
 	return nil
 }
@@ -234,12 +280,79 @@ func (m *prListModel) selectTab(i int) tea.Cmd {
 	return nil
 }
 
+// selectionKey is stable across sources and unique in cross-repo queues.
+func selectionKey(p pr.Summary) string {
+	return fmt.Sprintf("%s#%d", strings.ToLower(p.Repo), p.Number)
+}
+
+func (m *prListModel) isSelected(p pr.Summary) bool {
+	_, ok := m.selected[selectionKey(p)]
+	return ok
+}
+
+func (m *prListModel) toggleSelected() bool {
+	item, ok := m.selectedItem()
+	if !ok {
+		return false
+	}
+	key := selectionKey(item.pr)
+	if _, exists := m.selected[key]; exists {
+		delete(m.selected, key)
+		return false
+	}
+	m.selected[key] = item.pr
+	return true
+}
+
+func (m *prListModel) toggleAllVisible() {
+	items := m.list.VisibleItems()
+	allSelected := len(items) > 0
+	for _, item := range items {
+		row, ok := item.(prListItem)
+		if ok && !m.isSelected(row.pr) {
+			allSelected = false
+			break
+		}
+	}
+	for _, item := range items {
+		row, ok := item.(prListItem)
+		if !ok {
+			continue
+		}
+		key := selectionKey(row.pr)
+		if allSelected {
+			delete(m.selected, key)
+		} else {
+			m.selected[key] = row.pr
+		}
+	}
+}
+
+func (m *prListModel) clearSelected() { clear(m.selected) }
+
+func (m *prListModel) selectedSummaries() []pr.Summary {
+	out := make([]pr.Summary, 0, len(m.selected))
+	for _, summary := range m.selected {
+		out = append(out, summary)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Repo != out[j].Repo {
+			return out[i].Repo < out[j].Repo
+		}
+		return out[i].Number < out[j].Number
+	})
+	return out
+}
+
 // syncListItems pushes the current source's rows (filtered) into the list.
 func (m *prListModel) syncListItems() {
 	src := m.caches[m.curTab]
 	items := make([]list.Item, 0, len(src))
 	for _, p := range src {
-		if !matchesQuery(p, m.query) {
+		if _, ok := m.selected[selectionKey(p)]; ok {
+			m.selected[selectionKey(p)] = p
+		}
+		if !matchesQuery(p, m.query) || !matchesStatusFilters(p, m.statusFilters) {
 			continue
 		}
 		items = append(items, prListItem{pr: p})
@@ -284,6 +397,12 @@ func (m *prListModel) update(msg tea.KeyMsg) tea.Cmd {
 	switch key {
 	case "enter":
 		return func() tea.Msg { return openDetailMsg{} }
+	case " ":
+		m.toggleSelected()
+		return nil
+	case "A":
+		m.toggleAllVisible()
+		return nil
 	case "R":
 		return m.refreshCurrent()
 	case "tab":
@@ -299,9 +418,14 @@ func (m *prListModel) update(msg tea.KeyMsg) tea.Cmd {
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		return m.selectTab(int(key[0] - '1'))
 	case "esc":
-		// Esc clears an active filter before doing anything else.
+		// Clear one narrowing layer at a time before dropping multi-selection.
 		if m.query != "" {
 			m.applyQuery("")
+		} else if len(m.statusFilters) > 0 {
+			clear(m.statusFilters)
+			m.syncListItems()
+		} else if len(m.selected) > 0 {
+			m.clearSelected()
 		}
 		return nil
 	}
@@ -345,10 +469,22 @@ func (m *prListModel) title() string {
 	s := m.sources[m.curTab].Name
 	n := len(m.list.VisibleItems())
 	total := len(m.caches[m.curTab])
-	if m.query != "" {
-		return fmt.Sprintf("%s · %d/%d matching %q", s, n, total, m.query)
+	selected := ""
+	if count := len(m.selected); count > 0 {
+		selected = fmt.Sprintf(" · %d selected", count)
 	}
-	return fmt.Sprintf("%s · %d", s, n)
+	filtered := m.query != "" || len(m.statusFilters) > 0
+	if filtered {
+		parts := make([]string, 0, 2)
+		if m.query != "" {
+			parts = append(parts, fmt.Sprintf("text %q", m.query))
+		}
+		if labels := activeStatusLabels(m.statusFilters); len(labels) > 0 {
+			parts = append(parts, "status "+strings.Join(labels, " | "))
+		}
+		return fmt.Sprintf("%s · %d/%d · %s%s", s, n, total, strings.Join(parts, " · "), selected)
+	}
+	return fmt.Sprintf("%s · %d%s", s, n, selected)
 }
 
 func (m *prListModel) view(w, h int) string {
@@ -367,8 +503,15 @@ func (m *prListModel) view(w, h int) string {
 			body = errorStyle.Render("Could not load this source:") + "\n  " +
 				dimStyle.Render(m.errs[m.curTab].Error()) + "\n\n" +
 				dimStyle.Render("R retries.")
-		case m.query != "":
-			body = dimStyle.Render(fmt.Sprintf("No PRs match %q — esc clears the filter.", m.query))
+		case m.query != "" || len(m.statusFilters) > 0:
+			var filters []string
+			if m.query != "" {
+				filters = append(filters, fmt.Sprintf("text %q", m.query))
+			}
+			if labels := activeStatusLabels(m.statusFilters); len(labels) > 0 {
+				filters = append(filters, "status "+strings.Join(labels, " | "))
+			}
+			body = dimStyle.Render("No PRs match " + strings.Join(filters, " and ") + " — esc clears one filter.")
 		default:
 			body = dimStyle.Render("No PRs in this source.")
 		}
@@ -441,10 +584,21 @@ func (m *prListModel) renderPreview() {
 	}
 	b.WriteString(field("State", state))
 	b.WriteString(field("Review", reviewDecisionLabel(p.ReviewDecision)))
+	b.WriteString(field("Conversations", conversationStatusLabel(p)))
 	b.WriteString(field("Branch", p.HeadRefName))
 	b.WriteString(field("Updated", relTime(p.UpdatedAt)+" ago"))
 	b.WriteString("\n" + dimStyle.Render("enter opens the full PR"))
 	m.pane.SetPreviewContent(b.String(), m.width, m.height-1, m.cfg.DiffSplitRatio)
+}
+
+func conversationStatusLabel(p prSummary) string {
+	if !p.ConversationsKnown {
+		return dimStyle.Render("unknown")
+	}
+	if p.UnresolvedConversations == 0 {
+		return checkPassStyle.Render("resolved")
+	}
+	return prUnresolvedStyle.Render(fmt.Sprintf("%d unresolved", p.UnresolvedConversations))
 }
 
 func reviewDecisionLabel(d string) string {
@@ -463,13 +617,16 @@ func reviewDecisionLabel(d string) string {
 
 func (m *prListModel) helpLine() string {
 	return fmtHints(
+		" ", "select",
+		"A", "all",
 		"enter", "open",
 		"a", "approve",
 		"x", "close",
 		"L", "labels",
 		"r", "request",
 		"o", "browser",
-		"/", "filter",
+		"f", "status",
+		"/", "search",
 		":", "palette",
 		"?", "help",
 	)

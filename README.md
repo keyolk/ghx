@@ -6,7 +6,7 @@ for data and actions.
 
 ```
 ghx  platform-tools · 50
-[1 platform-tools*(50)] 2 My reviews(50)  3 Assigned
+[1 platform-tools*(50)] 2 My PRs(12)  3 My reviews(50)  4 Assigned
 #898    ✓ platform-tools     [CPLAT-10365] Add first/last and five-page jump controls to the pager
 #897    ● platform-tools     [CPLAT-10365] Bump Makefile default image tag to v0.0.191
 #854    ● platform-tools     Bump brace-expansion from 5.0.6 to 5.0.8 in /drongo/web/frontend
@@ -24,8 +24,15 @@ Requires [`gh`][gh] installed and authenticated.
 
 ## Features
 
-- **PR list** — source tabs (My reviews, Assigned, configured repos), repo
-  detection from cwd/tmux, client-side filtering, live polling
+- **PR list** — source tabs (My PRs, My reviews, Assigned, configured repos),
+  repo detection from cwd/tmux, client-side filtering, live polling
+- **PR status** — compact `M/A/C/U` markers for merged, approved, changes
+  requested, and unresolved conversations
+- **Status filters** — `f` selects one or more statuses (OR); combines with `/`
+  text search using AND. Filters stay within the current source query, so merged
+  PRs require a source that includes merged results (`state:all`/`state:merged`)
+- **Multi-select** — `space` toggles a PR and `A` toggles all visible PRs;
+  approve or close/reopen the selected set with one confirmation
 - **Diff viewer** — unified and side-by-side (`s` to toggle), tab-aware column
   alignment, comment line wrapping, file folding, syntax highlighting
 - **Inline comments** — `c` on a diff line, `v` for visual range selection,
@@ -45,6 +52,8 @@ Requires [`gh`][gh] installed and authenticated.
 
 ```yaml
 sources:
+  - name: "My PRs"
+    query: "author:@me state:open"
   - name: "My reviews"
     query: "review-requested:@me state:open"
   - name: "Assigned"
@@ -67,7 +76,11 @@ Press `?` inside the TUI for the full list. Highlights:
 | Key | Action |
 |-----|--------|
 | `enter` | open PR |
-| `a` / `x` / `L` | approve · close · labels (from list too) |
+| `space` / `A` | toggle current PR / all visible PRs for multi-select |
+| `a` / `x` | approve / close or reopen selected PRs (from list) |
+| `L` | edit labels on the focused PR |
+| `f` | choose merged / approved / changes requested / unresolved filters |
+| `/` | text search (AND with active status filters) |
 | `c` | comment on diff line |
 | `v` | visual range for multi-line comment |
 | `s` | toggle unified / side-by-side diff |

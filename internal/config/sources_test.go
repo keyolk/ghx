@@ -17,6 +17,19 @@ func names(sources []SourceDef) string {
 	return strings.Join(out, ",")
 }
 
+func TestDefaultConfigIncludesMyPRsFirst(t *testing.T) {
+	sources := DefaultConfig().Sources
+	if len(sources) == 0 {
+		t.Fatal("default sources are empty")
+	}
+	if sources[0].Name != "My PRs" {
+		t.Errorf("first default source = %q, want My PRs", sources[0].Name)
+	}
+	if sources[0].Query != "author:@me state:open" {
+		t.Errorf("My PRs query = %q, want author:@me state:open", sources[0].Query)
+	}
+}
+
 func TestEffectiveSourcesPutsDetectedRepoFirst(t *testing.T) {
 	c := &Config{Sources: []SourceDef{
 		{Name: "My reviews", Query: "review-requested:@me state:open"},
@@ -131,9 +144,9 @@ func TestEffectiveSourcesDoesNotMutateConfig(t *testing.T) {
 func TestShortRepoName(t *testing.T) {
 	cases := map[string]string{
 		"keyolk/ghx": "ghx",
-		"o/n":                     "n",
-		"no-slash":                "no-slash",
-		"":                        "",
+		"o/n":        "n",
+		"no-slash":   "no-slash",
+		"":           "",
 	}
 	for in, want := range cases {
 		if got := shortRepoName(in); got != want {
@@ -177,5 +190,44 @@ func TestLoadMergeKeepsExplicitFalse(t *testing.T) {
 	merge(dst, &Config{DetectRepo: &off})
 	if dst.RepoDetectionEnabled() {
 		t.Error("an explicit detect_repo: false was lost when merging over defaults")
+	}
+}
+
+func TestMergeAddsMyPRsToLegacyDefaultSources(t *testing.T) {
+	dst := DefaultConfig()
+	merge(dst, &Config{Sources: []SourceDef{
+		{Name: "My reviews", Query: "review-requested:@me state:open"},
+		{Name: "Assigned", Query: "assignee:@me state:open"},
+		{Name: "platform", Query: "state:open", Repo: "keyolk/ghx"},
+	}})
+
+	if names(dst.Sources) != "My PRs,My reviews,Assigned,platform" {
+		t.Errorf("sources = %q, want legacy defaults prefixed with My PRs", names(dst.Sources))
+	}
+	if dst.Sources[0].Query != "author:@me state:open" {
+		t.Errorf("My PRs query = %q, want author:@me state:open", dst.Sources[0].Query)
+	}
+}
+
+func TestMergeDoesNotChangeCustomSources(t *testing.T) {
+	custom := []SourceDef{{Name: "Security", Query: "team-review-requested:acme/security state:open"}}
+	dst := DefaultConfig()
+	merge(dst, &Config{Sources: custom})
+
+	if names(dst.Sources) != "Security" {
+		t.Errorf("sources = %q, want custom sources unchanged", names(dst.Sources))
+	}
+}
+
+func TestMergeDoesNotDuplicateExistingMyPRs(t *testing.T) {
+	dst := DefaultConfig()
+	merge(dst, &Config{Sources: []SourceDef{
+		{Name: "Authored", Query: "author:@me state:open"},
+		{Name: "My reviews", Query: "review-requested:@me state:open"},
+		{Name: "Assigned", Query: "assignee:@me state:open"},
+	}})
+
+	if names(dst.Sources) != "Authored,My reviews,Assigned" {
+		t.Errorf("sources = %q, want existing authored source unchanged", names(dst.Sources))
 	}
 }

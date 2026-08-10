@@ -31,13 +31,14 @@ func parseGitHubTime(s string) (time.Time, error) {
 
 // searchResult mirrors `gh search prs --json` output.
 type searchResult struct {
-	Number     int    `json:"number"`
-	Title      string `json:"title"`
-	State      string `json:"state"`
-	IsDraft    bool   `json:"isDraft"`
-	URL        string `json:"url"`
-	UpdatedAt  string `json:"updatedAt"`
-	Author     struct {
+	ID        string `json:"id"`
+	Number    int    `json:"number"`
+	Title     string `json:"title"`
+	State     string `json:"state"`
+	IsDraft   bool   `json:"isDraft"`
+	URL       string `json:"url"`
+	UpdatedAt string `json:"updatedAt"`
+	Author    struct {
 		Login string `json:"login"`
 		Name  string `json:"name"`
 		IsBot bool   `json:"is_bot"`
@@ -63,7 +64,7 @@ func (c *Client) SearchPRs(ctx context.Context, query string, limit int) ([]pr.S
 	args = append(args, searchQueryArgs(query)...)
 	args = append(args,
 		"--limit", strconv.Itoa(limit),
-		"--json", "number,title,state,isDraft,url,updatedAt,author,repository,labels",
+		"--json", "id,number,title,state,isDraft,url,updatedAt,author,repository,labels",
 	)
 	raw, err := c.execRaw(ctx, args...)
 	if err != nil {
@@ -76,6 +77,7 @@ func (c *Client) SearchPRs(ctx context.Context, query string, limit int) ([]pr.S
 	out := make([]pr.Summary, 0, len(results))
 	for _, r := range results {
 		s := pr.Summary{
+			ID:          r.ID,
 			Number:      r.Number,
 			Title:       r.Title,
 			State:       strings.ToUpper(r.State),

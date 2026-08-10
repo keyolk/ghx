@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -18,14 +20,18 @@ import (
 
 // actionTarget identifies the PR an action applies to.
 type actionTarget struct {
-	number int
-	repo   string // "owner/name"
-	title  string // for confirmation text; not used in requests
+	number  int
+	repo    string // "owner/name"
+	title   string // for confirmation text; not used in requests
 	isDraft bool
-	state  string // OPEN | CLOSED | MERGED
+	state   string // OPEN | CLOSED | MERGED
 }
 
 func (t actionTarget) valid() bool { return t.number > 0 }
+
+func (t actionTarget) key() string {
+	return fmt.Sprintf("%s#%d", strings.ToLower(t.repo), t.number)
+}
 
 // label renders the target for a prompt, e.g. `#842 in keyolk/ghx`.
 func (t actionTarget) label() string {
@@ -59,14 +65,35 @@ func (a *App) currentTarget() (actionTarget, bool) {
 	}
 	if a.list != nil {
 		if item, ok := a.list.selectedItem(); ok {
-			p := item.pr
-			return actionTarget{
-				number: p.Number, repo: p.Repo, title: p.Title,
-				isDraft: p.IsDraft, state: p.State,
-			}, true
+			return targetFromSummary(item.pr), true
 		}
 	}
 	return actionTarget{}, false
+}
+
+func targetFromSummary(p prSummary) actionTarget {
+	return actionTarget{
+		number: p.Number, repo: p.Repo, title: p.Title,
+		isDraft: p.IsDraft, state: p.State,
+	}
+}
+
+// actionTargets returns the explicit multi-selection in list view, falling back
+// to the focused PR when nothing is marked or a detail view is open.
+func (a *App) actionTargets() ([]actionTarget, bool) {
+	if a.state == viewPRList && a.list != nil && len(a.list.selected) > 0 {
+		summaries := a.list.selectedSummaries()
+		targets := make([]actionTarget, 0, len(summaries))
+		for _, summary := range summaries {
+			targets = append(targets, targetFromSummary(summary))
+		}
+		return targets, true
+	}
+	target, ok := a.currentTarget()
+	if !ok {
+		return nil, false
+	}
+	return []actionTarget{target}, true
 }
 
 // --- confirmation ---
@@ -80,22 +107,38 @@ const (
 	confirmApprove
 	confirmClose
 	confirmReopen
+	confirmToggleState
 	confirmReady
 )
 
-// confirmPrompt gates an action behind a yes/no. In the list a stray keypress
-// while scrolling would otherwise approve or close whichever PR happened to be
-// selected, which is not something the user can take back.
+// confirmPrompt gates an action behind a yes/no. target preserves the focused
+// PR for the single-item UI; targets carries the full multi-selection.
 type confirmPrompt struct {
-	kind   confirmKind
-	target actionTarget
+	kind    confirmKind
+	target  actionTarget
+	targets []actionTarget
+	bulk    bool
 }
 
 func (a *App) askConfirm(kind confirmKind, t actionTarget) tea.Cmd {
 	if !t.valid() {
 		return errCmd(fmt.Errorf("no pull request selected"))
 	}
-	a.confirm = &confirmPrompt{kind: kind, target: t}
+	a.confirm = &confirmPrompt{kind: kind, target: t, targets: []actionTarget{t}}
+	return nil
+}
+
+func (a *App) askConfirmTargets(kind confirmKind, targets []actionTarget) tea.Cmd {
+	if len(targets) == 0 {
+		return errCmd(fmt.Errorf("no pull request selected"))
+	}
+	for _, target := range targets {
+		if !target.valid() {
+			return errCmd(fmt.Errorf("invalid pull request selection"))
+		}
+	}
+	bulk := a.state == viewPRList && a.list != nil && len(a.list.selected) > 0
+	a.confirm = &confirmPrompt{kind: kind, target: targets[0], targets: targets, bulk: bulk}
 	return nil
 }
 
@@ -105,6 +148,9 @@ func (a *App) handleConfirmKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "y", "Y":
 		a.confirm = nil
+		if p.bulk {
+			return a.runConfirmedMany(p.kind, p.targets)
+		}
 		return a.runConfirmed(p.kind, p.target)
 	case "n", "N", "esc", "q":
 		a.confirm = nil
@@ -114,77 +160,138 @@ func (a *App) handleConfirmKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (a *App) runConfirmed(kind confirmKind, t actionTarget) tea.Cmd {
+func (a *App) performConfirmed(ctx context.Context, kind confirmKind, t actionTarget) (string, error) {
 	client := a.clientFor(t)
 	n := t.number
 	switch kind {
 	case confirmApprove:
-		return func() tea.Msg {
-			c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			return reviewPostedMsg{action: "approve", err: client.ReviewPR(c, n, "approve", "")}
-		}
+		return "approved", client.ReviewPR(ctx, n, "approve", "")
 	case confirmClose:
-		return func() tea.Msg {
-			c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			return actionDoneMsg{label: fmt.Sprintf("closed #%d", n), err: client.Close(c, n, "")}
-		}
+		return "closed", client.Close(ctx, n, "")
 	case confirmReopen:
-		return func() tea.Msg {
-			c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			return actionDoneMsg{label: fmt.Sprintf("reopened #%d", n), err: client.Reopen(c, n)}
+		return "reopened", client.Reopen(ctx, n)
+	case confirmToggleState:
+		if t.state == "CLOSED" {
+			return "reopened", client.Reopen(ctx, n)
 		}
+		return "closed", client.Close(ctx, n, "")
 	case confirmReady:
-		undo := !t.isDraft
-		verb := "marked ready"
-		if undo {
-			verb = "converted to draft"
+		if t.isDraft {
+			return "marked ready", client.Ready(ctx, n, false)
 		}
-		return func() tea.Msg {
-			c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			return actionDoneMsg{
-				label: fmt.Sprintf("%s #%d", verb, n),
-				err:   client.Ready(c, n, undo),
-			}
-		}
+		return "converted to draft", client.Ready(ctx, n, true)
 	}
-	return nil
+	return "", fmt.Errorf("unsupported confirmation action")
 }
 
-// renderConfirm draws the prompt, naming the exact PR so the user can catch a
-// mis-selected row before acting on it.
+func (a *App) runConfirmed(kind confirmKind, t actionTarget) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		verb, err := a.performConfirmed(ctx, kind, t)
+		if kind == confirmApprove {
+			return reviewPostedMsg{action: "approve", err: err}
+		}
+		return actionDoneMsg{label: fmt.Sprintf("%s #%d", verb, t.number), err: err}
+	}
+}
+
+func (a *App) runConfirmedMany(kind confirmKind, targets []actionTarget) tea.Cmd {
+	return func() tea.Msg {
+		var (
+			mu        sync.Mutex
+			completed []string
+			errs      []error
+			wg        sync.WaitGroup
+		)
+		// Keep enough parallelism for a queue without spawning an unbounded number
+		// of gh processes when an entire source is selected.
+		sem := make(chan struct{}, 4)
+		for _, target := range targets {
+			target := target
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				_, err := a.performConfirmed(ctx, kind, target)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					errs = append(errs, fmt.Errorf("%s: %w", target.label(), err))
+					return
+				}
+				completed = append(completed, target.key())
+			}()
+		}
+		wg.Wait()
+
+		noun := "PRs"
+		if len(completed) == 1 {
+			noun = "PR"
+		}
+		label := fmt.Sprintf("updated %d %s", len(completed), noun)
+		if kind == confirmApprove {
+			label = fmt.Sprintf("approved %d %s", len(completed), noun)
+		}
+		return bulkActionDoneMsg{label: label, completed: completed, err: errors.Join(errs...)}
+	}
+}
+
+// renderConfirm draws the prompt, naming the exact PRs so the user can catch a
+// stale or accidental selection before acting on it.
 func (a *App) renderConfirm(width, height int) string {
 	p := a.confirm
+	count := len(p.targets)
 	var question, note string
-	switch p.kind {
-	case confirmApprove:
-		question = "Approve " + p.target.label() + "?"
-	case confirmClose:
-		question = "Close " + p.target.label() + "?"
-		note = "The PR stays on GitHub and can be reopened."
-	case confirmReopen:
-		question = "Reopen " + p.target.label() + "?"
-	case confirmReady:
-		if p.target.isDraft {
-			question = "Mark " + p.target.label() + " ready for review?"
-		} else {
-			question = "Convert " + p.target.label() + " back to a draft?"
+	if count > 1 {
+		switch p.kind {
+		case confirmApprove:
+			question = fmt.Sprintf("Approve %d selected PRs?", count)
+		case confirmToggleState:
+			question = fmt.Sprintf("Close or reopen %d selected PRs?", count)
+			note = "Open PRs will close; closed PRs will reopen."
+		}
+	} else {
+		switch p.kind {
+		case confirmApprove:
+			question = "Approve " + p.target.label() + "?"
+		case confirmClose:
+			question = "Close " + p.target.label() + "?"
+			note = "The PR stays on GitHub and can be reopened."
+		case confirmReopen:
+			question = "Reopen " + p.target.label() + "?"
+		case confirmReady:
+			if p.target.isDraft {
+				question = "Mark " + p.target.label() + " ready for review?"
+			} else {
+				question = "Convert " + p.target.label() + " back to a draft?"
+			}
 		}
 	}
 
 	var b strings.Builder
 	b.WriteString(question + "\n")
-	if p.target.title != "" {
+	if count > 1 {
+		limit := min(count, 5)
+		for _, target := range p.targets[:limit] {
+			b.WriteString(dimStyle.Render("• "+target.label()) + "\n")
+		}
+		if count > limit {
+			b.WriteString(dimStyle.Render(fmt.Sprintf("… and %d more", count-limit)) + "\n")
+		}
+	} else if p.target.title != "" {
 		b.WriteString(dimStyle.Render(fitCell(p.target.title, max(width-8, 20))) + "\n")
 	}
 	if note != "" {
 		b.WriteString(dimStyle.Render(note) + "\n")
 	}
 	b.WriteString("\n" + fmtHints("y", "yes", "n", "no"))
-	return decoratedPane("confirm", b.String(), min(width-4, 76), 8, true)
+	boxHeight := min(max(8, 6+min(count, 5)), max(height-2, 8))
+	return decoratedPane("confirm", b.String(), min(width-4, 76), boxHeight, true)
 }
 
 // --- label picker ---

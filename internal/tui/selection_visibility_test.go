@@ -106,6 +106,29 @@ func TestSelectedListRowHasUnbrokenBackground(t *testing.T) {
 	}
 }
 
+func TestMultiSelectedListRowShowsCheckMark(t *testing.T) {
+	forceColor(t)
+	first := prListItem{pr: pr.Summary{Number: 101, Repo: "acme/one", Title: "first"}}
+	second := prListItem{pr: pr.Summary{Number: 202, Repo: "acme/two", Title: "second"}}
+	items := []list.Item{first, second}
+	delegate := prListDelegate{isSelected: func(summary prSummary) bool {
+		return summary.Number == 202 && summary.Repo == "acme/two"
+	}}
+	l := list.New(items, delegate, 120, 10)
+	initListBase(&l)
+	l.Select(0)
+
+	var sb strings.Builder
+	delegate.Render(&sb, l, 1, second)
+	rendered := sb.String()
+	if !strings.Contains(stripANSISeqs(rendered), iconCheck) {
+		t.Errorf("multi-selected row has no check mark: %q", rendered)
+	}
+	if got := lipgloss.Width(rendered); got != 120 {
+		t.Errorf("multi-selected row spans %d cells, want 120", got)
+	}
+}
+
 func TestSelectedRowContrastsWithUnselected(t *testing.T) {
 	// The two must differ by more than boldness: on a black terminal a very dark
 	// background is indistinguishable from none, which is the reported problem.
