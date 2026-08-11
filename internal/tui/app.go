@@ -121,6 +121,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Only animate while something is loading; idle costs no redraws.
 		if a.anyLoading() {
 			a.spinnerFrame++
+			// The list needs the frame too: its setter existed but was never
+			// called, so every list-side spinner sat frozen on one glyph.
+			if a.list != nil {
+				a.list.setSpinnerFrame(a.spinnerFrame)
+			}
 			if a.detail != nil {
 				a.detail.setSpinnerFrame(a.spinnerFrame)
 			}

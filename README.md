@@ -10,7 +10,7 @@ ghx  platform-tools · 50
 #898    ✓ platform-tools     [CPLAT-10365] Add first/last and five-page jump controls to the pager
 #897    ● platform-tools     [CPLAT-10365] Bump Makefile default image tag to v0.0.191
 #854    ● platform-tools     Bump brace-expansion from 5.0.6 to 5.0.8 in /drongo/web/frontend
-↵:open · a:approve · x:close · L:labels · r:request · o:browser · /:filter · ::palette · ?:help
+↵:open · a:approve · x:close · L:labels · r:request · o:browser · /:filter · R:refresh · ::palette · ?:help
 ```
 
 A `*` marks a tab for a repository you are working in. ghx detects the launch
@@ -158,6 +158,7 @@ Press `?` inside the TUI for the full list. Highlights:
 | `L` | edit labels on selected PRs; cross-repo selections show common labels |
 | `d` / `:ready` | toggle ready/draft on selected PRs |
 | `f` | choose merged / approved / changes requested / unresolved filters |
+| `R` | reload the current source (the tab shows a spinner while it runs) |
 | `/` | text search (AND with active status filters) |
 | `c` | comment on diff line |
 | `v` | visual range for multi-line comment |

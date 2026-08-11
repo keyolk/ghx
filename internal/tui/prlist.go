@@ -558,6 +558,13 @@ func (m *prListModel) tabStrip(w int, short bool) string {
 		if n := len(m.caches[i]); n > 0 && !short {
 			label += tabCountStyle.Render(fmt.Sprintf("(%d)", n))
 		}
+		// A reload over rows that are already on screen changes nothing visible —
+		// the full-pane spinner only appears on an empty source — so R reads as a
+		// key that does nothing. Marking the tab shows the fetch, and covers the
+		// background poll too.
+		if m.loadings[i] && len(m.caches[i]) > 0 && !short {
+			label += tabCountStyle.Render(spinnerFrames[m.spinner%len(spinnerFrames)])
+		}
 		if i == m.curTab {
 			b.WriteString(tabActiveStyle.Render("[" + label + "]"))
 		} else {
@@ -638,6 +645,7 @@ func (m *prListModel) helpLine() string {
 		"o", "browser",
 		"f", "status",
 		"/", "search",
+		"R", "refresh",
 		":", "palette",
 		"?", "help",
 	)
