@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -82,19 +83,39 @@ func run() (err error) {
 			}
 		}
 	}
-	authClient := client
-	if detected != "" {
-		authClient = client.WithRepo(detected)
+	if len(cfg.Accounts) > 0 {
+		var authErrs []error
+		authenticated := false
+		for _, account := range cfg.Accounts {
+			if account.CredentialRepo == "" {
+				authErrs = append(authErrs, fmt.Errorf("account %s: credential_repo is required", account.Name))
+				continue
+			}
+			accountClient := client.WithCredentialRepo(account.CredentialRepo)
+			if authErr := accountClient.AuthStatus(context.Background()); authErr != nil {
+				authErrs = append(authErrs, fmt.Errorf("account %s: %w", account.Name, authErr))
+				continue
+			}
+			authenticated = true
+		}
+		if !authenticated {
+			return fmt.Errorf("no configured GitHub account is authenticated: %w", errors.Join(authErrs...))
+		}
 	} else {
-		for _, source := range cfg.Sources {
-			if source.Repo != "" {
-				authClient = client.WithRepo(source.Repo)
-				break
+		authClient := client
+		if detected != "" {
+			authClient = client.WithRepo(detected)
+		} else {
+			for _, source := range cfg.Sources {
+				if source.Repo != "" {
+					authClient = client.WithRepo(source.Repo)
+					break
+				}
 			}
 		}
-	}
-	if authErr := authClient.AuthStatus(context.Background()); authErr != nil {
-		return fmt.Errorf("gh not authenticated for the selected repository — check git credentials or run `gh auth login`: %w", authErr)
+		if authErr := authClient.AuthStatus(context.Background()); authErr != nil {
+			return fmt.Errorf("gh not authenticated for the selected repository — check git credentials or run `gh auth login`: %w", authErr)
+		}
 	}
 	app := tui.NewAppWithRepo(cfg, km, client, detected)
 

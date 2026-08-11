@@ -90,6 +90,15 @@ func runConfig(args []string) error {
 // you the current values but not which knobs exist or what they do.
 const starterConfig = `# ghx configuration
 
+# Accounts used for cross-repository sources such as My PRs and My reviews.
+# credential_repo is any repository whose git credential fill result selects
+# that account. Tokens stay in Git's credential helper and are never stored here.
+# accounts:
+#   - name: "personal"
+#     credential_repo: "keyolk/ghx"
+#   - name: "work"
+#     credential_repo: "sendbird/platform-tools"
+
 # PR list sources. Each becomes a tab; 1-9 jumps between them.
 sources:
   - name: "My PRs"

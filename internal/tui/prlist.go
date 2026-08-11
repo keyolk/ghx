@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -149,10 +150,11 @@ func (m *prListModel) fetchSource(i int) tea.Cmd {
 	return func() tea.Msg {
 		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		prs, err := client.SearchPRs(c, query, 50)
-		var warning error
+		prs, warning, err := searchPRsAcrossAccounts(c, client, m.cfg.Accounts, query, 50)
 		if err == nil {
-			prs, warning = client.EnrichPRStatuses(c, prs)
+			var statusWarning error
+			prs, statusWarning = client.EnrichPRStatuses(c, prs)
+			warning = errors.Join(warning, statusWarning)
 		}
 		return prListMsg{sourceIdx: i, generation: generation, prs: prs, warning: warning, err: err}
 	}
@@ -229,7 +231,7 @@ func (m *prListModel) handlePRListMsg(msg prListMsg) tea.Cmd {
 	}
 	if msg.warning != nil {
 		return func() tea.Msg {
-			return toastMsg{text: "PR status warning: " + msg.warning.Error()}
+			return toastMsg{text: "PR list warning: " + msg.warning.Error()}
 		}
 	}
 	return nil

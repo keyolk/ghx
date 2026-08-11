@@ -78,13 +78,20 @@ func (c *Client) command(ctx context.Context, args ...string) (*exec.Cmd, bool) 
 	if c.credentials == nil {
 		return cmd, false
 	}
-	if token, ok := c.credentials.token(ctx, c.repo); ok {
-		// A repo credential must win over the process's globally active gh account.
-		// Keep it subprocess-local and never include it in argv or errors.
+	if token, ok := c.credentials.token(ctx, c.credentialSelector()); ok {
+		// A selected Git credential must win over the process's globally active gh
+		// account. Keep it subprocess-local and never include it in argv or errors.
 		cmd.Env = append(withoutEnv(os.Environ(), "GH_TOKEN", "GITHUB_TOKEN"), "GH_TOKEN="+token)
 		return cmd, true
 	}
 	return cmd, false
+}
+
+func (c *Client) credentialSelector() string {
+	if c.credentialRepo != "" {
+		return c.credentialRepo
+	}
+	return c.repo
 }
 
 func withoutEnv(env []string, keys ...string) []string {

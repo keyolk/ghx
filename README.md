@@ -40,15 +40,38 @@ rules as Git. For example:
 
 For `keyolk/ghx`, ghx asks Git for the credential associated with
 `https://github.com/keyolk/ghx.git` and supplies it only to that `gh`
-subprocess. A stale credential that returns HTTP 401 falls back once to the
-active `gh auth` login; permission failures remain on the selected account.
-Merge uses the selected repository credential and GitHub's own permissions and
+subprocess.
+
+To combine cross-repository queues from multiple accounts, register one
+credential selector repository per account:
+
+```yaml
+accounts:
+  - name: "personal"
+    credential_repo: "keyolk/ghx"
+  - name: "work"
+    credential_repo: "sendbird/platform-tools"
+```
+
+`credential_repo` may be any repository whose `git credential fill` result
+selects that account; ghx stores no token in its config. Unscoped sources such
+as My PRs and My reviews run once per account, merge results by update time,
+and remove duplicate PRs. If one account fails, results from the others remain
+visible with a warning. Detail views, comments, reviews, labels, and merges keep
+using the account that found each PR.
+
+Configured accounts are strict identity boundaries: a missing or stale account
+credential is reported instead of silently falling back to another active
+account. Ordinary repository-scoped calls retain the existing one-time fallback
+to active `gh auth` after an HTTP 401. Permission failures remain on the
+selected account. Merge uses that credential and GitHub's own permissions and
 branch protection, with an explicit confirmation but no additional ghx policy.
 
 ## Features
 
 - **PR list** — source tabs (My PRs, My reviews, Assigned, configured repos),
-  repo detection from cwd/tmux, client-side filtering, live polling
+  merged queues across configured GitHub accounts, repo detection from cwd/tmux,
+  client-side filtering, live polling
 - **PR status** — compact `M/A/C/U` markers for merged, approved, changes
   requested, and unresolved conversations
 - **Status filters** — `f` selects one or more statuses (OR); combines with `/`
@@ -74,6 +97,13 @@ branch protection, with an explicit confirmation but no additional ghx policy.
     ghx config init    # write ~/.config/ghx/config.yaml
 
 ```yaml
+# Optional: merge cross-repository sources from both GitHub accounts.
+accounts:
+  - name: "personal"
+    credential_repo: "keyolk/ghx"
+  - name: "work"
+    credential_repo: "sendbird/platform-tools"
+
 sources:
   - name: "My PRs"
     query: "author:@me state:open"

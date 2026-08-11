@@ -36,6 +36,58 @@ printf '%s|%s\n' "${GH_TOKEN:-}" "$*" >> "$CAPTURE"
 	}
 }
 
+func TestExplicitAccountCredentialIsUsedForTargetRepository(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "calls")
+	writeExecutable(t, filepath.Join(dir, "gh"), `#!/bin/sh
+printf '%s|%s\n' "${GH_TOKEN:-}" "$*" >> "$CAPTURE"
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CAPTURE", capture)
+	t.Setenv("GH_TOKEN", "global-token")
+
+	client := NewClient(0)
+	client.credentials.resolve = func(_ context.Context, repo string) (string, bool) {
+		if repo != "work/selector" {
+			t.Fatalf("credential lookup repo = %q, want work/selector", repo)
+		}
+		return "work-token", true
+	}
+	client = client.WithCredentialRepo("work/selector").WithRepo("acme/target")
+	if err := client.Merge(context.Background(), 42, "squash"); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+
+	got := readFile(t, capture)
+	want := "work-token|pr merge 42 --repo acme/target --squash\n"
+	if got != want {
+		t.Errorf("captured call = %q, want %q", got, want)
+	}
+}
+
+func TestExplicitAccountWithoutCredentialDoesNotUseActiveGHAuth(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "calls")
+	writeExecutable(t, filepath.Join(dir, "gh"), `#!/bin/sh
+printf '%s|%s\n' "${GH_TOKEN:-}" "$*" >> "$CAPTURE"
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CAPTURE", capture)
+	t.Setenv("GH_TOKEN", "other-account-token")
+
+	client := NewClient(0)
+	client.credentials.resolve = func(context.Context, string) (string, bool) {
+		return "", false
+	}
+	err := client.WithCredentialRepo("work/selector").AuthStatus(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no Git credential found") {
+		t.Fatalf("AuthStatus error = %v, want missing configured credential", err)
+	}
+	if _, statErr := os.Stat(capture); !os.IsNotExist(statErr) {
+		t.Errorf("gh ran despite missing account credential: %v", statErr)
+	}
+}
+
 func TestInvalidRepoCredentialFallsBackToActiveGHAuth(t *testing.T) {
 	dir := t.TempDir()
 	capture := filepath.Join(dir, "calls")
@@ -93,6 +145,18 @@ exit 1
 	lines := strings.Split(strings.TrimSpace(readFile(t, capture)), "\n")
 	if len(lines) != 1 || !strings.HasPrefix(lines[0], "repo-token|") {
 		t.Errorf("403 must not retry as another account: %q", lines)
+	}
+}
+
+func TestWithRepoSwitchesOnlyImplicitCredentialSelector(t *testing.T) {
+	implicit := NewClient(0).WithRepo("acme/one").WithRepo("acme/two")
+	if got := implicit.credentialSelector(); got != "acme/two" {
+		t.Errorf("implicit selector = %q, want acme/two", got)
+	}
+
+	explicit := NewClient(0).WithCredentialRepo("work/selector").WithRepo("acme/two")
+	if got := explicit.credentialSelector(); got != "work/selector" {
+		t.Errorf("explicit selector = %q, want work/selector", got)
 	}
 }
 

@@ -27,6 +27,11 @@ type Summary struct {
 	// this PR belongs to — the current directory cannot be assumed.
 	Repo string `json:"repo"`
 	URL  string `json:"url"`
+
+	// CredentialRepo is the repository URL selector whose Git credential found
+	// this PR. It is not display data: subsequent detail and action requests use it
+	// to stay on the same GitHub account in a cross-account queue.
+	CredentialRepo string `json:"-"`
 }
 
 // Detail is the full PR shape shown in the detail view.

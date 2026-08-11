@@ -92,6 +92,9 @@ func (c *Client) SearchPRs(ctx context.Context, query string, limit int) ([]pr.S
 		if t, err := parseGitHubTime(r.UpdatedAt); err == nil {
 			s.UpdatedAt = t
 		}
+		if c.credentialExplicit {
+			s.CredentialRepo = c.credentialSelector()
+		}
 		out = append(out, s)
 	}
 	return out, nil

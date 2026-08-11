@@ -15,9 +15,11 @@ import (
 
 // Client wraps gh CLI invocation with a default timeout.
 type Client struct {
-	timeout     time.Duration
-	repo        string // "owner/repo" or empty for auto-detect
-	credentials *credentialCache
+	timeout            time.Duration
+	repo               string // "owner/repo" or empty for auto-detect
+	credentialRepo     string // repo URL used only to select a Git credential
+	credentialExplicit bool   // configured accounts must not fall back to another identity
+	credentials        *credentialCache
 }
 
 // NewClient returns a gh wrapper with the given per-call timeout (default 30s).
@@ -28,10 +30,25 @@ func NewClient(timeout time.Duration) *Client {
 	return &Client{timeout: timeout, credentials: newCredentialCache()}
 }
 
-// WithRepo scopes subsequent calls to a specific "owner/repo".
+// WithRepo scopes subsequent calls to a specific "owner/repo". Unless an
+// account credential was selected explicitly, the repository also selects the
+// Git credential, preserving the existing per-repository behavior.
 func (c *Client) WithRepo(repo string) *Client {
 	cp := *c
 	cp.repo = repo
+	if !cp.credentialExplicit {
+		cp.credentialRepo = repo
+	}
+	return &cp
+}
+
+// WithCredentialRepo selects an account through the Git credential associated
+// with repo without scoping the GitHub operation itself. This is used for
+// cross-repository searches where --repo would change the query semantics.
+func (c *Client) WithCredentialRepo(repo string) *Client {
+	cp := *c
+	cp.credentialRepo = repo
+	cp.credentialExplicit = true
 	return &cp
 }
 
@@ -60,16 +77,30 @@ func (c *Client) exec(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (c *Client) output(ctx context.Context, args ...string) ([]byte, error) {
+	if c.credentialExplicit {
+		selector := c.credentialSelector()
+		if selector == "" {
+			return nil, fmt.Errorf("configured GitHub account has no credential repository")
+		}
+		if _, ok := c.credentials.token(ctx, selector); !ok {
+			return nil, fmt.Errorf("no Git credential found for configured account repository %s", selector)
+		}
+	}
 	cmd, credentialUsed := c.command(ctx, args...)
 	out, err := cmd.Output()
 	if err == nil || !credentialUsed || !isCredentialAuthFailure(err) {
 		return out, err
 	}
 
-	// A stale token in the Git credential store must not make a repository
-	// unusable when gh already has a valid active login. Retry only authentication
-	// failures; permission refusals (403) remain attached to the selected account.
-	c.credentials.reject(c.repo)
+	c.credentials.reject(c.credentialSelector())
+	if c.credentialExplicit {
+		// A configured account is an identity boundary. Falling back to the active
+		// gh login here would silently return another account's PRs.
+		return out, err
+	}
+
+	// A stale repository credential must not make an ordinary repo-scoped call
+	// unusable when gh already has a valid active login.
 	fallback := exec.CommandContext(ctx, "gh", args...)
 	return fallback.Output()
 }

@@ -1,5 +1,5 @@
-// Package config loads ~/.config/ghx/config.yaml with defaults for PR list
-// sources, keymap overrides, color overrides, editor, and poll interval.
+// Package config loads ~/.config/ghx/config.yaml with defaults for GitHub
+// accounts, PR list sources, keymap overrides, colors, editor, and polling.
 package config
 
 import (
@@ -16,6 +16,7 @@ import (
 // Config is the loaded ghx configuration.
 type Config struct {
 	Sources        []SourceDef     `yaml:"sources"`
+	Accounts       []AccountDef    `yaml:"accounts,omitempty"`
 	Keymap         KeymapOverrides `yaml:"keymap"`
 	Colors         ColorOverrides  `yaml:"colors"`
 	Editor         string          `yaml:"editor"`
@@ -37,6 +38,14 @@ type SourceDef struct {
 	Name  string `yaml:"name"`
 	Query string `yaml:"query"`
 	Repo  string `yaml:"repo"` // optional "owner/repo"
+}
+
+// AccountDef identifies one GitHub account through a repository whose Git
+// credential belongs to that account. The token remains in Git's credential
+// helper; ghx stores only the repository selector.
+type AccountDef struct {
+	Name           string `yaml:"name"`
+	CredentialRepo string `yaml:"credential_repo"`
 }
 
 // KeymapOverrides is a placeholder for per-key YAML overrides (Phase 6).
@@ -96,6 +105,9 @@ func DefaultConfig() *Config {
 func merge(dst *Config, file *Config) {
 	if len(file.Sources) > 0 {
 		dst.Sources = migrateLegacySources(file.Sources)
+	}
+	if len(file.Accounts) > 0 {
+		dst.Accounts = append([]AccountDef(nil), file.Accounts...)
 	}
 	if len(file.Keymap) > 0 {
 		dst.Keymap = file.Keymap
