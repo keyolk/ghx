@@ -75,13 +75,14 @@ func (a *App) runPalette(line string) tea.Cmd {
 		}
 		return a.startMerge()
 	case "open":
-		if a.detail != nil && a.detail.detail != nil {
-			return a.openBrowser(a.detail.detail.URL)
+		// Shares the `o` key's path so the palette opens the same PRs — and so a
+		// list row's real URL is used. Building one from the number alone dropped
+		// owner/repo and produced github.com/pull/N, which is not a PR anywhere.
+		targets, ok := a.actionTargets()
+		if !ok {
+			return a.paletteNeedsPR()
 		}
-		if item, ok := a.list.selectedItem(); ok {
-			return a.openBrowser(fmt.Sprintf("https://github.com/pull/%d", item.pr.Number))
-		}
-		return nil
+		return a.openTargetsInBrowser(targets)
 	case "source":
 		if !a.list.selectSourceByName(arg) {
 			return errCmd(fmt.Errorf("no source named %q", arg))

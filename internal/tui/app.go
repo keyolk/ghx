@@ -429,14 +429,8 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch key {
 	// L rather than l: lowercase l is the vim "right" alias, which opens the
 	// preview pane in the list and cycles tabs in the detail view.
-	case "a", "x", "L", "r", "M", "d":
+	case "a", "x", "L", "r", "M", "d", "o":
 		// fall through to the target lookup below
-	case "o":
-		t, ok := a.currentTarget()
-		if !ok {
-			return nil, false
-		}
-		return a.openTargetInBrowser(t), true
 	default:
 		return nil, false
 	}
@@ -484,6 +478,12 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 			return errCmd(fmt.Errorf("no pull request selected")), true
 		}
 		return a.askConfirmTargets(confirmReady, targets), true
+	case "o":
+		targets, ok := a.actionTargets()
+		if !ok {
+			return errCmd(fmt.Errorf("no pull request selected")), true
+		}
+		return a.openTargetsInBrowser(targets), true
 	}
 
 	t, ok := a.currentTarget()
@@ -506,14 +506,13 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 
 // openTargetInBrowser opens the PR's web page, resolving the URL when the row
 // did not carry one.
+//
+// The target's own URL is used rather than re-reading the focused row: with a
+// multi-selection every target would otherwise resolve to whatever the cursor
+// happens to sit on.
 func (a *App) openTargetInBrowser(t actionTarget) tea.Cmd {
-	if a.state == viewPRDetail && a.detail != nil && a.detail.detail != nil {
-		return a.openBrowser(a.detail.detail.URL)
-	}
-	if a.list != nil {
-		if item, ok := a.list.selectedItem(); ok && item.pr.URL != "" {
-			return a.openBrowser(item.pr.URL)
-		}
+	if t.url != "" {
+		return a.openBrowser(t.url)
 	}
 	client := a.clientFor(t)
 	n := t.number
@@ -526,6 +525,25 @@ func (a *App) openTargetInBrowser(t actionTarget) tea.Cmd {
 		}
 		return openURLMsg{url: url}
 	}
+}
+
+// openTargetsInBrowser opens every selected PR. Opening is read-only, so it
+// runs without a confirmation and leaves the selection intact — unlike close or
+// merge, looking at a PR does not consume the mark that chose it.
+func (a *App) openTargetsInBrowser(targets []actionTarget) tea.Cmd {
+	if len(targets) == 1 {
+		return a.openTargetInBrowser(targets[0])
+	}
+	cmds := make([]tea.Cmd, 0, len(targets))
+	for _, target := range targets {
+		if cmd := a.openTargetInBrowser(target); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 func (a *App) anyLoading() bool {
