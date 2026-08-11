@@ -37,9 +37,9 @@ func searchPRsAcrossAccounts(
 	var wg sync.WaitGroup
 	for i, account := range accounts {
 		i, account := i, account
-		selector := strings.TrimSpace(account.CredentialRepo)
+		selector := account.Selector()
 		if selector == "" {
-			results[i].err = fmt.Errorf("account %q has no credential_repo", account.Name)
+			results[i].err = fmt.Errorf("account %q has no gh_user or credential_repo", account.Name)
 			continue
 		}
 		wg.Add(1)
@@ -56,11 +56,7 @@ func searchPRsAcrossAccounts(
 	succeeded := 0
 	for i, result := range results {
 		if result.err != nil {
-			name := accounts[i].Name
-			if name == "" {
-				name = accounts[i].CredentialRepo
-			}
-			failures = append(failures, fmt.Errorf("account %s: %w", name, result.err))
+			failures = append(failures, fmt.Errorf("account %s: %w", accounts[i].Label(), result.err))
 			continue
 		}
 		succeeded++

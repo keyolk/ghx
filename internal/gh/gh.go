@@ -189,3 +189,10 @@ func (c *Client) AuthStatus(ctx context.Context) error {
 	_, err := c.execRaw(ctx, "auth", "status")
 	return err
 }
+
+// AuthStatusFor reports whether the account named by selector is usable. It is
+// the whole-account check that pairs with CredentialToken, so callers verifying
+// a configured account list need not build scoped clients themselves.
+func (c *Client) AuthStatusFor(ctx context.Context, selector string) error {
+	return c.WithCredentialRepo(selector).AuthStatus(ctx)
+}

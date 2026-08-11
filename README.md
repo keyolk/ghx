@@ -42,19 +42,36 @@ For `keyolk/ghx`, ghx asks Git for the credential associated with
 `https://github.com/keyolk/ghx.git` and supplies it only to that `gh`
 subprocess.
 
-To combine cross-repository queues from multiple accounts, register one
-credential selector repository per account:
+To combine cross-repository queues from multiple accounts, register each one:
 
 ```yaml
 accounts:
   - name: "personal"
-    credential_repo: "keyolk/ghx"
+    gh_user: "keyolk"
   - name: "work"
-    credential_repo: "sendbird/platform-tools"
+    gh_user: "gavin-jeong"
 ```
 
-`credential_repo` may be any repository whose `git credential fill` result
-selects that account; ghx stores no token in its config. Unscoped sources such
+`gh_user` names a login from `gh auth status`; ghx reads its token with `gh auth
+token --user`. This is the reliable selector, because it addresses the account
+directly rather than depending on Git's credential routing.
+
+An account may instead be named by `credential_repo` — any repository whose `git
+credential fill` result selects that account. That form only works when the
+credential helper really does return a different token per repository path. A
+global `[credential "https://github.com"] helper = !gh auth git-credential`
+section (which `gh auth login` writes) resets the helper list for every
+github.com URL, so a path-mapping helper such as `pass-git-helper` is bypassed
+and every repository resolves to the active account's token. Verify with:
+
+```sh
+printf 'url=https://github.com/OWNER/REPO.git\n\n' | git credential fill
+```
+
+If two accounts resolve to the same token, ghx warns at startup rather than
+silently listing one identity's PRs under both.
+
+ghx stores no token in its config. Unscoped sources such
 as My PRs and My reviews run once per account, merge results by update time,
 and remove duplicate PRs. If one account fails, results from the others remain
 visible with a warning. Detail views, comments, reviews, labels, and merges keep
@@ -100,9 +117,9 @@ branch protection, with an explicit confirmation but no additional ghx policy.
 # Optional: merge cross-repository sources from both GitHub accounts.
 accounts:
   - name: "personal"
-    credential_repo: "keyolk/ghx"
+    gh_user: "keyolk"
   - name: "work"
-    credential_repo: "sendbird/platform-tools"
+    gh_user: "gavin-jeong"
 
 sources:
   - name: "My PRs"

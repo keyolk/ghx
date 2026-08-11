@@ -28,11 +28,18 @@ type Summary struct {
 	Repo string `json:"repo"`
 	URL  string `json:"url"`
 
-	// CredentialRepo is the repository URL selector whose Git credential found
-	// this PR. It is not display data: subsequent detail and action requests use it
-	// to stay on the same GitHub account in a cross-account queue.
+	// CredentialRepo is the credential selector that found this PR. It is not
+	// display data: subsequent detail and action requests use it to stay on the
+	// same GitHub account in a cross-account queue. Two forms exist — a bare
+	// "owner/repo" resolved through the Git credential helper, or
+	// GHUserSelectorPrefix + a gh CLI login.
 	CredentialRepo string `json:"-"`
 }
+
+// GHUserSelectorPrefix marks a credential selector that names a gh CLI login
+// rather than a repository. It lives here because the selector travels with
+// each PR through the list, detail, and action paths.
+const GHUserSelectorPrefix = "ghuser:"
 
 // Detail is the full PR shape shown in the detail view.
 type Detail struct {

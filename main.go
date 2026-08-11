@@ -84,22 +84,8 @@ func run() (err error) {
 		}
 	}
 	if len(cfg.Accounts) > 0 {
-		var authErrs []error
-		authenticated := false
-		for _, account := range cfg.Accounts {
-			if account.CredentialRepo == "" {
-				authErrs = append(authErrs, fmt.Errorf("account %s: credential_repo is required", account.Name))
-				continue
-			}
-			accountClient := client.WithCredentialRepo(account.CredentialRepo)
-			if authErr := accountClient.AuthStatus(context.Background()); authErr != nil {
-				authErrs = append(authErrs, fmt.Errorf("account %s: %w", account.Name, authErr))
-				continue
-			}
-			authenticated = true
-		}
-		if !authenticated {
-			return fmt.Errorf("no configured GitHub account is authenticated: %w", errors.Join(authErrs...))
+		if err := verifyAccounts(context.Background(), client, cfg.Accounts, os.Stderr); err != nil {
+			return err
 		}
 	} else {
 		authClient := client
@@ -137,6 +123,58 @@ func run() (err error) {
 	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, runErr := p.Run(); runErr != nil {
 		return fmt.Errorf("run: %w", runErr)
+	}
+	return nil
+}
+
+// accountVerifier is the slice of the gh client that account verification uses.
+// Taking an interface keeps the check testable without a real gh or credential
+// helper on PATH, which a hermetic test cannot rely on.
+type accountVerifier interface {
+	AuthStatusFor(ctx context.Context, selector string) error
+	CredentialToken(ctx context.Context, selector string) (string, bool)
+}
+
+// verifyAccounts checks every configured account before the TUI starts, so an
+// unusable identity is reported on the terminal rather than as an empty tab.
+// It fails only when no account works at all; partial failures are warnings,
+// since one broken account should not withhold the other's review queue.
+func verifyAccounts(ctx context.Context, client accountVerifier, accounts []config.AccountDef, warn io.Writer) error {
+	var authErrs []error
+	authenticated := 0
+	owners := make(map[string]string)
+	for _, account := range accounts {
+		selector := account.Selector()
+		if selector == "" {
+			authErrs = append(authErrs,
+				fmt.Errorf("account %s: gh_user or credential_repo is required", account.Label()))
+			continue
+		}
+		if authErr := client.AuthStatusFor(ctx, selector); authErr != nil {
+			authErrs = append(authErrs, fmt.Errorf("account %s: %w", account.Label(), authErr))
+			continue
+		}
+		authenticated++
+		// Two accounts resolving to one token is the silent failure this feature
+		// exists to avoid: every tab looks like it queried both identities while
+		// listing only one. The token is compared, never printed.
+		token, ok := client.CredentialToken(ctx, selector)
+		if !ok {
+			continue
+		}
+		if prev, dup := owners[token]; dup {
+			fmt.Fprintf(warn,
+				"warning: accounts %s and %s resolve to the same token — only one identity's PRs will be listed\n",
+				prev, account.Label())
+			continue
+		}
+		owners[token] = account.Label()
+	}
+	if authenticated == 0 {
+		return fmt.Errorf("no configured GitHub account is authenticated: %w", errors.Join(authErrs...))
+	}
+	for _, authErr := range authErrs {
+		fmt.Fprintf(warn, "warning: %v\n", authErr)
 	}
 	return nil
 }

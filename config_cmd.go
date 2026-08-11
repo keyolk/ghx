@@ -91,13 +91,18 @@ func runConfig(args []string) error {
 const starterConfig = `# ghx configuration
 
 # Accounts used for cross-repository sources such as My PRs and My reviews.
-# credential_repo is any repository whose git credential fill result selects
-# that account. Tokens stay in Git's credential helper and are never stored here.
+# Each account is queried separately and the results are merged, so one list can
+# span a personal and a work identity. No token is stored here.
+#
+# gh_user names a gh CLI login (see: gh auth status); its token is read with
+# "gh auth token --user". Prefer it — credential_repo instead names a repository
+# whose "git credential fill" result selects the account, which only works when
+# the Git credential helper actually maps repository paths to distinct tokens.
 # accounts:
 #   - name: "personal"
-#     credential_repo: "keyolk/ghx"
+#     gh_user: "keyolk"
 #   - name: "work"
-#     credential_repo: "sendbird/platform-tools"
+#     gh_user: "gavin-jeong"
 
 # PR list sources. Each becomes a tab; 1-9 jumps between them.
 sources:

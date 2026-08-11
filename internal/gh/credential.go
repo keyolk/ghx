@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"github.com/keyolk/ghx/internal/pr"
 )
 
 type credentialEntry struct {
@@ -24,7 +26,7 @@ type credentialCache struct {
 func newCredentialCache() *credentialCache {
 	return &credentialCache{
 		entries: make(map[string]credentialEntry),
-		resolve: resolveGitCredential,
+		resolve: resolveCredential,
 	}
 }
 
@@ -53,6 +55,36 @@ func (c *credentialCache) reject(repo string) {
 	c.mu.Unlock()
 }
 
+// resolveCredential turns a selector into a token. Two selector kinds exist:
+// "ghuser:<login>" addresses a gh CLI login directly, anything else is treated
+// as an "owner/repo" whose Git credential identifies the account.
+func resolveCredential(ctx context.Context, selector string) (string, bool) {
+	if user, ok := strings.CutPrefix(selector, pr.GHUserSelectorPrefix); ok {
+		return resolveGHUserToken(ctx, user)
+	}
+	return resolveGitCredential(ctx, selector)
+}
+
+// resolveGHUserToken reads the token gh already holds for a named login. gh
+// keeps one token per account in its keyring, so this reaches a second account
+// without depending on the Git credential helper — which a global
+// `[credential "https://github.com"]` helper override can collapse onto a
+// single token for every repository path.
+func resolveGHUserToken(ctx context.Context, user string) (string, bool) {
+	if user == "" {
+		return "", false
+	}
+	cmd := exec.CommandContext(ctx, "gh", "auth", "token", "--user", user)
+	// The ambient token must not stand in for the requested account.
+	cmd.Env = withoutEnv(os.Environ(), "GH_TOKEN", "GITHUB_TOKEN")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	token := strings.TrimSpace(string(out))
+	return token, token != ""
+}
+
 // resolveGitCredential delegates account selection to ~/.gitconfig. In
 // particular, credential.useHttpPath and helper/includeIf rules can return a
 // different password/token for each owner/repository URL.
@@ -71,6 +103,15 @@ func resolveGitCredential(ctx context.Context, repo string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// CredentialToken resolves the token for a selector, reporting whether one was
+// found. Callers use it to compare identities — never to log or display a token.
+func (c *Client) CredentialToken(ctx context.Context, selector string) (string, bool) {
+	if c.credentials == nil {
+		return "", false
+	}
+	return c.credentials.token(ctx, selector)
 }
 
 func (c *Client) command(ctx context.Context, args ...string) (*exec.Cmd, bool) {
