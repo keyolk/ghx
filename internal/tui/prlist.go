@@ -622,6 +622,7 @@ func (m *prListModel) helpLine() string {
 		"enter", "open",
 		"a", "approve",
 		"x", "close",
+		"M", "merge",
 		"L", "labels",
 		"r", "request",
 		"o", "browser",

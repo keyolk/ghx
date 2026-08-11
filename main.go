@@ -52,9 +52,6 @@ func run() (err error) {
 		return fmt.Errorf("gh CLI not found in PATH — install from https://cli.github.com")
 	}
 	client := gh.NewClient(30 * 1_000_000_000) // 30s
-	if authErr := client.AuthStatus(context.Background()); authErr != nil {
-		return fmt.Errorf("gh not authenticated — run `gh auth login`: %w", authErr)
-	}
 
 	// Load config (missing file = defaults, no error).
 	cfg, cfgErr := config.Load()
@@ -84,6 +81,20 @@ func run() (err error) {
 				log.Printf("detected repo %s from %s (%s)", r.Slug, r.Path, r.Source)
 			}
 		}
+	}
+	authClient := client
+	if detected != "" {
+		authClient = client.WithRepo(detected)
+	} else {
+		for _, source := range cfg.Sources {
+			if source.Repo != "" {
+				authClient = client.WithRepo(source.Repo)
+				break
+			}
+		}
+	}
+	if authErr := authClient.AuthStatus(context.Background()); authErr != nil {
+		return fmt.Errorf("gh not authenticated for the selected repository — check git credentials or run `gh auth login`: %w", authErr)
 	}
 	app := tui.NewAppWithRepo(cfg, km, client, detected)
 

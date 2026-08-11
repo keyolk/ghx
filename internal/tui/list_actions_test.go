@@ -471,3 +471,46 @@ func TestPRListIgnoresResponseFromInvalidatedGeneration(t *testing.T) {
 		t.Errorf("stale response restored cache: %#v", a.list.caches[0])
 	}
 }
+
+func TestBulkMergeUsesExplicitCrossRepoSelection(t *testing.T) {
+	a := testApp(t, sampleRows)
+	a.list.update(keyMsg("A"))
+
+	cmd, handled := a.prActionKey(keyMsg("M"))
+	if !handled || cmd != nil {
+		t.Fatalf("bulk merge should only open confirmation; handled=%v cmd=%v", handled, cmd)
+	}
+	if a.confirm == nil || a.confirm.kind != confirmMerge || !a.confirm.bulk {
+		t.Fatalf("merge confirmation = %#v, want explicit bulk merge", a.confirm)
+	}
+	if len(a.confirm.targets) != 2 {
+		t.Fatalf("merge confirmation has %d targets, want 2", len(a.confirm.targets))
+	}
+	out := a.renderConfirm(120, 24)
+	if !contains(out, "Squash-merge 2 selected PRs") ||
+		!contains(out, "Each PR is merged independently using its repository credential") {
+		t.Errorf("bulk merge confirmation is unclear: %s", out)
+	}
+	if cmd := a.handleConfirmKey(keyMsg("y")); cmd == nil {
+		t.Error("explicit y should start the bulk merge command")
+	}
+}
+
+func TestListMergeWithoutMarksTargetsFocusedPR(t *testing.T) {
+	a := testApp(t, sampleRows)
+	a.list.list.Select(1)
+
+	_, handled := a.prActionKey(keyMsg("M"))
+	if !handled || a.confirm == nil {
+		t.Fatal("M should open merge confirmation for the focused PR")
+	}
+	if a.confirm.bulk || len(a.confirm.targets) != 1 {
+		t.Fatalf("focused merge confirmation = %#v, want one non-bulk target", a.confirm)
+	}
+	if got := a.confirm.target.repo; got != "acme/two" {
+		t.Errorf("focused merge repo = %q, want acme/two", got)
+	}
+	if out := a.renderConfirm(120, 24); !contains(out, "Squash-merge #202 in acme/two") {
+		t.Errorf("focused merge confirmation names wrong target: %s", out)
+	}
+}

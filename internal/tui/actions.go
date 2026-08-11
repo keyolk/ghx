@@ -12,7 +12,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/keyolk/ghx/internal/gh"
-	"github.com/keyolk/ghx/internal/sessionpolicy"
 )
 
 // Review actions and the merge gate. Kept out of app.go so the dispatcher there
@@ -107,14 +106,13 @@ func splitRepoSlug(slug string) (owner, repo string) {
 	return o, r
 }
 
-// startMerge opens the confirmation. Merging is irreversible, so the prompt
-// always appears and the policy gate is checked before it, not after.
+// startMerge opens the irreversible-action confirmation. Authorization is left
+// to GitHub using the credential selected for the PR's repository.
 func (a *App) startMerge() tea.Cmd {
 	if a.detail == nil {
 		return nil
 	}
-	allowed := a.mergeUnlocked || sessionpolicy.MergeAllowed()
-	a.mergePrompt = &mergePrompt{blocked: !allowed, strategy: "squash"}
+	a.mergePrompt = &mergePrompt{strategy: "squash"}
 	return nil
 }
 
@@ -134,13 +132,6 @@ func (a *App) handleMergePromptKey(msg tea.KeyMsg) tea.Cmd {
 		p.strategy = "rebase"
 		return nil
 	case "y":
-		if p.blocked {
-			// Refuse even on an explicit yes: the gate exists so a stray
-			// keystroke can't merge, and unlocking must be a separate act.
-			a.mergePrompt = nil
-			return errCmd(fmt.Errorf(
-				"merge is blocked by session policy — run :merge-unlock first"))
-		}
 		n, strategy, client := a.detail.number, p.strategy, a.detail.client
 		return func() tea.Msg {
 			c, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -202,4 +193,3 @@ func (a *App) openEditor(draft string) tea.Cmd {
 		return editorDoneMsg{body: string(data)}
 	})
 }
-

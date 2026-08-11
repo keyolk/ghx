@@ -109,6 +109,7 @@ const (
 	confirmReopen
 	confirmToggleState
 	confirmReady
+	confirmMerge
 )
 
 // confirmPrompt gates an action behind a yes/no. target preserves the focused
@@ -180,13 +181,19 @@ func (a *App) performConfirmed(ctx context.Context, kind confirmKind, t actionTa
 			return "marked ready", client.Ready(ctx, n, false)
 		}
 		return "converted to draft", client.Ready(ctx, n, true)
+	case confirmMerge:
+		return "merged", client.Merge(ctx, n, "squash")
 	}
 	return "", fmt.Errorf("unsupported confirmation action")
 }
 
 func (a *App) runConfirmed(kind confirmKind, t actionTarget) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		timeout := 30 * time.Second
+		if kind == confirmMerge {
+			timeout = 60 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		verb, err := a.performConfirmed(ctx, kind, t)
 		if kind == confirmApprove {
@@ -215,7 +222,11 @@ func (a *App) runConfirmedMany(kind confirmKind, targets []actionTarget) tea.Cmd
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				timeout := 30 * time.Second
+				if kind == confirmMerge {
+					timeout = 60 * time.Second
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), timeout)
 				defer cancel()
 				_, err := a.performConfirmed(ctx, kind, target)
 				mu.Lock()
@@ -236,6 +247,8 @@ func (a *App) runConfirmedMany(kind confirmKind, targets []actionTarget) tea.Cmd
 		label := fmt.Sprintf("updated %d %s", len(completed), noun)
 		if kind == confirmApprove {
 			label = fmt.Sprintf("approved %d %s", len(completed), noun)
+		} else if kind == confirmMerge {
+			label = fmt.Sprintf("merged %d %s", len(completed), noun)
 		}
 		return bulkActionDoneMsg{label: label, completed: completed, err: errors.Join(errs...)}
 	}
@@ -254,6 +267,9 @@ func (a *App) renderConfirm(width, height int) string {
 		case confirmToggleState:
 			question = fmt.Sprintf("Close or reopen %d selected PRs?", count)
 			note = "Open PRs will close; closed PRs will reopen."
+		case confirmMerge:
+			question = fmt.Sprintf("Squash-merge %d selected PRs?", count)
+			note = "Each PR is merged independently using its repository credential."
 		}
 	} else {
 		switch p.kind {
@@ -270,6 +286,9 @@ func (a *App) renderConfirm(width, height int) string {
 			} else {
 				question = "Convert " + p.target.label() + " back to a draft?"
 			}
+		case confirmMerge:
+			question = "Squash-merge " + p.target.label() + "?"
+			note = "This cannot be undone."
 		}
 	}
 

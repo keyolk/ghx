@@ -15,6 +15,7 @@ import (
 	"github.com/keyolk/ghx/internal/tui/actions"
 	"github.com/keyolk/ghx/internal/tui/admin"
 )
+
 // resolved from --repo or the working directory, and share the same pre-flight
 // (gh installed, authenticated) and terminal handling as the PR view.
 func runSubcommand(args []string, kind string) error {
@@ -37,9 +38,6 @@ func runSubcommand(args []string, kind string) error {
 		return fmt.Errorf("gh CLI not found in PATH — install from https://cli.github.com")
 	}
 	client := gh.NewClient(30_000_000_000)
-	if err := client.AuthStatus(context.Background()); err != nil {
-		return fmt.Errorf("gh not authenticated — run `gh auth login`: %w", err)
-	}
 
 	// Resolve the repository: --repo flag, then detection, then error.
 	repo := repoFlag
@@ -53,6 +51,10 @@ func runSubcommand(args []string, kind string) error {
 	if repo == "" {
 		return fmt.Errorf("no repository specified — use --repo owner/name or run inside a git checkout")
 	}
+	client = client.WithRepo(repo)
+	if err := client.AuthStatus(context.Background()); err != nil {
+		return fmt.Errorf("gh not authenticated for %s — check git credentials or run `gh auth login`: %w", repo, err)
+	}
 
 	if os.Getenv("NO_COLOR") != "" || !isTTY(os.Stdout) {
 		tui.SetNoColor()
@@ -61,9 +63,9 @@ func runSubcommand(args []string, kind string) error {
 	var model tea.Model
 	switch kind {
 	case "admin":
-		model = admin.NewApp(client.WithRepo(repo), repo)
+		model = admin.NewApp(client, repo)
 	case "actions":
-		model = actions.NewApp(client.WithRepo(repo), repo)
+		model = actions.NewApp(client, repo)
 	default:
 		return fmt.Errorf("unknown subcommand %q", kind)
 	}

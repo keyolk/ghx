@@ -20,7 +20,7 @@ actions.
 - `internal/diff` — unified diff parser with LEFT/RIGHT line mapping
 - `internal/config` — ~/.config/ghx/config.yaml
 - `internal/repodetect` — cwd/tmux repo detection
-- `internal/sessionpolicy` — merge gate
+- `internal/gh/credential.go` — repo별 Git credential 선택과 gh 인증 fallback
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
 ## Conventions

@@ -22,6 +22,29 @@ current directory (or the active tmux pane) and leads with that repo's PRs.
 
 Requires [`gh`][gh] installed and authenticated.
 
+### Multiple GitHub accounts
+
+ghx resolves credentials per repository through `git credential fill`, so it
+uses the same `credential.helper`, `credential.useHttpPath`, and `includeIf`
+rules as Git. For example:
+
+```gitconfig
+[credential]
+  helper = ""
+  helper = "!pass-git-helper $@"
+  useHttpPath = true
+
+[includeIf "gitdir:~/src/keyolk/"]
+  path = ~/.gitconfig-keyolk
+```
+
+For `keyolk/ghx`, ghx asks Git for the credential associated with
+`https://github.com/keyolk/ghx.git` and supplies it only to that `gh`
+subprocess. A stale credential that returns HTTP 401 falls back once to the
+active `gh auth` login; permission failures remain on the selected account.
+Merge uses the selected repository credential and GitHub's own permissions and
+branch protection, with an explicit confirmation but no additional ghx policy.
+
 ## Features
 
 - **PR list** — source tabs (My PRs, My reviews, Assigned, configured repos),
@@ -32,7 +55,7 @@ Requires [`gh`][gh] installed and authenticated.
   text search using AND. Filters stay within the current source query, so merged
   PRs require a source that includes merged results (`state:all`/`state:merged`)
 - **Multi-select** — `space` toggles a PR and `A` toggles all visible PRs;
-  approve or close/reopen the selected set with one confirmation
+  approve, close/reopen, or squash-merge the selected set with one confirmation
 - **Diff viewer** — unified and side-by-side (`s` to toggle), tab-aware column
   alignment, comment line wrapping, file folding, syntax highlighting
 - **Inline comments** — `c` on a diff line, `v` for visual range selection,
@@ -41,7 +64,7 @@ Requires [`gh`][gh] installed and authenticated.
   (`C`), all from the list without opening the PR
 - **Checks** — CI status with bucket colors, workflow run log viewer
 - **Label picker** — `L` to toggle labels with live filtering
-- **Merge gate** — two-step confirmation, blocked by session policy by default
+- **Merge** — explicit strategy/confirmation, authorized by the selected repository credential
 - **Command palette** — `:` for vim-style ex commands
 - **NO_COLOR** — reverse-video selection, readable in monochrome
 - **Responsive** — degrades gracefully on narrow terminals
@@ -77,7 +100,7 @@ Press `?` inside the TUI for the full list. Highlights:
 |-----|--------|
 | `enter` | open PR |
 | `space` / `A` | toggle current PR / all visible PRs for multi-select |
-| `a` / `x` | approve / close or reopen selected PRs (from list) |
+| `a` / `x` / `M` | approve / close-reopen / squash-merge selected PRs (from list) |
 | `L` | edit labels on the focused PR |
 | `f` | choose merged / approved / changes requested / unresolved filters |
 | `/` | text search (AND with active status filters) |

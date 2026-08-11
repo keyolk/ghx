@@ -15,8 +15,9 @@ import (
 
 // Client wraps gh CLI invocation with a default timeout.
 type Client struct {
-	timeout time.Duration
-	repo    string // "owner/repo" or empty for auto-detect
+	timeout     time.Duration
+	repo        string // "owner/repo" or empty for auto-detect
+	credentials *credentialCache
 }
 
 // NewClient returns a gh wrapper with the given per-call timeout (default 30s).
@@ -24,7 +25,7 @@ func NewClient(timeout time.Duration) *Client {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	return &Client{timeout: timeout}
+	return &Client{timeout: timeout, credentials: newCredentialCache()}
 }
 
 // WithRepo scopes subsequent calls to a specific "owner/repo".
@@ -44,8 +45,7 @@ func (c *Client) exec(ctx context.Context, args ...string) ([]byte, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	out, err := cmd.Output()
+	out, err := c.output(ctx, args...)
 	if err != nil {
 		// gh explains refusals on stderr ("can not approve your own pull
 		// request"). Dropping it leaves the user with a bare exit status and no
@@ -57,6 +57,35 @@ func (c *Client) exec(ctx context.Context, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("gh %v: %w", args, err)
 	}
 	return out, nil
+}
+
+func (c *Client) output(ctx context.Context, args ...string) ([]byte, error) {
+	cmd, credentialUsed := c.command(ctx, args...)
+	out, err := cmd.Output()
+	if err == nil || !credentialUsed || !isCredentialAuthFailure(err) {
+		return out, err
+	}
+
+	// A stale token in the Git credential store must not make a repository
+	// unusable when gh already has a valid active login. Retry only authentication
+	// failures; permission refusals (403) remain attached to the selected account.
+	c.credentials.reject(c.repo)
+	fallback := exec.CommandContext(ctx, "gh", args...)
+	return fallback.Output()
+}
+
+func isCredentialAuthFailure(err error) bool {
+	ee, ok := err.(*exec.ExitError)
+	if !ok {
+		return false
+	}
+	message := strings.ToLower(string(ee.Stderr))
+	return strings.Contains(message, "bad credentials") ||
+		strings.Contains(message, "http 401") ||
+		strings.Contains(message, "status 401") ||
+		strings.Contains(message, "requires authentication") ||
+		strings.Contains(message, "token in gh_token is invalid") ||
+		strings.Contains(message, "failed to log in")
 }
 
 // subcommandWords returns the leading non-flag words of an argv, for error text
@@ -85,8 +114,7 @@ func (c *Client) execJSON(ctx context.Context, target interface{}, args ...strin
 func (c *Client) execRaw(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	out, err := cmd.Output()
+	out, err := c.output(ctx, args...)
 	if err != nil {
 		// gh writes API errors to stderr; surface them so the TUI can show why.
 		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
@@ -125,6 +153,8 @@ func appendWithRepo(args []string, repo string) []string {
 
 // AuthStatus returns nil if `gh` is authenticated, an error otherwise.
 func (c *Client) AuthStatus(ctx context.Context) error {
-	_, err := c.exec(ctx, "auth", "status")
+	// auth status has no --repo flag, but a scoped client still supplies the
+	// credential selected for that repository through GH_TOKEN.
+	_, err := c.execRaw(ctx, "auth", "status")
 	return err
 }

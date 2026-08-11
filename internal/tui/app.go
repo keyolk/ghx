@@ -67,15 +67,10 @@ type App struct {
 	toastAt time.Time
 
 	spinnerFrame int
-
-	// mergeUnlocked is process-local: :merge-unlock relaxes ghx's own guard for
-	// this run only and never edits the session policy on disk.
-	mergeUnlocked bool
 }
 
 // mergePrompt holds the two-step merge confirmation.
 type mergePrompt struct {
-	blocked  bool   // true = policy blocks merging; y is refused
 	strategy string // squash | merge | rebase
 }
 
@@ -427,7 +422,7 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch key {
 	// L rather than l: lowercase l is the vim "right" alias, which opens the
 	// preview pane in the list and cycles tabs in the detail view.
-	case "a", "x", "L", "r":
+	case "a", "x", "L", "r", "M":
 		// fall through to the target lookup below
 	case "o":
 		t, ok := a.currentTarget()
@@ -464,6 +459,12 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 			return a.askConfirm(confirmReopen, targets[0]), true
 		}
 		return a.askConfirm(confirmClose, targets[0]), true
+	case "M":
+		targets, ok := a.actionTargets()
+		if !ok {
+			return errCmd(fmt.Errorf("no pull request selected")), true
+		}
+		return a.askConfirmTargets(confirmMerge, targets), true
 	}
 
 	t, ok := a.currentTarget()

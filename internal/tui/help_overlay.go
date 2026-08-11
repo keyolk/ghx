@@ -37,11 +37,11 @@ func helpSections() []helpSection {
 		}},
 		{"PR actions", [][2]string{
 			{"space / A", "toggle row / all visible rows for multi-select"},
-			{"a / x", "approve · close/reopen selected PRs (asks first)"},
+			{"a / x / M", "approve · close/reopen · squash-merge selected PRs"},
 			{"L", "edit labels on the focused row"},
 			{":checkout", "check the branch out locally"},
 			{":ready", "toggle ready-for-review"},
-			{":merge", "merge — blocked until :merge-unlock"},
+			{":merge", "merge with strategy and confirmation"},
 		}},
 		{"Views", [][2]string{
 			{"1 Overview", "metadata and description"},

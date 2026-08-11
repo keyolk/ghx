@@ -3,6 +3,7 @@ package gh
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/keyolk/ghx/internal/pr"
@@ -63,31 +64,62 @@ type statusPageResponse struct {
 	} `json:"data"`
 }
 
+type statusGroup struct {
+	client  *Client
+	indices map[string][]int
+}
+
 // EnrichPRStatuses fills merge/review/conversation state without turning an
-// optional status lookup into a failed base list. Callers can keep the returned
-// summaries and surface err as a warning.
+// optional status lookup into a failed base list. PRs are grouped by the token
+// selected through git credential fill, so one cross-repository queue can span
+// accounts without sending a node ID through the wrong GitHub identity.
 func (c *Client) EnrichPRStatuses(ctx context.Context, summaries []pr.Summary) ([]pr.Summary, error) {
 	out := append([]pr.Summary(nil), summaries...)
-	indices := make(map[string][]int, len(out))
-	args := []string{"api", "graphql", "-f", "query=" + prStatusBatchQuery}
+	groups := make(map[string]*statusGroup)
 	for i := range out {
 		if out[i].ID == "" {
 			continue
 		}
-		indices[out[i].ID] = append(indices[out[i].ID], i)
-		args = append(args, "-F", "ids[]="+out[i].ID)
-	}
-	if len(indices) == 0 {
-		return out, nil
+		repo := out[i].Repo
+		if repo == "" {
+			repo = c.repo
+		}
+		scoped := c.WithRepo(repo)
+		key := "active-gh-account"
+		if c.credentials != nil {
+			if token, ok := c.credentials.token(ctx, repo); ok {
+				key = "token:" + token
+			}
+		}
+		group := groups[key]
+		if group == nil {
+			group = &statusGroup{client: scoped, indices: make(map[string][]int)}
+			groups[key] = group
+		}
+		group.indices[out[i].ID] = append(group.indices[out[i].ID], i)
 	}
 
-	raw, err := c.execRaw(ctx, args...)
+	var errs []error
+	for _, group := range groups {
+		if err := enrichPRStatusGroup(ctx, group.client, out, group.indices); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return out, errors.Join(errs...)
+}
+
+func enrichPRStatusGroup(ctx context.Context, client *Client, out []pr.Summary, indices map[string][]int) error {
+	args := []string{"api", "graphql", "-f", "query=" + prStatusBatchQuery}
+	for id := range indices {
+		args = append(args, "-F", "ids[]="+id)
+	}
+	raw, err := client.execRaw(ctx, args...)
 	if err != nil {
-		return out, err
+		return err
 	}
 	var resp statusBatchResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return out, fmt.Errorf("decode PR statuses: %w", err)
+		return fmt.Errorf("decode PR statuses: %w", err)
 	}
 
 	seen := make(map[string]bool, len(resp.Data.Nodes))
@@ -99,9 +131,9 @@ func (c *Client) EnrichPRStatuses(ctx context.Context, summaries []pr.Summary) (
 		unresolved := countUnresolved(node.ReviewThreads)
 		threads := node.ReviewThreads
 		for threads.PageInfo.HasNextPage && threads.PageInfo.EndCursor != "" {
-			threads, err = c.fetchStatusThreadPage(ctx, node.ID, threads.PageInfo.EndCursor)
+			threads, err = client.fetchStatusThreadPage(ctx, node.ID, threads.PageInfo.EndCursor)
 			if err != nil {
-				return out, fmt.Errorf("load conversations for %s: %w", node.ID, err)
+				return fmt.Errorf("load conversations for %s: %w", node.ID, err)
 			}
 			unresolved += countUnresolved(threads)
 		}
@@ -115,10 +147,10 @@ func (c *Client) EnrichPRStatuses(ctx context.Context, summaries []pr.Summary) (
 
 	for id := range indices {
 		if !seen[id] {
-			return out, fmt.Errorf("status missing for PR node %s", id)
+			return fmt.Errorf("status missing for PR node %s", id)
 		}
 	}
-	return out, nil
+	return nil
 }
 
 func (c *Client) fetchStatusThreadPage(ctx context.Context, id, cursor string) (statusThreadConnection, error) {

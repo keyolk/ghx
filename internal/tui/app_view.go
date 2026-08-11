@@ -107,9 +107,6 @@ func (a *App) helpLine() string {
 			fmtHints("sp", "toggle", "enter", "apply", "c", "clear", "esc", "cancel"), a.width)
 	}
 	if a.mergePrompt != nil {
-		if a.mergePrompt.blocked {
-			return truncateFooter(fmtHints("esc", "close"), a.width)
-		}
 		return truncateFooter(fmtHints("y", "merge", "s/m/b", "strategy", "esc", "cancel"), a.width)
 	}
 	if a.palette.active {
@@ -144,13 +141,6 @@ func (a *App) renderMergePrompt(width, height int) string {
 		}
 	}
 	var b strings.Builder
-	if p.blocked {
-		b.WriteString(checkFailStyle.Render("⚠ merge is blocked by session policy") + "\n\n")
-		b.WriteString(fmt.Sprintf("Merging #%d into %s is not permitted.\n", num, base))
-		b.WriteString(dimStyle.Render("Run :merge-unlock to allow it for this ghx run.\n"))
-		b.WriteString("\n" + fmtHints("esc", "close"))
-		return decoratedPane("merge blocked", b.String(), min(width-4, 70), 8, true)
-	}
 	b.WriteString(fmt.Sprintf("Merge #%d into %s?\n", num, base))
 	b.WriteString(checkFailStyle.Render("This cannot be undone.") + "\n\n")
 	b.WriteString("Strategy: " + strategyChoice(p.strategy) + "\n\n")

@@ -79,10 +79,6 @@ func (a *App) runPalette(line string) tea.Cmd {
 			return a.paletteNeedsPR()
 		}
 		return a.startMerge()
-	case "merge-unlock":
-		a.mergeUnlocked = true
-		a.setToast("merge unlocked for this ghx run only (session policy unchanged)")
-		return nil
 	case "open":
 		if a.detail != nil && a.detail.detail != nil {
 			return a.openBrowser(a.detail.detail.URL)
@@ -108,4 +104,3 @@ func (a *App) runPalette(line string) tea.Cmd {
 func (a *App) paletteNeedsPR() tea.Cmd {
 	return errCmd(fmt.Errorf("open a PR first"))
 }
-
