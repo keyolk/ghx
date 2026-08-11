@@ -2,6 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -512,5 +515,126 @@ func TestListMergeWithoutMarksTargetsFocusedPR(t *testing.T) {
 	}
 	if out := a.renderConfirm(120, 24); !contains(out, "Squash-merge #202 in acme/two") {
 		t.Errorf("focused merge confirmation names wrong target: %s", out)
+	}
+}
+
+func fakeActionApp(t *testing.T, rows []pr.Summary) (*App, string) {
+	t.Helper()
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "calls")
+	writeTestExecutable(t, filepath.Join(dir, "git"), "#!/bin/sh\nexit 1\n")
+	writeTestExecutable(t, filepath.Join(dir, "gh"), `#!/bin/sh
+printf '%s\n' "$*" >> "$CAPTURE"
+case "$*" in
+  "label list"*) printf '%s\n' '[{"name":"common","description":"shared","color":"ffffff"}]' ;;
+  *"--json labels"*) printf '%s\n' '{"labels":[]}' ;;
+esac
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CAPTURE", capture)
+	t.Setenv("GH_TOKEN", "test-token")
+	return testApp(t, rows), capture
+}
+
+func writeTestExecutable(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatalf("write executable: %v", err)
+	}
+}
+
+func capturedActionCalls(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("read calls: %v", err)
+	}
+	lines := strings.FieldsFunc(strings.TrimSpace(string(data)), func(r rune) bool { return r == '\n' })
+	sort.Strings(lines)
+	return lines
+}
+
+func runBulkKey(t *testing.T, a *App, key string) tea.Msg {
+	t.Helper()
+	a.Update(keyMsg("space"))
+	a.Update(keyMsg("j"))
+	a.Update(keyMsg("space"))
+	if len(a.list.selected) != 2 {
+		t.Fatalf("selected %d PRs, want two", len(a.list.selected))
+	}
+	a.Update(keyMsg(key))
+	if a.confirm == nil || len(a.confirm.targets) != 2 {
+		t.Fatalf("%s confirmation targets = %#v, want two", key, a.confirm)
+	}
+	_, cmd := a.Update(keyMsg("y"))
+	if cmd == nil {
+		t.Fatalf("%s confirmation produced no command", key)
+	}
+	return cmd()
+}
+
+func TestBulkActionsExecuteEverySelectedPRThroughAppUpdate(t *testing.T) {
+	rows := []pr.Summary{
+		{Number: 101, Repo: "acme/one", State: "OPEN", IsDraft: false},
+		{Number: 202, Repo: "acme/two", State: "OPEN", IsDraft: true},
+	}
+	cases := []struct {
+		name string
+		key  string
+		want []string
+	}{
+		{"approve", "a", []string{"pr review 101 --repo acme/one --approve", "pr review 202 --repo acme/two --approve"}},
+		{"close", "x", []string{"pr close 101 --repo acme/one", "pr close 202 --repo acme/two"}},
+		{"merge", "M", []string{"pr merge 101 --repo acme/one --squash", "pr merge 202 --repo acme/two --squash"}},
+		{"ready-draft", "d", []string{"pr ready 101 --repo acme/one --undo", "pr ready 202 --repo acme/two"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, capture := fakeActionApp(t, rows)
+			msg := runBulkKey(t, a, tc.key)
+			result, ok := msg.(bulkActionDoneMsg)
+			if !ok || result.err != nil || len(result.completed) != 2 {
+				t.Fatalf("result = %#v, want two successes", msg)
+			}
+			if got := capturedActionCalls(t, capture); strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("calls = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBulkLabelsExecuteEverySelectedPR(t *testing.T) {
+	a, capture := fakeActionApp(t, sampleRows)
+	a.Update(keyMsg("A"))
+	_, load := a.Update(keyMsg("L"))
+	if load == nil || a.labels == nil || len(a.labels.targets) != 2 {
+		t.Fatal("L should open a bulk label picker")
+	}
+	a.Update(load())
+	if len(a.labels.all) != 1 || a.labels.all[0].Name != "common" {
+		t.Fatalf("available labels = %#v", a.labels.all)
+	}
+	a.labels.pending["common"] = true
+	_, apply := a.Update(keyMsg("enter"))
+	result, ok := apply().(bulkActionDoneMsg)
+	if !ok || result.err != nil || len(result.completed) != 2 {
+		t.Fatalf("label result = %#v", result)
+	}
+	calls := capturedActionCalls(t, capture)
+	var edits []string
+	for _, call := range calls {
+		if strings.HasPrefix(call, "pr edit ") {
+			edits = append(edits, call)
+		}
+	}
+	want := []string{
+		"pr edit 101 --repo acme/one --add-label common",
+		"pr edit 202 --repo acme/two --add-label common",
+	}
+	if strings.Join(edits, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("label edits = %q, want %q", edits, want)
 	}
 }

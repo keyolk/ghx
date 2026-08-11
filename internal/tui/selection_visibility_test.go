@@ -201,8 +201,9 @@ func TestSelectedRowsAcrossViewsHaveUnbrokenBackground(t *testing.T) {
 	t.Run("labels", func(t *testing.T) {
 		a := &App{width: 120, height: 30, client: gh.NewClient(0)}
 		a.labels = &labelPicker{
-			target:  actionTarget{number: 1, repo: "acme/one"},
+			targets: []actionTarget{{number: 1, repo: "acme/one"}},
 			applied: map[string]bool{},
+			mixed:   map[string]bool{},
 			pending: map[string]bool{},
 			all: []gh.RepoLabel{
 				{Name: "bug", Description: "a defect"},

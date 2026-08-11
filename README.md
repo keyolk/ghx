@@ -101,7 +101,8 @@ Press `?` inside the TUI for the full list. Highlights:
 | `enter` | open PR |
 | `space` / `A` | toggle current PR / all visible PRs for multi-select |
 | `a` / `x` / `M` | approve / close-reopen / squash-merge selected PRs (from list) |
-| `L` | edit labels on the focused PR |
+| `L` | edit labels on selected PRs; cross-repo selections show common labels |
+| `d` / `:ready` | toggle ready/draft on selected PRs |
 | `f` | choose merged / approved / changes requested / unresolved filters |
 | `/` | text search (AND with active status filters) |
 | `c` | comment on diff line |

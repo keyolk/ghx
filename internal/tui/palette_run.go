@@ -64,16 +64,11 @@ func (a *App) runPalette(line string) tea.Cmd {
 			return actionDoneMsg{label: "checkout", err: client.Checkout(c, n)}
 		}
 	case "ready":
-		if a.detail == nil {
+		targets, ok := a.actionTargets()
+		if !ok {
 			return a.paletteNeedsPR()
 		}
-		n, client := a.detail.number, a.detail.client
-		undo := a.detail.detail != nil && !a.detail.detail.IsDraft
-		return func() tea.Msg {
-			c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			return actionDoneMsg{label: "ready", err: client.Ready(c, n, undo)}
-		}
+		return a.askConfirmTargets(confirmReady, targets)
 	case "merge":
 		if a.detail == nil {
 			return a.paletteNeedsPR()

@@ -264,6 +264,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.state == viewPRList && a.list != nil && len(msg.completed) > 0 {
 			return a, a.list.invalidateCachesAndRefresh()
 		}
+		if a.detail != nil && len(msg.completed) > 0 {
+			return a, a.detail.load()
+		}
 		return a, nil
 
 	case labelsLoadedMsg:
@@ -278,6 +281,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.labels.all = msg.all
 		for _, name := range msg.applied {
 			a.labels.applied[name] = true
+		}
+		for _, name := range msg.mixed {
+			a.labels.mixed[name] = true
 		}
 		return a, nil
 
@@ -422,7 +428,7 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch key {
 	// L rather than l: lowercase l is the vim "right" alias, which opens the
 	// preview pane in the list and cycles tabs in the detail view.
-	case "a", "x", "L", "r", "M":
+	case "a", "x", "L", "r", "M", "d":
 		// fall through to the target lookup below
 	case "o":
 		t, ok := a.currentTarget()
@@ -465,6 +471,18 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 			return errCmd(fmt.Errorf("no pull request selected")), true
 		}
 		return a.askConfirmTargets(confirmMerge, targets), true
+	case "L":
+		targets, ok := a.actionTargets()
+		if !ok {
+			return errCmd(fmt.Errorf("no pull request selected")), true
+		}
+		return a.openLabelPickerTargets(targets), true
+	case "d":
+		targets, ok := a.actionTargets()
+		if !ok {
+			return errCmd(fmt.Errorf("no pull request selected")), true
+		}
+		return a.askConfirmTargets(confirmReady, targets), true
 	}
 
 	t, ok := a.currentTarget()
@@ -472,8 +490,6 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		return errCmd(fmt.Errorf("no pull request selected")), true
 	}
 	switch key {
-	case "L":
-		return a.openLabelPicker(t), true
 	case "r":
 		// Requesting changes without saying why isn't useful, so this opens the
 		// composer and submits the review with its body.

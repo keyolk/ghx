@@ -134,7 +134,8 @@ type listReturnMsg struct{}
 // for the label picker.
 type labelsLoadedMsg struct {
 	all     []gh.RepoLabel
-	applied []string
+	applied []string // present on every target
+	mixed   []string // present on some, but not every target
 	err     error
 }
 

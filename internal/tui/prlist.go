@@ -624,6 +624,7 @@ func (m *prListModel) helpLine() string {
 		"x", "close",
 		"M", "merge",
 		"L", "labels",
+		"d", "ready/draft",
 		"r", "request",
 		"o", "browser",
 		"f", "status",
