@@ -530,18 +530,33 @@ func (a *App) openTargetInBrowser(t actionTarget) tea.Cmd {
 // openTargetsInBrowser opens every selected PR. Opening is read-only, so it
 // runs without a confirmation and leaves the selection intact — unlike close or
 // merge, looking at a PR does not consume the mark that chose it.
+//
+// Targets whose row already carried a URL are opened together, so the batch
+// reports one result instead of a toast per PR. Only a target missing its URL
+// needs an API round trip, which stays its own command.
 func (a *App) openTargetsInBrowser(targets []actionTarget) tea.Cmd {
 	if len(targets) == 1 {
 		return a.openTargetInBrowser(targets[0])
 	}
-	cmds := make([]tea.Cmd, 0, len(targets))
+	var urls []string
+	var cmds []tea.Cmd
 	for _, target := range targets {
+		if target.url != "" {
+			urls = append(urls, target.url)
+			continue
+		}
 		if cmd := a.openTargetInBrowser(target); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}
+	if cmd := a.openBrowserAll(urls); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if len(cmds) == 0 {
 		return nil
+	}
+	if len(cmds) == 1 {
+		return cmds[0]
 	}
 	return tea.Batch(cmds...)
 }

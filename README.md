@@ -139,6 +139,9 @@ detect_panes: true
 # Editor for ^e in the comment composer
 editor: ""
 
+# Command that opens PR URLs; empty uses $BROWSER, then open/xdg-open
+browser: ""
+
 # List/preview split ratio
 diff_split_ratio: 40
 ```

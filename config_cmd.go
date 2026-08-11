@@ -136,6 +136,11 @@ detect_panes: true
 # Editor for ^e in the comment composer. Empty uses $EDITOR, then vi.
 editor: ""
 
+# Command that opens PR URLs (o and :open). It receives the URL as its single
+# argument. Empty uses $BROWSER, then the platform opener (open on macOS,
+# xdg-open elsewhere).
+browser: ""
+
 # How often to refresh the visible source.
 poll_interval: "30s"
 

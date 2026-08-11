@@ -668,6 +668,9 @@ func fakeOpener(t *testing.T) string {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("OPEN_CAPTURE", capture)
+	// A developer's own $BROWSER would otherwise launch a real browser here,
+	// and the capture would stay empty.
+	t.Setenv("BROWSER", "")
 	return capture
 }
 
@@ -776,5 +779,74 @@ func TestPaletteOpenUsesTheRowsRealURL(t *testing.T) {
 
 	if got, want := openedURLs(t, capture), []string{openRows[0].URL}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("palette opened %q, want %q", got, want)
+	}
+}
+
+// A bulk open reports once for the batch. Firing one command per URL let each
+// set the toast in arbitrary order, so a failure was overwritten by a later
+// success and the user was told everything worked.
+func TestBulkOpenReportsOneAggregateResult(t *testing.T) {
+	fakeOpener(t)
+	a := testApp(t, openRows)
+	a.Update(keyMsg("A"))
+
+	_, cmd := a.Update(keyMsg("o"))
+	msg := cmd()
+	toast, ok := msg.(toastMsg)
+	if !ok {
+		t.Fatalf("bulk open result = %#v, want a single toastMsg", msg)
+	}
+	if !strings.Contains(toast.text, "2") {
+		t.Errorf("toast = %q, want it to name how many opened", toast.text)
+	}
+}
+
+// A failing opener must surface as an error naming how many made it, not be
+// hidden behind a success toast from another URL.
+func TestBulkOpenSurfacesFailure(t *testing.T) {
+	dir := t.TempDir()
+	// Fails only for the second PR, so one success and one failure race.
+	writeTestExecutable(t, filepath.Join(dir, "open"), `#!/bin/sh
+case "$1" in *"/pull/202") exit 1 ;; esac
+`)
+	writeTestExecutable(t, filepath.Join(dir, "xdg-open"), `#!/bin/sh
+case "$1" in *"/pull/202") exit 1 ;; esac
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BROWSER", "")
+
+	a := testApp(t, openRows)
+	a.Update(keyMsg("A"))
+	_, cmd := a.Update(keyMsg("o"))
+	msg := cmd()
+	failure, ok := msg.(errMsg)
+	if !ok {
+		t.Fatalf("result = %#v, want errMsg naming the partial failure", msg)
+	}
+	if !strings.Contains(failure.err.Error(), "opened 1 of 2") {
+		t.Errorf("error = %q, want it to report 1 of 2 opened", failure.err)
+	}
+}
+
+// The configured browser is what actually runs, not the platform default.
+func TestConfiguredBrowserIsUsed(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "opened")
+	writeTestExecutable(t, filepath.Join(dir, "my-browser"),
+		"#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$OPEN_CAPTURE\"\n")
+	// The platform default is present but must lose to the configured command.
+	writeTestExecutable(t, filepath.Join(dir, "open"), "#!/bin/sh\nexit 1\n")
+	writeTestExecutable(t, filepath.Join(dir, "xdg-open"), "#!/bin/sh\nexit 1\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("OPEN_CAPTURE", capture)
+	t.Setenv("BROWSER", "")
+
+	a := testApp(t, openRows)
+	a.cfg.Browser = "my-browser"
+	_, cmd := a.Update(keyMsg("o"))
+	runCmds(t, a, cmd)
+
+	if got, want := openedURLs(t, capture), []string{openRows[0].URL}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("configured browser opened %q, want %q", got, want)
 	}
 }
