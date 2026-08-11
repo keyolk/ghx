@@ -25,6 +25,7 @@ type actionTarget struct {
 	repo           string // "owner/name"
 	credentialRepo string // Git credential selector for the account that found it
 	title          string // for confirmation text; not used in requests
+	url            string // web URL when the row carried one; resolved on demand otherwise
 	isDraft        bool
 	state          string // OPEN | CLOSED | MERGED
 }
@@ -66,6 +67,7 @@ func (a *App) currentTarget() (actionTarget, bool) {
 		}
 		if d := a.detail.detail; d != nil {
 			t.title, t.isDraft, t.state = d.Title, d.IsDraft, d.State
+			t.url = d.URL
 		}
 		return t, true
 	}
@@ -80,7 +82,7 @@ func (a *App) currentTarget() (actionTarget, bool) {
 func targetFromSummary(p prSummary) actionTarget {
 	return actionTarget{
 		number: p.Number, repo: p.Repo, credentialRepo: p.CredentialRepo, title: p.Title,
-		isDraft: p.IsDraft, state: p.State,
+		url: p.URL, isDraft: p.IsDraft, state: p.State,
 	}
 }
 

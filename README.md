@@ -151,7 +151,7 @@ Press `?` inside the TUI for the full list. Highlights:
 |-----|--------|
 | `enter` | open PR |
 | `space` / `A` | toggle current PR / all visible PRs for multi-select |
-| `a` / `x` / `M` | approve / close-reopen / squash-merge selected PRs (from list) |
+| `a` / `x` / `M` / `o` | approve / close-reopen / squash-merge / open selected PRs (from list) |
 | `L` | edit labels on selected PRs; cross-repo selections show common labels |
 | `d` / `:ready` | toggle ready/draft on selected PRs |
 | `f` | choose merged / approved / changes requested / unresolved filters |
@@ -160,7 +160,7 @@ Press `?` inside the TUI for the full list. Highlights:
 | `v` | visual range for multi-line comment |
 | `s` | toggle unified / side-by-side diff |
 | `h` / `l` | switch diff column (side-by-side) |
-| `o` | fold file (diff tab) / open in browser |
+| `o` | fold file (diff tab) / open selected PRs in browser |
 | `:` | command palette |
 | `?` | help |
 

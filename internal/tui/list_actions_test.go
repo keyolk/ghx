@@ -655,3 +655,126 @@ func TestBulkLabelsExecuteEverySelectedPR(t *testing.T) {
 		t.Fatalf("label edits = %q, want %q", edits, want)
 	}
 }
+
+// fakeOpener puts the platform opener on PATH so tests observe the URLs that
+// were actually launched, rather than trusting the target struct.
+func fakeOpener(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "opened")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$OPEN_CAPTURE\"\n"
+	for _, name := range []string{"open", "xdg-open"} {
+		writeTestExecutable(t, filepath.Join(dir, name), script)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("OPEN_CAPTURE", capture)
+	return capture
+}
+
+func openedURLs(t *testing.T, capture string) []string {
+	t.Helper()
+	data, err := os.ReadFile(capture)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatal(err)
+	}
+	var out []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+var openRows = []pr.Summary{
+	{Number: 101, Repo: "acme/one", State: "OPEN", URL: "https://github.com/acme/one/pull/101"},
+	{Number: 202, Repo: "acme/two", State: "OPEN", URL: "https://github.com/acme/two/pull/202"},
+}
+
+// runCmds drains a command (including tea.Batch) and feeds each resulting
+// message back through Update, which is how the real loop reaches openBrowser.
+func runCmds(t *testing.T, a *App, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	switch m := msg.(type) {
+	case tea.BatchMsg:
+		for _, sub := range m {
+			runCmds(t, a, sub)
+		}
+	case nil:
+	default:
+		_, next := a.Update(msg)
+		runCmds(t, a, next)
+	}
+}
+
+// Opening was the one list action still bound to the focused row: `o` opened the
+// cursor's PR no matter how many were marked. Every selected PR must open its
+// own page.
+func TestOpenActionOpensEverySelectedPR(t *testing.T) {
+	capture := fakeOpener(t)
+	a := testApp(t, openRows)
+	a.Update(keyMsg("A"))
+	if len(a.list.selected) != 2 {
+		t.Fatalf("selected %d PRs, want two", len(a.list.selected))
+	}
+
+	_, cmd := a.Update(keyMsg("o"))
+	runCmds(t, a, cmd)
+
+	got := openedURLs(t, capture)
+	want := []string{openRows[0].URL, openRows[1].URL}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("opened %q, want %q", got, want)
+	}
+}
+
+// With nothing marked, `o` still opens the focused PR — and only that one.
+func TestOpenActionWithoutSelectionOpensFocusedPR(t *testing.T) {
+	capture := fakeOpener(t)
+	a := testApp(t, openRows)
+
+	_, cmd := a.Update(keyMsg("o"))
+	runCmds(t, a, cmd)
+
+	if got, want := openedURLs(t, capture), []string{openRows[0].URL}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("opened %q, want %q", got, want)
+	}
+}
+
+// The selection survives an open: unlike close or merge, reading a PR does not
+// consume the mark that chose it, and it must not sit behind a confirmation.
+func TestOpenKeepsSelectionAndSkipsConfirmation(t *testing.T) {
+	fakeOpener(t)
+	a := testApp(t, openRows)
+	a.Update(keyMsg("A"))
+	_, cmd := a.Update(keyMsg("o"))
+	runCmds(t, a, cmd)
+
+	if len(a.list.selected) != 2 {
+		t.Errorf("selection = %d PRs after open, want both kept", len(a.list.selected))
+	}
+	if a.confirm != nil {
+		t.Errorf("open raised a confirmation prompt: %#v", a.confirm)
+	}
+}
+
+// The palette built its URL from the PR number alone, producing
+// github.com/pull/N — a link to nothing. It now shares the `o` key's path.
+func TestPaletteOpenUsesTheRowsRealURL(t *testing.T) {
+	capture := fakeOpener(t)
+	a := testApp(t, openRows)
+
+	runCmds(t, a, a.runPalette("open"))
+
+	if got, want := openedURLs(t, capture), []string{openRows[0].URL}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("palette opened %q, want %q", got, want)
+	}
+}
