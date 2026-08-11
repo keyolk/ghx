@@ -51,6 +51,11 @@ func runSubcommand(args []string, kind string) error {
 	}
 	client := gh.NewClient(30_000_000_000)
 
+	// Route logging to a file before anything logs. Detection writes a line per
+	// repository it finds, and stdout/stderr are the render surface — a leaked
+	// log line lands on top of the TUI's first frame.
+	_ = setupLogging()
+
 	// Resolve the repository: --repo flag, then detection, then error. Detection
 	// matches the PR list's, so `ghx admin` in a scratch pane targets the same
 	// repository the list would have led with.
