@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ type Config struct {
 	Keymap         KeymapOverrides `yaml:"keymap"`
 	Colors         ColorOverrides  `yaml:"colors"`
 	Editor         string          `yaml:"editor"`
+	Browser        string          `yaml:"browser"`
 	PollInterval   string          `yaml:"poll_interval"`
 	DiffSplitRatio int             `yaml:"diff_split_ratio"`
 
@@ -153,6 +155,9 @@ func merge(dst *Config, file *Config) {
 	}
 	if file.Editor != "" {
 		dst.Editor = file.Editor
+	}
+	if file.Browser != "" {
+		dst.Browser = file.Browser
 	}
 	if file.PollInterval != "" {
 		dst.PollInterval = file.PollInterval
@@ -320,6 +325,27 @@ func (c *Config) EditorCommand() string {
 		return e
 	}
 	return "vi"
+}
+
+// BrowserCommand resolves the URL opener: config > $BROWSER > the platform
+// default (open on macOS, xdg-open elsewhere).
+//
+// Like EditorCommand this is a plain command name that receives the URL as its
+// single argument. $BROWSER's fuller conventions — %s placeholders and
+// colon-separated fallback lists — are deliberately not interpreted: a value
+// using them would be handed to exec as a literal command name and fail
+// visibly, which beats guessing at a syntax nobody agrees on.
+func (c *Config) BrowserCommand() string {
+	if c.Browser != "" {
+		return c.Browser
+	}
+	if b := os.Getenv("BROWSER"); b != "" {
+		return b
+	}
+	if runtime.GOOS == "darwin" {
+		return "open"
+	}
+	return "xdg-open"
 }
 
 // Ensure pr.Summary is referenced so the import stays valid even if the

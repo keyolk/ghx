@@ -2,10 +2,10 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
@@ -145,22 +145,61 @@ func (a *App) handleMergePromptKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// openBrowser opens a URL with the platform opener.
+// openURL hands one URL to the configured opener.
+func (a *App) openURL(ctx context.Context, url string) error {
+	c, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(c, a.cfg.BrowserCommand(), url).Run(); err != nil {
+		return fmt.Errorf("open %s: %w", url, err)
+	}
+	return nil
+}
+
+// openBrowser opens a URL with the configured opener.
 func (a *App) openBrowser(url string) tea.Cmd {
 	if url == "" {
 		return nil
 	}
-	opener := "xdg-open"
-	if runtime.GOOS == "darwin" {
-		opener = "open"
-	}
 	return func() tea.Msg {
-		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := exec.CommandContext(c, opener, url).Run(); err != nil {
-			return errMsg{err: fmt.Errorf("open %s: %w", url, err)}
+		if err := a.openURL(context.Background(), url); err != nil {
+			return errMsg{err: err}
 		}
 		return toastMsg{text: "opened in browser"}
+	}
+}
+
+// openBrowserAll opens several URLs from a single command, reporting one
+// result for the batch.
+//
+// Sequential rather than a tea.Batch of individual opens: those finish in
+// arbitrary order and each sets the toast, so a failure is silently replaced by
+// a later success and the user is told everything worked.
+func (a *App) openBrowserAll(urls []string) tea.Cmd {
+	if len(urls) == 0 {
+		return nil
+	}
+	if len(urls) == 1 {
+		return a.openBrowser(urls[0])
+	}
+	return func() tea.Msg {
+		ctx := context.Background()
+		opened := 0
+		var errs []error
+		for _, url := range urls {
+			if url == "" {
+				continue
+			}
+			if err := a.openURL(ctx, url); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			opened++
+		}
+		if len(errs) > 0 {
+			return errMsg{err: fmt.Errorf("opened %d of %d: %w",
+				opened, len(urls), errors.Join(errs...))}
+		}
+		return toastMsg{text: fmt.Sprintf("opened %d PRs in browser", opened)}
 	}
 }
 

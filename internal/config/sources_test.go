@@ -1,6 +1,7 @@
 package config
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -330,5 +331,28 @@ func TestPaneDetectionToggle(t *testing.T) {
 	on := true
 	if !(&Config{DetectPanes: &on}).PaneDetectionEnabled() {
 		t.Error("detect_panes: true must enable pane detection")
+	}
+}
+
+// The opener follows the same shape as EditorCommand: an explicit setting wins,
+// then the environment, then a platform default. ghx previously hard-coded the
+// platform default and ignored a user's configured browser entirely.
+func TestBrowserCommandPrecedence(t *testing.T) {
+	platform := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		platform = "open"
+	}
+
+	t.Setenv("BROWSER", "")
+	if got := (&Config{}).BrowserCommand(); got != platform {
+		t.Errorf("bare default = %q, want %q", got, platform)
+	}
+
+	t.Setenv("BROWSER", "env-browser")
+	if got := (&Config{}).BrowserCommand(); got != "env-browser" {
+		t.Errorf("with $BROWSER = %q, want env-browser", got)
+	}
+	if got := (&Config{Browser: "config-browser"}).BrowserCommand(); got != "config-browser" {
+		t.Errorf("config should outrank $BROWSER, got %q", got)
 	}
 }
