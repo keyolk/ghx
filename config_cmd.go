@@ -20,7 +20,8 @@ Usage:
   ghx version         print the version
 
 Options:
-  --repo owner/name   target repository (default: detected from cwd or tmux)
+  --repo owner/name   target repository (default: detected from the cwd or the
+                      current tmux window's panes)
 
 Config commands:
   ghx config path     print the config file path
@@ -120,11 +121,17 @@ sources:
   #   query: "state:open"
   #   repo: "keyolk/ghx"
 
-# Lead the list with the repository you launched from (or the active tmux pane's
-# repository, when the launch directory is not a checkout). The tab is marked
-# with * and the configured sources follow behind it. Set to false to always
-# open on the sources above.
+# Lead the list with the repositories you are working in. Detected tabs are
+# marked with * and the configured sources follow behind them. Set to false to
+# always open on the sources above.
 detect_repo: true
+
+# Also detect the other panes of the current tmux window. A window is usually
+# one task spanning several checkouts, so each of their repositories gets a tab
+# — the launch directory first, then the active pane, then the rest. Set to
+# false to detect only the directory ghx was launched from, which keeps the
+# leading tabs within reach of the 1-9 jump keys in a wide window.
+detect_panes: true
 
 # Editor for ^e in the comment composer. Empty uses $EDITOR, then vi.
 editor: ""

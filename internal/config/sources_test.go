@@ -246,3 +246,89 @@ func TestMergeDoesNotDuplicateExistingMyPRs(t *testing.T) {
 		t.Errorf("sources = %q, want existing authored source unchanged", names(dst.Sources))
 	}
 }
+
+// A tmux window spans several checkouts, so every detected repo gets a tab —
+// in the order detection reported them, working directory first.
+func TestEffectiveSourcesLeadsWithEveryDetectedRepo(t *testing.T) {
+	c := &Config{Sources: []SourceDef{
+		{Name: "My reviews", Query: "review-requested:@me state:open"},
+	}}
+
+	got := c.EffectiveSources("keyolk/ghx", "sendbird/platform-tools", "keyolk/kmd")
+	if want := "ghx,platform-tools,kmd,My reviews"; names(got) != want {
+		t.Errorf("sources = %q, want %q", names(got), want)
+	}
+	for i, repo := range []string{"keyolk/ghx", "sendbird/platform-tools", "keyolk/kmd"} {
+		if got[i].Repo != repo {
+			t.Errorf("source %d scoped to %q, want %q", i, got[i].Repo, repo)
+		}
+	}
+}
+
+// The same repository detected twice (a split beside the same checkout) must not
+// produce two identical tabs.
+func TestEffectiveSourcesDeduplicatesDetectedRepos(t *testing.T) {
+	c := &Config{Sources: []SourceDef{{Name: "My reviews", Query: "review-requested:@me state:open"}}}
+
+	got := c.EffectiveSources("keyolk/ghx", "KEYOLK/GHX", "keyolk/ghx")
+	if want := "ghx,My reviews"; names(got) != want {
+		t.Errorf("sources = %q, want %q", names(got), want)
+	}
+}
+
+// A configured tab for a detected repo is promoted, keeping its own name and
+// query, rather than being shadowed by a synthesized duplicate.
+func TestEffectiveSourcesPromotesConfiguredTabsForDetectedRepos(t *testing.T) {
+	c := &Config{Sources: []SourceDef{
+		{Name: "My reviews", Query: "review-requested:@me state:open"},
+		{Name: "platform-tools", Query: "state:open", Repo: "sendbird/platform-tools"},
+	}}
+
+	got := c.EffectiveSources("keyolk/ghx", "sendbird/platform-tools")
+	if want := "ghx,platform-tools,My reviews"; names(got) != want {
+		t.Errorf("sources = %q, want %q", names(got), want)
+	}
+	// Promotion must not duplicate the configured tab further down the strip.
+	seen := 0
+	for _, s := range got {
+		if strings.EqualFold(s.Repo, "sendbird/platform-tools") {
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Errorf("platform-tools appears %d times, want 1", seen)
+	}
+}
+
+// detect_repo: false turns off every leading tab, panes included.
+func TestEffectiveSourcesRespectsDetectionDisabled(t *testing.T) {
+	off := false
+	c := &Config{
+		Sources:    []SourceDef{{Name: "My reviews", Query: "review-requested:@me state:open"}},
+		DetectRepo: &off,
+	}
+
+	if got := c.EffectiveSources("keyolk/ghx", "keyolk/kmd"); names(got) != "My reviews" {
+		t.Errorf("sources = %q, want only the configured tab", names(got))
+	}
+}
+
+// detect_panes gates only the pane scan; the caller asks the config before
+// deciding how wide to detect.
+func TestPaneDetectionToggle(t *testing.T) {
+	if !(&Config{}).PaneDetectionEnabled() {
+		t.Error("pane detection should default to on")
+	}
+	off := false
+	if (&Config{DetectPanes: &off}).PaneDetectionEnabled() {
+		t.Error("detect_panes: false must disable pane detection")
+	}
+	// With detection off entirely, panes are moot.
+	if (&Config{DetectRepo: &off}).PaneDetectionEnabled() {
+		t.Error("detect_repo: false must also disable pane detection")
+	}
+	on := true
+	if !(&Config{DetectPanes: &on}).PaneDetectionEnabled() {
+		t.Error("detect_panes: true must enable pane detection")
+	}
+}

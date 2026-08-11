@@ -13,8 +13,11 @@ ghx  platform-tools · 50
 ↵:open · a:approve · x:close · L:labels · r:request · o:browser · /:filter · ::palette · ?:help
 ```
 
-The `*` marks the tab for the repository you launched from — ghx detects the
-current directory (or the active tmux pane) and leads with that repo's PRs.
+A `*` marks a tab for a repository you are working in. ghx detects the launch
+directory and every pane of the current tmux window — a window is usually one
+task spanning several checkouts — and leads with those repos' PRs, the launch
+directory first. `ghx admin` and `ghx actions` resolve their target repository
+the same way, so they work from a scratch pane beside the code.
 
 ## Install
 
@@ -87,8 +90,8 @@ branch protection, with an explicit confirmation but no additional ghx policy.
 ## Features
 
 - **PR list** — source tabs (My PRs, My reviews, Assigned, configured repos),
-  merged queues across configured GitHub accounts, repo detection from cwd/tmux,
-  client-side filtering, live polling
+  merged queues across configured GitHub accounts, repo detection from the cwd
+  and the tmux window's panes, client-side filtering, live polling
 - **PR status** — compact `M/A/C/U` markers for merged, approved, changes
   requested, and unresolved conversations
 - **Status filters** — `f` selects one or more statuses (OR); combines with `/`
@@ -129,8 +132,9 @@ sources:
   - name: "Assigned"
     query: "assignee:@me state:open"
 
-# Lead with the repo you're in (cwd or active tmux pane)
+# Lead with the repos you're working in (cwd, then the tmux window's panes)
 detect_repo: true
+detect_panes: true
 
 # Editor for ^e in the comment composer
 editor: ""

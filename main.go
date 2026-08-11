@@ -71,26 +71,18 @@ func run() (err error) {
 
 	km := tui.DefaultKeymap()
 
-	// Lead the PR list with the repository the user is in. Detection is
+	// Lead the PR list with the repositories the user is working in. Detection is
 	// best-effort: outside a checkout, or with an unrelated remote, the list just
 	// opens on the configured sources as before.
-	detected := ""
-	if cfg.RepoDetectionEnabled() {
-		if wd, wdErr := os.Getwd(); wdErr == nil {
-			if r := repodetect.Detect(context.Background(), wd); r.Found() {
-				detected = r.Slug
-				log.Printf("detected repo %s from %s (%s)", r.Slug, r.Path, r.Source)
-			}
-		}
-	}
+	detected := detectRepos(context.Background(), cfg)
 	if len(cfg.Accounts) > 0 {
 		if err := verifyAccounts(context.Background(), client, cfg.Accounts, os.Stderr); err != nil {
 			return err
 		}
 	} else {
 		authClient := client
-		if detected != "" {
-			authClient = client.WithRepo(detected)
+		if len(detected) > 0 {
+			authClient = client.WithRepo(detected[0])
 		} else {
 			for _, source := range cfg.Sources {
 				if source.Repo != "" {
@@ -177,6 +169,32 @@ func verifyAccounts(ctx context.Context, client accountVerifier, accounts []conf
 		fmt.Fprintf(warn, "warning: %v\n", authErr)
 	}
 	return nil
+}
+
+// detectRepos returns the repositories to lead with, most relevant first: the
+// launch directory, then the current tmux window's panes. It is the single
+// definition of "the repo I am working on" — the PR list leads with all of
+// them, and the admin/actions subcommands take the first as their target.
+func detectRepos(ctx context.Context, cfg *config.Config) []string {
+	if !cfg.RepoDetectionEnabled() {
+		return nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	var found []repodetect.Result
+	if cfg.PaneDetectionEnabled() {
+		found = repodetect.DetectAll(ctx, wd)
+	} else if r := repodetect.Detect(ctx, wd); r.Found() {
+		found = []repodetect.Result{r}
+	}
+	out := make([]string, 0, len(found))
+	for _, r := range found {
+		log.Printf("detected repo %s from %s (%s)", r.Slug, r.Path, r.Source)
+		out = append(out, r.Slug)
+	}
+	return out
 }
 
 // isTTY reports whether f is a terminal.

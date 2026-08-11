@@ -1,10 +1,11 @@
-// Package repodetect works out which GitHub repository the user is currently
-// looking at, so the PR list can lead with that repo instead of a generic queue.
+// Package repodetect works out which GitHub repositories the user is currently
+// working on, so the PR list can lead with them instead of a generic queue.
 //
 // Two signals are used, in order of confidence: the working directory's git
 // remote, and the current tmux window's pane paths. The directory is the
 // stronger signal — it is where the user actually is — but ghx is often launched
-// from elsewhere while the work sits in another pane of the same window.
+// from elsewhere while the work sits in other panes of the same window, and a
+// task routinely spans several checkouts at once.
 package repodetect
 
 import (
@@ -30,38 +31,67 @@ func (r Result) Found() bool { return r.Slug != "" }
 // a network filesystem must not delay the first frame.
 const timeout = 2 * time.Second
 
-// Detect returns the repository to prioritise, or an empty Result.
+// Detect returns the single repository to prioritise, or an empty Result. It is
+// the first of DetectAll's results — the working directory when it is a
+// checkout, otherwise the most relevant pane of the current tmux window.
+func Detect(ctx context.Context, startDir string) Result {
+	all := DetectAll(ctx, startDir)
+	if len(all) == 0 {
+		return Result{}
+	}
+	return all[0]
+}
+
+// DetectAll returns every GitHub repository visible from where the user is
+// working, most relevant first: the working directory, then the current tmux
+// window's active pane, then its remaining panes in tmux's own order.
+//
+// A tmux window is one task. The panes in it are the checkouts that task spans,
+// so all of them are worth surfacing — not just the one the cursor happens to
+// be in. Order is what keeps that predictable: the directory ghx was launched
+// from always leads, the active pane comes next, and the rest follow a stable
+// tmux ordering rather than whichever git call returned first. Repositories are
+// deduplicated, so the same checkout open in three panes still yields one entry.
 //
 // startDir is normally the process's working directory; it is a parameter so
 // tests can drive detection without chdir.
-func Detect(ctx context.Context, startDir string) Result {
+func DetectAll(ctx context.Context, startDir string) []Result {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	if slug, root := slugFromDir(ctx, startDir); slug != "" {
-		return Result{Slug: slug, Source: "cwd", Path: root}
-	}
+	var out []Result
+	seenSlug := make(map[string]bool)
+	seenDir := make(map[string]bool)
 
-	// The directory is not a checkout. The tmux window can still say what the
-	// user is working on — ghx is often launched in a scratch pane beside the
-	// code — but only the *active* pane is trusted. Scanning every pane would
-	// pick up whatever unrelated repo happens to be open elsewhere in the
-	// window, which makes the leading tab unpredictable.
-	if dir := tmuxActivePanePath(ctx); dir != "" && !sameDir(dir, startDir) {
-		if slug, root := slugFromDir(ctx, dir); slug != "" {
-			return Result{Slug: slug, Source: "tmux", Path: root}
+	add := func(dir, source string) {
+		if dir == "" {
+			return
 		}
+		// Panes frequently share a directory (a split beside the same checkout).
+		// Skipping those before shelling out to git keeps a wide window inside the
+		// detection timeout.
+		clean := filepath.Clean(dir)
+		if seenDir[clean] {
+			return
+		}
+		seenDir[clean] = true
+		slug, root := slugFromDir(ctx, dir)
+		if slug == "" {
+			return
+		}
+		key := strings.ToLower(slug)
+		if seenSlug[key] {
+			return
+		}
+		seenSlug[key] = true
+		out = append(out, Result{Slug: slug, Source: source, Path: root})
 	}
-	return Result{}
-}
 
-// sameDir reports whether two paths name the same directory, so a fallback does
-// not re-test the directory that already failed.
-func sameDir(a, b string) bool {
-	if a == "" || b == "" {
-		return false
+	add(startDir, "cwd")
+	for _, dir := range tmuxWindowPanePaths(ctx) {
+		add(dir, "tmux")
 	}
-	return filepath.Clean(a) == filepath.Clean(b)
+	return out
 }
 
 // slugFromDir resolves a directory to "owner/name" via its git remote, and
@@ -147,18 +177,32 @@ func isGitHubHost(host string) bool {
 	return host == "github.com" || strings.HasSuffix(host, ".github.com")
 }
 
-// tmuxActivePanePath returns the current window's active pane directory, or "".
+// tmuxWindowPanePaths returns the current window's pane directories, the active
+// pane first, or nil outside tmux.
 //
-// Only the active pane is consulted. It is the one thing in the window that
-// reliably says what the user is doing; the other panes hold logs, shells, and
-// unrelated checkouts, and letting any of them win would make the leading tab
-// depend on pane order.
-func tmuxActivePanePath(ctx context.Context) string {
+// list-panes defaults to the current window, which is exactly the scope that
+// means "this task": panes in other windows belong to other work. The active
+// pane is hoisted to the front because it is the strongest single hint about
+// what the user is doing right now; the rest keep tmux's ordering so the tab
+// order does not shift between launches.
+func tmuxWindowPanePaths(ctx context.Context) []string {
 	if os.Getenv("TMUX") == "" {
-		return ""
+		return nil
 	}
-	out := run(ctx, "", "tmux", "display-message", "-p", "#{pane_current_path}")
-	return strings.TrimSpace(out)
+	out := run(ctx, "", "tmux", "list-panes", "-F", "#{pane_active}\t#{pane_current_path}")
+	var active, rest []string
+	for _, line := range strings.Split(out, "\n") {
+		flag, dir, ok := strings.Cut(strings.TrimRight(line, "\r"), "\t")
+		if !ok || dir == "" {
+			continue
+		}
+		if flag == "1" {
+			active = append(active, dir)
+			continue
+		}
+		rest = append(rest, dir)
+	}
+	return append(active, rest...)
 }
 
 func gitOut(ctx context.Context, dir string, args ...string) string {
