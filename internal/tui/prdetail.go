@@ -33,12 +33,13 @@ var detailTabNames = map[detailTabKind]string{
 // prDetailModel holds the PR detail view. Each tab's own state lives in its
 // own type (diffView, commentsView, checksView) so this stays a coordinator.
 type prDetailModel struct {
-	cfg    *config.Config
-	client *gh.Client
-	km     *Keymap
-	number int
-	owner  string
-	repo   string
+	cfg            *config.Config
+	client         *gh.Client
+	km             *Keymap
+	number         int
+	owner          string
+	repo           string
+	credentialRepo string
 
 	activeTab detailTabKind
 	tabs      []detailTabKind
@@ -76,13 +77,27 @@ type prDetailModel struct {
 // the list row: the queue spans repositories, so every gh call for this PR must
 // be scoped explicitly rather than inheriting the working directory.
 func newPRDetailModel(cfg *config.Config, client *gh.Client, km *Keymap, number int, repoSlug string) *prDetailModel {
+	return newPRDetailModelWithCredential(cfg, client, km, number, repoSlug, "")
+}
+
+func newPRDetailModelWithCredential(
+	cfg *config.Config,
+	client *gh.Client,
+	km *Keymap,
+	number int,
+	repoSlug string,
+	credentialRepo string,
+) *prDetailModel {
 	d := &prDetailModel{
-		cfg: cfg, km: km, number: number,
+		cfg: cfg, km: km, number: number, credentialRepo: credentialRepo,
 		activeTab: tabOverview,
 		tabs:      []detailTabKind{tabOverview, tabFiles, tabDiff, tabComments, tabCommits, tabChecks},
 		diff:      newDiffView(),
 		comments:  newCommentsView(),
 		checks:    newChecksView(),
+	}
+	if credentialRepo != "" {
+		client = client.WithCredentialRepo(credentialRepo)
 	}
 	if repoSlug != "" {
 		d.client = client.WithRepo(repoSlug)

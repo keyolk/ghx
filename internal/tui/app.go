@@ -496,7 +496,7 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		return func() tea.Msg {
 			return openComposerMsg{target: composerTarget{
 				issue: true, review: "request-changes",
-				prNumber: t.number, repo: t.repo,
+				prNumber: t.number, repo: t.repo, credentialRepo: t.credentialRepo,
 			}}
 		}, true
 	}
@@ -552,7 +552,9 @@ func (a *App) openSelected() tea.Cmd {
 		return nil
 	}
 	a.state = viewPRDetail
-	a.detail = newPRDetailModel(a.cfg, a.client, a.km, item.pr.Number, item.pr.Repo)
+	a.detail = newPRDetailModelWithCredential(
+		a.cfg, a.client, a.km, item.pr.Number, item.pr.Repo, item.pr.CredentialRepo,
+	)
 	a.detail.resize(a.width, a.height)
 	return a.detail.load()
 }

@@ -499,6 +499,23 @@ func TestBulkMergeUsesExplicitCrossRepoSelection(t *testing.T) {
 	}
 }
 
+func TestOpenSelectedPreservesAccountCredential(t *testing.T) {
+	rows := []pr.Summary{{
+		Number: 101, Repo: "acme/private", CredentialRepo: "work/selector", State: "OPEN",
+	}}
+	a := testApp(t, rows)
+	if cmd := a.openSelected(); cmd == nil {
+		t.Fatal("opening a selected PR should start detail loading")
+	}
+	if a.detail == nil || a.detail.credentialRepo != "work/selector" {
+		t.Fatalf("detail credential = %#v, want work/selector", a.detail)
+	}
+	target, ok := a.currentTarget()
+	if !ok || target.credentialRepo != "work/selector" {
+		t.Errorf("detail action target = %#v, want work/selector", target)
+	}
+}
+
 func TestListMergeWithoutMarksTargetsFocusedPR(t *testing.T) {
 	a := testApp(t, sampleRows)
 	a.list.list.Select(1)

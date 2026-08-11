@@ -21,11 +21,12 @@ import (
 
 // actionTarget identifies the PR an action applies to.
 type actionTarget struct {
-	number  int
-	repo    string // "owner/name"
-	title   string // for confirmation text; not used in requests
-	isDraft bool
-	state   string // OPEN | CLOSED | MERGED
+	number         int
+	repo           string // "owner/name"
+	credentialRepo string // Git credential selector for the account that found it
+	title          string // for confirmation text; not used in requests
+	isDraft        bool
+	state          string // OPEN | CLOSED | MERGED
 }
 
 func (t actionTarget) valid() bool { return t.number > 0 }
@@ -45,17 +46,21 @@ func (t actionTarget) label() string {
 // client returns a client scoped to the target's repo. ghx runs outside any
 // checkout, so an unscoped client would try to infer the repo from the cwd.
 func (a *App) clientFor(t actionTarget) *gh.Client {
-	if t.repo == "" {
-		return a.client
+	client := a.client
+	if t.credentialRepo != "" {
+		client = client.WithCredentialRepo(t.credentialRepo)
 	}
-	return a.client.WithRepo(t.repo)
+	if t.repo != "" {
+		client = client.WithRepo(t.repo)
+	}
+	return client
 }
 
 // currentTarget returns the PR the user is looking at: the open detail view, or
 // the selected list row.
 func (a *App) currentTarget() (actionTarget, bool) {
 	if a.state == viewPRDetail && a.detail != nil {
-		t := actionTarget{number: a.detail.number}
+		t := actionTarget{number: a.detail.number, credentialRepo: a.detail.credentialRepo}
 		if a.detail.owner != "" && a.detail.repo != "" {
 			t.repo = a.detail.owner + "/" + a.detail.repo
 		}
@@ -74,7 +79,7 @@ func (a *App) currentTarget() (actionTarget, bool) {
 
 func targetFromSummary(p prSummary) actionTarget {
 	return actionTarget{
-		number: p.Number, repo: p.Repo, title: p.Title,
+		number: p.Number, repo: p.Repo, credentialRepo: p.CredentialRepo, title: p.Title,
 		isDraft: p.IsDraft, state: p.State,
 	}
 }
