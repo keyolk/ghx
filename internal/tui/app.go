@@ -75,12 +75,13 @@ type mergePrompt struct {
 }
 
 func NewApp(cfg *config.Config, km *Keymap, client *gh.Client) *App {
-	return NewAppWithRepo(cfg, km, client, "")
+	return NewAppWithRepo(cfg, km, client, nil)
 }
 
-// NewAppWithRepo builds the app with detectedRepo leading the PR list, so
-// starting ghx inside a checkout opens on that repository's pull requests.
-func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedRepo string) *App {
+// NewAppWithRepo builds the app with detectedRepos leading the PR list, so
+// starting ghx inside a checkout — or beside one in the same tmux window —
+// opens on those repositories' pull requests.
+func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedRepos []string) *App {
 	a := &App{
 		cfg:      cfg,
 		client:   client,
@@ -90,7 +91,7 @@ func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedR
 		palette:  &palette{},
 		search:   &search{},
 	}
-	a.list = newPRListModelWithRepo(cfg, client, km, detectedRepo)
+	a.list = newPRListModelWithRepo(cfg, client, km, detectedRepos)
 	return a
 }
 

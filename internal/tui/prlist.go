@@ -26,10 +26,10 @@ type prListModel struct {
 	sources []config.SourceDef
 	curTab  int
 
-	// detectedRepo is the repository the launch directory (or the current tmux
-	// window) belongs to. Kept so the tab strip can mark which tab came from
-	// where the user is, rather than looking like an arbitrary first entry.
-	detectedRepo string
+	// detectedRepos are the repositories the launch directory and the current
+	// tmux window belong to. Kept so the tab strip can mark which tabs came from
+	// where the user is, rather than looking like arbitrary leading entries.
+	detectedRepos map[string]bool
 
 	list *list.Model
 	pane *SplitPane
@@ -70,16 +70,23 @@ func (i prListItem) FilterValue() string {
 }
 
 func newPRListModel(cfg *config.Config, client *gh.Client, km *Keymap) *prListModel {
-	return newPRListModelWithRepo(cfg, client, km, "")
+	return newPRListModelWithRepo(cfg, client, km, nil)
 }
 
-// newPRListModelWithRepo builds the list with detectedRepo leading the tabs, so
-// launching ghx inside a checkout opens on that repository's PRs.
-func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km *Keymap, detectedRepo string) *prListModel {
-	sources := cfg.EffectiveSources(detectedRepo)
+// newPRListModelWithRepo builds the list with detectedRepos leading the tabs, so
+// launching ghx inside a checkout — or beside one in the same tmux window —
+// opens on those repositories' PRs.
+func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km *Keymap, detectedRepos []string) *prListModel {
+	sources := cfg.EffectiveSources(detectedRepos...)
 	if len(sources) == 0 {
 		sources = []config.SourceDef{
 			{Name: "My reviews", Query: "review-requested:@me state:open"},
+		}
+	}
+	detected := make(map[string]bool, len(detectedRepos))
+	for _, repo := range detectedRepos {
+		if repo != "" {
+			detected[strings.ToLower(repo)] = true
 		}
 	}
 	m := &prListModel{
@@ -87,7 +94,7 @@ func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km *Keymap, d
 		client:        client,
 		km:            km,
 		sources:       sources,
-		detectedRepo:  detectedRepo,
+		detectedRepos: detected,
 		caches:        make([][]pr.Summary, len(sources)),
 		loadings:      make([]bool, len(sources)),
 		generations:   make([]uint64, len(sources)),
@@ -545,7 +552,7 @@ func (m *prListModel) tabStrip(w int, short bool) string {
 		label := fmt.Sprintf("%d %s", i+1, name)
 		// Mark the tab that came from where the user is, so leading with it reads
 		// as deliberate rather than as an arbitrary first entry.
-		if !short && m.detectedRepo != "" && strings.EqualFold(s.Repo, m.detectedRepo) {
+		if !short && m.detectedRepos[strings.ToLower(s.Repo)] {
 			label += tabCountStyle.Render("*")
 		}
 		if n := len(m.caches[i]); n > 0 && !short {

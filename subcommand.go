@@ -9,28 +9,40 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/keyolk/ghx/internal/config"
 	"github.com/keyolk/ghx/internal/gh"
-	"github.com/keyolk/ghx/internal/repodetect"
 	"github.com/keyolk/ghx/internal/tui"
 	"github.com/keyolk/ghx/internal/tui/actions"
 	"github.com/keyolk/ghx/internal/tui/admin"
 )
 
-// resolved from --repo or the working directory, and share the same pre-flight
-// (gh installed, authenticated) and terminal handling as the PR view.
-func runSubcommand(args []string, kind string) error {
-	// --repo flag; the rest is ignored for now (future: --limit, etc.)
-	repoFlag := ""
-	remaining := args[:0]
-	for _, a := range args {
-		if strings.HasPrefix(a, "--repo=") {
-			repoFlag = strings.TrimPrefix(a, "--repo=")
-		} else if a == "--repo" {
-			// handled below
-		} else {
-			remaining = append(remaining, a)
+// parseRepoFlag pulls --repo out of a subcommand's argv, in both the
+// `--repo=owner/name` and `--repo owner/name` forms, and returns the remaining
+// arguments. Supporting only the joined form silently drops the separated one,
+// which then falls through to detection and targets the wrong repository.
+func parseRepoFlag(args []string) (repo string, rest []string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case strings.HasPrefix(a, "--repo="):
+			repo = strings.TrimPrefix(a, "--repo=")
+		case a == "--repo":
+			if i+1 < len(args) {
+				repo = args[i+1]
+				i++
+			}
+		default:
+			rest = append(rest, a)
 		}
 	}
+	return repo, rest
+}
+
+// resolved from --repo or the surrounding tmux window, and share the same
+// pre-flight (gh installed, authenticated) and terminal handling as the PR view.
+func runSubcommand(args []string, kind string) error {
+	// --repo flag; the rest is ignored for now (future: --limit, etc.)
+	repoFlag, remaining := parseRepoFlag(args)
 	_ = remaining
 
 	// Pre-flight: same checks as the PR view.
@@ -39,13 +51,17 @@ func runSubcommand(args []string, kind string) error {
 	}
 	client := gh.NewClient(30_000_000_000)
 
-	// Resolve the repository: --repo flag, then detection, then error.
+	// Resolve the repository: --repo flag, then detection, then error. Detection
+	// matches the PR list's, so `ghx admin` in a scratch pane targets the same
+	// repository the list would have led with.
 	repo := repoFlag
 	if repo == "" {
-		if wd, err := os.Getwd(); err == nil {
-			if r := repodetect.Detect(context.Background(), wd); r.Found() {
-				repo = r.Slug
-			}
+		cfg, cfgErr := config.Load()
+		if cfgErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", cfgErr)
+		}
+		if detected := detectRepos(context.Background(), cfg); len(detected) > 0 {
+			repo = detected[0]
 		}
 	}
 	if repo == "" {
