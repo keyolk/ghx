@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/keyolk/ghx/internal/pr"
 )
 
 func TestRepoCredentialIsUsedForMerge(t *testing.T) {
@@ -194,6 +196,95 @@ printf '%s\n' 'protocol=https' 'host=github.com' 'path=keyolk/ghx.git' 'username
 	}
 	if got, want := readFile(t, capture), "url=https://github.com/keyolk/ghx.git\n\n"; got != want {
 		t.Errorf("credential input = %q, want %q", got, want)
+	}
+}
+
+func TestGHUserSelectorResolvesTokenFromGHKeyring(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "calls")
+	// gh keeps one token per login; --user is what reaches a non-active account.
+	writeExecutable(t, filepath.Join(dir, "gh"), `#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "token" ]; then
+  printf '%s|token %s\n' "${GH_TOKEN:-}" "$4" >> "$CAPTURE"
+  printf 'gho_%s\n' "$4"
+  exit 0
+fi
+printf '%s|%s\n' "${GH_TOKEN:-}" "$*" >> "$CAPTURE"
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CAPTURE", capture)
+	t.Setenv("GH_TOKEN", "active-account-token")
+
+	client := NewClient(0).WithCredentialRepo(pr.GHUserSelectorPrefix + "gavin-jeong")
+	if err := client.WithRepo("sendbird/platform-tools").Merge(context.Background(), 7, "squash"); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(readFile(t, capture)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d calls, want token lookup plus merge: %q", len(lines), lines)
+	}
+	// The ambient token must not stand in for the requested account.
+	if got, want := lines[0], "|token gavin-jeong"; got != want {
+		t.Errorf("token lookup = %q, want %q", got, want)
+	}
+	if got, want := lines[1], "gho_gavin-jeong|pr merge 7 --repo sendbird/platform-tools --squash"; got != want {
+		t.Errorf("merge call = %q, want %q", got, want)
+	}
+}
+
+func TestUnknownGHUserDoesNotFallBackToActiveAccount(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "calls")
+	writeExecutable(t, filepath.Join(dir, "gh"), `#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "token" ]; then
+  printf '%s\n' 'no such user' >&2
+  exit 1
+fi
+printf '%s|%s\n' "${GH_TOKEN:-}" "$*" >> "$CAPTURE"
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CAPTURE", capture)
+	t.Setenv("GH_TOKEN", "active-account-token")
+
+	err := NewClient(0).WithCredentialRepo(pr.GHUserSelectorPrefix + "ghost").AuthStatus(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no Git credential found") {
+		t.Fatalf("AuthStatus error = %v, want missing account credential", err)
+	}
+	if _, statErr := os.Stat(capture); !os.IsNotExist(statErr) {
+		t.Errorf("gh ran despite unresolvable account: %v", statErr)
+	}
+}
+
+func TestResolveGHUserTokenTrimsOutput(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "gh"), `#!/bin/sh
+printf '  gho_padded  \n\n'
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	token, ok := resolveGHUserToken(context.Background(), "keyolk")
+	if !ok || token != "gho_padded" {
+		t.Fatalf("token = (%q, %v), want gho_padded", token, ok)
+	}
+}
+
+func TestResolveCredentialRoutesBySelectorKind(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "gh"), `#!/bin/sh
+printf 'gh-user-token\n'
+`)
+	writeExecutable(t, filepath.Join(dir, "git"), `#!/bin/sh
+cat > /dev/null
+printf '%s\n' 'password=git-helper-token' ''
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if token, _ := resolveCredential(context.Background(), pr.GHUserSelectorPrefix+"keyolk"); token != "gh-user-token" {
+		t.Errorf("gh_user selector resolved to %q", token)
+	}
+	if token, _ := resolveCredential(context.Background(), "keyolk/ghx"); token != "git-helper-token" {
+		t.Errorf("repo selector resolved to %q", token)
 	}
 }
 

@@ -40,12 +40,42 @@ type SourceDef struct {
 	Repo  string `yaml:"repo"` // optional "owner/repo"
 }
 
-// AccountDef identifies one GitHub account through a repository whose Git
-// credential belongs to that account. The token remains in Git's credential
-// helper; ghx stores only the repository selector.
+// AccountDef identifies one GitHub account. Either through a gh CLI login
+// (gh_user, resolved with `gh auth token --user`) or through a repository whose
+// Git credential belongs to that account (credential_repo). No token is ever
+// stored here — only the selector used to look one up.
 type AccountDef struct {
 	Name           string `yaml:"name"`
-	CredentialRepo string `yaml:"credential_repo"`
+	GHUser         string `yaml:"gh_user,omitempty"`
+	CredentialRepo string `yaml:"credential_repo,omitempty"`
+}
+
+// GHUserSelectorPrefix marks a credential selector that names a gh CLI login
+// rather than a repository.
+const GHUserSelectorPrefix = pr.GHUserSelectorPrefix
+
+// Selector returns the credential selector for this account, or "" when the
+// account names neither a gh login nor a credential repository.
+//
+// gh_user wins: it addresses the account directly, while credential_repo only
+// reaches it if the Git credential helper actually maps that path to a distinct
+// token — which a `[credential "https://github.com"]` override can silently break.
+func (a AccountDef) Selector() string {
+	if user := strings.TrimSpace(a.GHUser); user != "" {
+		return GHUserSelectorPrefix + user
+	}
+	return strings.TrimSpace(a.CredentialRepo)
+}
+
+// Label names the account in errors and warnings.
+func (a AccountDef) Label() string {
+	if a.Name != "" {
+		return a.Name
+	}
+	if s := a.Selector(); s != "" {
+		return s
+	}
+	return "(unnamed)"
 }
 
 // KeymapOverrides is a placeholder for per-key YAML overrides (Phase 6).
