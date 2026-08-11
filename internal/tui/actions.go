@@ -40,8 +40,11 @@ func (a *App) postComment(msg postCommentMsg) tea.Cmd {
 	// The target may name its own PR — that is how the list view composes a
 	// review without opening the PR first. Otherwise fall back to the open one.
 	n, client := t.prNumber, a.client
+	if t.credentialRepo != "" {
+		client = client.WithCredentialRepo(t.credentialRepo)
+	}
 	if t.repo != "" {
-		client = a.client.WithRepo(t.repo)
+		client = client.WithRepo(t.repo)
 	}
 	if n == 0 {
 		if a.detail == nil {

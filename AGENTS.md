@@ -21,6 +21,7 @@ actions.
 - `internal/config` — ~/.config/ghx/config.yaml
 - `internal/repodetect` — cwd/tmux repo detection
 - `internal/gh/credential.go` — repo별 Git credential 선택과 gh 인증 fallback
+- `internal/tui/account_search.go` — 복수 GitHub account 검색 병합과 중복 제거
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
 ## Conventions

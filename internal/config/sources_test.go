@@ -193,6 +193,21 @@ func TestLoadMergeKeepsExplicitFalse(t *testing.T) {
 	}
 }
 
+func TestMergeLoadsAccounts(t *testing.T) {
+	dst := DefaultConfig()
+	merge(dst, &Config{Accounts: []AccountDef{
+		{Name: "personal", CredentialRepo: "keyolk/ghx"},
+		{Name: "work", CredentialRepo: "sendbird/platform-tools"},
+	}})
+
+	if len(dst.Accounts) != 2 {
+		t.Fatalf("accounts = %d, want 2", len(dst.Accounts))
+	}
+	if dst.Accounts[1].Name != "work" || dst.Accounts[1].CredentialRepo != "sendbird/platform-tools" {
+		t.Errorf("second account = %#v", dst.Accounts[1])
+	}
+}
+
 func TestMergeAddsMyPRsToLegacyDefaultSources(t *testing.T) {
 	dst := DefaultConfig()
 	merge(dst, &Config{Sources: []SourceDef{

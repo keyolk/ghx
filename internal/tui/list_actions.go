@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,11 +21,12 @@ import (
 
 // actionTarget identifies the PR an action applies to.
 type actionTarget struct {
-	number  int
-	repo    string // "owner/name"
-	title   string // for confirmation text; not used in requests
-	isDraft bool
-	state   string // OPEN | CLOSED | MERGED
+	number         int
+	repo           string // "owner/name"
+	credentialRepo string // Git credential selector for the account that found it
+	title          string // for confirmation text; not used in requests
+	isDraft        bool
+	state          string // OPEN | CLOSED | MERGED
 }
 
 func (t actionTarget) valid() bool { return t.number > 0 }
@@ -44,17 +46,21 @@ func (t actionTarget) label() string {
 // client returns a client scoped to the target's repo. ghx runs outside any
 // checkout, so an unscoped client would try to infer the repo from the cwd.
 func (a *App) clientFor(t actionTarget) *gh.Client {
-	if t.repo == "" {
-		return a.client
+	client := a.client
+	if t.credentialRepo != "" {
+		client = client.WithCredentialRepo(t.credentialRepo)
 	}
-	return a.client.WithRepo(t.repo)
+	if t.repo != "" {
+		client = client.WithRepo(t.repo)
+	}
+	return client
 }
 
 // currentTarget returns the PR the user is looking at: the open detail view, or
 // the selected list row.
 func (a *App) currentTarget() (actionTarget, bool) {
 	if a.state == viewPRDetail && a.detail != nil {
-		t := actionTarget{number: a.detail.number}
+		t := actionTarget{number: a.detail.number, credentialRepo: a.detail.credentialRepo}
 		if a.detail.owner != "" && a.detail.repo != "" {
 			t.repo = a.detail.owner + "/" + a.detail.repo
 		}
@@ -73,7 +79,7 @@ func (a *App) currentTarget() (actionTarget, bool) {
 
 func targetFromSummary(p prSummary) actionTarget {
 	return actionTarget{
-		number: p.Number, repo: p.Repo, title: p.Title,
+		number: p.Number, repo: p.Repo, credentialRepo: p.CredentialRepo, title: p.Title,
 		isDraft: p.IsDraft, state: p.State,
 	}
 }
@@ -270,6 +276,9 @@ func (a *App) renderConfirm(width, height int) string {
 		case confirmMerge:
 			question = fmt.Sprintf("Squash-merge %d selected PRs?", count)
 			note = "Each PR is merged independently using its repository credential."
+		case confirmReady:
+			question = fmt.Sprintf("Toggle ready/draft on %d selected PRs?", count)
+			note = "Draft PRs become ready; ready PRs return to draft."
 		}
 	} else {
 		switch p.kind {
@@ -319,9 +328,10 @@ func (a *App) renderConfirm(width, height int) string {
 // repo's labels lazily: the list is per-repo and a cross-repo queue would
 // otherwise fetch dozens of label sets nobody asked for.
 type labelPicker struct {
-	target  actionTarget
+	targets []actionTarget
 	all     []gh.RepoLabel
 	applied map[string]bool
+	mixed   map[string]bool
 	// pending holds edits not yet submitted, so the picker can show the result
 	// before committing and submit adds and removes in one pass.
 	pending map[string]bool
@@ -333,29 +343,84 @@ type labelPicker struct {
 }
 
 func (a *App) openLabelPicker(t actionTarget) tea.Cmd {
-	if !t.valid() {
+	return a.openLabelPickerTargets([]actionTarget{t})
+}
+
+func (a *App) openLabelPickerTargets(targets []actionTarget) tea.Cmd {
+	if len(targets) == 0 {
 		return errCmd(fmt.Errorf("no pull request selected"))
 	}
+	for _, target := range targets {
+		if !target.valid() || target.repo == "" {
+			return errCmd(fmt.Errorf("invalid pull request selection"))
+		}
+	}
 	a.labels = &labelPicker{
-		target:  t,
+		targets: targets,
 		applied: map[string]bool{},
+		mixed:   map[string]bool{},
 		pending: map[string]bool{},
 		loading: true,
 	}
-	client := a.clientFor(t)
-	n := t.number
 	return func() tea.Msg {
-		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		c, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
-		all, err := client.RepoLabels(c)
-		if err != nil {
-			return labelsLoadedMsg{err: err}
+
+		// Labels are repository-local. Only offer names present in every selected
+		// repository so a bulk edit cannot partially fail because one repo lacks it.
+		repos := make(map[string]actionTarget)
+		for _, target := range targets {
+			repos[strings.ToLower(target.repo)] = target
 		}
-		on, err := client.PRLabels(c, n)
-		if err != nil {
-			return labelsLoadedMsg{err: err}
+		available := make(map[string]gh.RepoLabel)
+		availability := make(map[string]int)
+		for _, target := range repos {
+			labels, err := a.clientFor(target).RepoLabels(c)
+			if err != nil {
+				return labelsLoadedMsg{err: fmt.Errorf("%s: %w", target.repo, err)}
+			}
+			seen := make(map[string]bool)
+			for _, label := range labels {
+				key := strings.ToLower(label.Name)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				availability[key]++
+				if _, ok := available[key]; !ok {
+					available[key] = label
+				}
+			}
 		}
-		return labelsLoadedMsg{all: all, applied: on}
+		all := make([]gh.RepoLabel, 0, len(available))
+		for key, label := range available {
+			if availability[key] == len(repos) {
+				all = append(all, label)
+			}
+		}
+		sort.Slice(all, func(i, j int) bool {
+			return strings.ToLower(all[i].Name) < strings.ToLower(all[j].Name)
+		})
+
+		counts := make(map[string]int)
+		for _, target := range targets {
+			on, err := a.clientFor(target).PRLabels(c, target.number)
+			if err != nil {
+				return labelsLoadedMsg{err: fmt.Errorf("%s: %w", target.label(), err)}
+			}
+			for _, name := range on {
+				counts[name]++
+			}
+		}
+		var applied, mixed []string
+		for name, count := range counts {
+			if count == len(targets) {
+				applied = append(applied, name)
+			} else {
+				mixed = append(mixed, name)
+			}
+		}
+		return labelsLoadedMsg{all: all, applied: applied, mixed: mixed}
 	}
 }
 
@@ -386,7 +451,7 @@ func (p *labelPicker) isOn(name string) bool {
 // dirty reports whether there is anything to submit.
 func (p *labelPicker) dirty() bool {
 	for name, want := range p.pending {
-		if want != p.applied[name] {
+		if p.mixed[name] || want != p.applied[name] {
 			return true
 		}
 	}
@@ -397,12 +462,14 @@ func (p *labelPicker) dirty() bool {
 func (p *labelPicker) diff() (add, remove []string) {
 	for name, want := range p.pending {
 		switch {
-		case want && !p.applied[name]:
+		case want && (!p.applied[name] || p.mixed[name]):
 			add = append(add, name)
-		case !want && p.applied[name]:
+		case !want && (p.applied[name] || p.mixed[name]):
 			remove = append(remove, name)
 		}
 	}
+	sort.Strings(add)
+	sort.Strings(remove)
 	return add, remove
 }
 
@@ -462,24 +529,32 @@ func (a *App) submitLabels() tea.Cmd {
 		return nil
 	}
 	add, remove := p.diff()
-	client := a.clientFor(p.target)
-	n := p.target.number
+	targets := append([]actionTarget(nil), p.targets...)
 	a.labels = nil
 	return func() tea.Msg {
-		c, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cancel()
-		if len(add) > 0 {
-			if err := client.AddLabels(c, n, add); err != nil {
-				return actionDoneMsg{label: "label", err: err}
+		var completed []string
+		var errs []error
+		for _, target := range targets {
+			c, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			client := a.clientFor(target)
+			err := error(nil)
+			if len(add) > 0 {
+				err = client.AddLabels(c, target.number, add)
 			}
-		}
-		if len(remove) > 0 {
-			if err := client.RemoveLabels(c, n, remove); err != nil {
-				return actionDoneMsg{label: "label", err: err}
+			if err == nil && len(remove) > 0 {
+				err = client.RemoveLabels(c, target.number, remove)
 			}
+			cancel()
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", target.label(), err))
+				continue
+			}
+			completed = append(completed, target.key())
 		}
-		return actionDoneMsg{
-			label: fmt.Sprintf("labels updated on #%d (+%d -%d)", n, len(add), len(remove)),
+		return bulkActionDoneMsg{
+			label:     fmt.Sprintf("labels updated on %d PRs (+%d -%d)", len(completed), len(add), len(remove)),
+			completed: completed,
+			err:       errors.Join(errs...),
 		}
 	}
 }
@@ -522,6 +597,8 @@ func (a *App) renderLabelPicker(width, height int) string {
 		mark := " "
 		if p.isOn(l.Name) {
 			mark = iconCheck
+		} else if p.mixed[l.Name] {
+			mark = "~"
 		}
 		if i == p.cursor {
 			// Plain text under the theme: the description is dimmed, and a
@@ -547,5 +624,19 @@ func (a *App) renderLabelPicker(width, height int) string {
 		hint = diffHunkStyle.Render(fmt.Sprintf("+%d -%d ", len(add), len(remove))) + hint
 	}
 	b.WriteString("\n" + hint)
-	return decoratedPane("labels · "+p.target.label(), b.String(), boxW, boxH, true)
+	title := p.targets[0].label()
+	if len(p.targets) > 1 {
+		title = fmt.Sprintf("%d selected PRs", len(p.targets))
+		oneRepo := true
+		for _, target := range p.targets[1:] {
+			if !strings.EqualFold(target.repo, p.targets[0].repo) {
+				oneRepo = false
+				break
+			}
+		}
+		if oneRepo {
+			title += " in " + p.targets[0].repo
+		}
+	}
+	return decoratedPane("labels · "+title, b.String(), boxW, boxH, true)
 }

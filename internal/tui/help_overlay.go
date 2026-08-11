@@ -38,9 +38,9 @@ func helpSections() []helpSection {
 		{"PR actions", [][2]string{
 			{"space / A", "toggle row / all visible rows for multi-select"},
 			{"a / x / M", "approve · close/reopen · squash-merge selected PRs"},
-			{"L", "edit labels on the focused row"},
+			{"L", "edit common labels on selected PRs"},
+			{"d / :ready", "toggle ready/draft on selected PRs"},
 			{":checkout", "check the branch out locally"},
-			{":ready", "toggle ready-for-review"},
 			{":merge", "merge with strategy and confirmation"},
 		}},
 		{"Views", [][2]string{

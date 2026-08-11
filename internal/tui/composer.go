@@ -27,8 +27,9 @@ type composerTarget struct {
 	// prNumber and repo let the composer act from the list view, where there is
 	// no open detail model to read them from. Zero/empty means "use the detail
 	// view's PR", which is the case for every inline comment.
-	prNumber int
-	repo     string
+	prNumber       int
+	repo           string
+	credentialRepo string
 }
 
 // composer holds the modal's state.

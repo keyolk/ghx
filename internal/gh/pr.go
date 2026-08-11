@@ -32,6 +32,11 @@ func (c *Client) ListPRs(ctx context.Context, query string, limit int) ([]pr.Sum
 	if err := c.execJSON(ctx, &out, args...); err != nil {
 		return nil, err
 	}
+	if c.credentialExplicit {
+		for i := range out {
+			out[i].CredentialRepo = c.credentialSelector()
+		}
+	}
 	return out, nil
 }
 

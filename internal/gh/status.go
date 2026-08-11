@@ -84,10 +84,16 @@ func (c *Client) EnrichPRStatuses(ctx context.Context, summaries []pr.Summary) (
 		if repo == "" {
 			repo = c.repo
 		}
+		selector := out[i].CredentialRepo
 		scoped := c.WithRepo(repo)
+		if selector != "" {
+			scoped = c.WithCredentialRepo(selector).WithRepo(repo)
+		} else {
+			selector = repo
+		}
 		key := "active-gh-account"
 		if c.credentials != nil {
-			if token, ok := c.credentials.token(ctx, repo); ok {
+			if token, ok := c.credentials.token(ctx, selector); ok {
 				key = "token:" + token
 			}
 		}
