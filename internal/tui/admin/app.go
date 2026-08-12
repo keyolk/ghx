@@ -39,9 +39,9 @@ type App struct {
 	client *gh.Client
 	repo   string
 
-	active  category
-	width   int
-	height  int
+	active category
+	width  int
+	height int
 
 	// data caches per category
 	collaborators []gh.Collaborator
@@ -65,8 +65,8 @@ type App struct {
 	confirm string
 
 	// log viewer state (for run logs in actions, reused pattern)
-	logView  string
-	logOff   int
+	logView string
+	logOff  int
 }
 
 // NewApp constructs the admin TUI.
@@ -278,20 +278,11 @@ func (a *App) View() string {
 }
 
 func (a *App) renderCategories() string {
-	var b strings.Builder
+	tabs := make([]tui.TabLabel, len(categoryNames))
 	for i, name := range categoryNames {
-		label := fmt.Sprintf("%d %s", i+1, name)
-		if category(i) == a.active {
-			b.WriteString(tui.TabActiveStyle.Render("[" + label + "]"))
-		} else {
-			b.WriteString(tui.TabDimStyle.Render(" " + label + " "))
-		}
-		if i < len(categoryNames)-1 {
-			b.WriteString(" ")
-		}
+		tabs[i] = tui.TabLabel{Name: name, Active: category(i) == a.active}
 	}
-	out, _ := tui.TruncateExact(b.String(), a.width)
-	return out
+	return tui.RenderTabStrip(tabs, a.width)
 }
 
 func (a *App) renderContent() string {
