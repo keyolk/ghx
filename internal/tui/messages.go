@@ -52,6 +52,10 @@ type errMsg struct{ err error }
 // toastMsg surfaces a transient success/acknowledgement to the footer.
 type toastMsg struct{ text string }
 
+// threadResolvedMsg signals a review thread's resolved state changed. The
+// detail view reloads to reconcile the optimistic flip and refresh counts.
+type threadResolvedMsg struct{}
+
 // quitMsg terminates the program.
 type quitMsg struct{}
 

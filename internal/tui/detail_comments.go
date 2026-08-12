@@ -74,10 +74,30 @@ func (c *commentsView) toggleExpand() {
 	c.expanded[t.ID] = !c.expanded[t.ID]
 }
 
-func (c *commentsView) toggleResolved() {
+// toggleResolvedFilter flips whether resolved threads are hidden, for the `t`
+// key. Distinct from toggleThreadResolved, which acts on a single thread.
+func (c *commentsView) toggleResolvedFilter() {
 	c.hideResolved = !c.hideResolved
 	c.cursor = 0
 	c.offset = 0
+}
+
+// toggleThreadResolved flips the selected thread's IsResolved locally so the
+// view updates instantly, and reports the thread plus the new state so the
+// caller can persist it. Optimistic: the server round-trip follows, and a
+// reload will reconcile on failure.
+func (c *commentsView) toggleThreadResolved() (thread pr.ReviewThread, resolve bool, ok bool) {
+	t, found := c.selected()
+	if !found || t.ID == "" {
+		return pr.ReviewThread{}, false, false
+	}
+	for i := range c.threads {
+		if c.threads[i].ID == t.ID {
+			c.threads[i].IsResolved = !c.threads[i].IsResolved
+			break
+		}
+	}
+	return t, !t.IsResolved, true
 }
 
 // render draws the thread list, expanding the selected thread's replies.
@@ -286,6 +306,7 @@ func (c *commentsView) helpLine() string {
 		"j/k", "thread",
 		"enter", "expand",
 		"c", "reply",
+		"X", "resolve/unresolve",
 		"d", "jump to diff",
 		"t", resolved,
 		"esc", "back",
