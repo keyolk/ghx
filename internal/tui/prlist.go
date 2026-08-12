@@ -529,53 +529,118 @@ func (m *prListModel) view(w, h int) string {
 	return joinVertical(tabs, m.pane.Render(w, h-1, m.cfg.DiffSplitRatio))
 }
 
-// renderTabs draws the source strip, shrinking labels as width runs out.
+// renderTabs draws the source strip, keeping every tab's index visible even
+// when the terminal narrows. Rather than truncate the joined strip from the
+// right — which drops the highest-numbered tabs entirely — each tab shrinks
+// toward its index, so the 1-9 jump keys always have something to land on.
 func (m *prListModel) renderTabs(w int) string {
-	// Measure the full-label strip; if it doesn't fit, fall back to short forms.
-	full := m.tabStrip(w, false)
-	if lipglossWidth(full) <= w {
-		return full
+	tabs := m.tabLabels()
+	if len(tabs) == 0 {
+		return ""
 	}
-	return m.tabStrip(w, true)
+
+	widths := make([]int, len(tabs))
+	total := 0
+	for i, t := range tabs {
+		widths[i] = lipglossWidth(t)
+		total += widths[i]
+	}
+
+	stale := ""
+	if m.stale {
+		stale = checkFailStyle.Render(" stale")
+		total += lipglossWidth(stale)
+	}
+
+	if total <= w {
+		var b strings.Builder
+		for _, t := range tabs {
+			b.WriteString(t)
+		}
+		b.WriteString(stale)
+		return b.String()
+	}
+
+	// Drop per-tab decorations (counts, spinner) first; the index stays.
+	for i := range tabs {
+		if widths[i] <= 4 {
+			continue
+		}
+		tabs[i] = m.renderTab(i, m.sources[i], false)
+		widths[i] = lipglossWidth(tabs[i])
+	}
+	total = sumWidths(widths) + lipglossWidth(stale)
+	if total <= w {
+		var b strings.Builder
+		for _, t := range tabs {
+			b.WriteString(t)
+		}
+		b.WriteString(stale)
+		return b.String()
+	}
+
+	// Still too wide: cap each tab at an equal share. This is what keeps tabs
+	// 6-8 visible instead of being truncated off the right edge. A truncated
+	// inactive tab keeps its trailing space so it doesn't run into the next one.
+	per := w / len(tabs)
+	if per < 3 {
+		per = 3
+	}
+	var b strings.Builder
+	for i, t := range tabs {
+		if widths[i] <= per {
+			b.WriteString(t)
+			continue
+		}
+		trunc, _ := truncateExact(t, per)
+		// Re-attach the inactive padding the truncator may have consumed, so
+		// adjacent tabs stay separated at the cost of a column of content.
+		if i != m.curTab && per > 3 && lipglossWidth(trunc) < per {
+			trunc += " "
+		}
+		b.WriteString(trunc)
+	}
+	b.WriteString(stale)
+	return b.String()
 }
 
-func (m *prListModel) tabStrip(w int, short bool) string {
-	var b strings.Builder
+func sumWidths(ws []int) int {
+	n := 0
+	for _, w := range ws {
+		n += w
+	}
+	return n
+}
+
+// tabLabels builds the fully styled label for every tab, with count and
+// detection markers.
+func (m *prListModel) tabLabels() []string {
+	tabs := make([]string, len(m.sources))
 	for i, s := range m.sources {
-		name := s.Name
-		if short {
-			// Keep the digit and just enough of the name to tell tabs apart.
-			if len(name) > 3 {
-				name = name[:3]
-			}
-		}
-		label := fmt.Sprintf("%d %s", i+1, name)
-		// Mark the tab that came from where the user is, so leading with it reads
-		// as deliberate rather than as an arbitrary first entry.
-		if !short && m.detectedRepos[strings.ToLower(s.Repo)] {
-			label += tabCountStyle.Render("*")
-		}
-		if n := len(m.caches[i]); n > 0 && !short {
+		tabs[i] = m.renderTab(i, s, true)
+	}
+	return tabs
+}
+
+// renderTab produces one tab's styled string. withCount controls the (N) and
+// reload-spinner decorations; the index and detection marker are always shown.
+func (m *prListModel) renderTab(i int, s config.SourceDef, withCount bool) string {
+	label := fmt.Sprintf("%d %s", i+1, s.Name)
+	if m.detectedRepos[strings.ToLower(s.Repo)] {
+		label += tabCountStyle.Render("*")
+	}
+	if withCount {
+		if n := len(m.caches[i]); n > 0 {
 			label += tabCountStyle.Render(fmt.Sprintf("(%d)", n))
 		}
-		// A reload over rows that are already on screen changes nothing visible —
-		// the full-pane spinner only appears on an empty source — so R reads as a
-		// key that does nothing. Marking the tab shows the fetch, and covers the
-		// background poll too.
-		if m.loadings[i] && len(m.caches[i]) > 0 && !short {
+		if m.loadings[i] && len(m.caches[i]) > 0 {
 			label += tabCountStyle.Render(spinnerFrames[m.spinner%len(spinnerFrames)])
 		}
-		if i == m.curTab {
-			b.WriteString(tabActiveStyle.Render("[" + label + "]"))
-		} else {
-			b.WriteString(tabDimStyle.Render(" " + label + " "))
-		}
 	}
-	if m.stale {
-		b.WriteString(checkFailStyle.Render(" stale"))
+	if i == m.curTab {
+		return tabActiveStyle.Render("[" + label + "]")
 	}
-	out, _ := truncateExact(b.String(), w)
-	return out
+	return tabDimStyle.Render(" " + label + " ")
 }
 
 // renderPreview fills the right pane with the selected PR's summary.
