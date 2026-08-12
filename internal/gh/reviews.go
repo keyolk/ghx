@@ -247,6 +247,29 @@ func (c *Client) IssueComment(ctx context.Context, number int, body string) erro
 	return err
 }
 
+// ResolveThread marks a review thread as resolved. threadID is the GraphQL node
+// ID returned in ReviewThread.ID.
+func (c *Client) ResolveThread(ctx context.Context, threadID string) error {
+	return c.threadResolveMutation(ctx, threadID, true)
+}
+
+// UnresolveThread marks a review thread as unresolved.
+func (c *Client) UnresolveThread(ctx context.Context, threadID string) error {
+	return c.threadResolveMutation(ctx, threadID, false)
+}
+
+func (c *Client) threadResolveMutation(ctx context.Context, threadID string, resolve bool) error {
+	if threadID == "" {
+		return fmt.Errorf("resolve thread: empty thread ID")
+	}
+	mutation := "mutation ResolveThread($id: ID!) { resolveReviewThread(input:{threadId:$id}) { thread { isResolved } } }"
+	if !resolve {
+		mutation = "mutation UnresolveThread($id: ID!) { unresolveReviewThread(input:{threadId:$id}) { thread { isResolved } } }"
+	}
+	_, err := c.execRaw(ctx, "api", "graphql", "-f", "query="+mutation, "-F", "id="+threadID)
+	return err
+}
+
 // Checkout runs `gh pr checkout N`.
 func (c *Client) Checkout(ctx context.Context, number int) error {
 	_, err := c.exec(ctx, "pr", "checkout", fmt.Sprintf("%d", number))

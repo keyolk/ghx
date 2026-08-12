@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/keyolk/ghx/internal/gh"
+	"github.com/keyolk/ghx/internal/pr"
 )
 
 // Key handling for the detail view, split per tab. Each handler reports whether
@@ -256,6 +257,36 @@ func (d *prDetailModel) composeReply(threadID string) tea.Cmd {
 	return errCmd(fmt.Errorf("could not find the thread to reply to"))
 }
 
+// resolveThread persists a thread's resolved state and reloads the detail view
+// to reconcile. The local list was already flipped optimistically by the caller.
+func (d *prDetailModel) resolveThread(thread pr.ReviewThread, resolve bool) tea.Cmd {
+	threadID := thread.ID
+	client := d.client
+	return func() tea.Msg {
+		c, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		var err error
+		if resolve {
+			err = client.ResolveThread(c, threadID)
+		} else {
+			err = client.UnresolveThread(c, threadID)
+		}
+		if err != nil {
+			// Revert the optimistic flip so the marker reflects reality. The
+			// user also needs to see why the resolve failed.
+			for i := range d.comments.threads {
+				if d.comments.threads[i].ID == threadID {
+					d.comments.threads[i].IsResolved = !resolve
+					break
+				}
+			}
+			return errMsg{err: fmt.Errorf("resolve thread: %w", err)}
+		}
+		// Reload so the unresolved-conversation count in the list stays accurate.
+		return threadResolvedMsg{}
+	}
+}
+
 func (d *prDetailModel) updateComments(key string) (tea.Cmd, bool) {
 	switch key {
 	case "down":
@@ -268,8 +299,16 @@ func (d *prDetailModel) updateComments(key string) (tea.Cmd, bool) {
 		d.comments.toggleExpand()
 		return nil, true
 	case "t":
-		d.comments.toggleResolved()
+		d.comments.toggleResolvedFilter()
 		return nil, true
+	case "X":
+		// Resolve or unresolve the selected thread. Optimistic on the local
+		// list so the marker flips immediately; the reload reconciles on failure.
+		thread, resolve, ok := d.comments.toggleThreadResolved()
+		if !ok {
+			return nil, true
+		}
+		return d.resolveThread(thread, resolve), true
 	case "d":
 		// Jump to this thread's anchor in the diff.
 		if t, ok := d.comments.selected(); ok {
@@ -388,4 +427,3 @@ func (d *prDetailModel) fetchSelectedLogs() tea.Cmd {
 		return runLogsMsg{checkName: name, logs: logs}
 	}
 }
-

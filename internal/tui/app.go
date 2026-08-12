@@ -137,6 +137,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.setToast(msg.text)
 		return a, nil
 
+	case threadResolvedMsg:
+		a.setToast("thread resolved")
+		if a.detail != nil {
+			return a, a.detail.load()
+		}
+		return a, nil
+
 	case errMsg:
 		a.setToast(errorStyle.Render("error: ") + msg.err.Error())
 		return a, nil

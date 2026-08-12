@@ -161,6 +161,7 @@ Press `?` inside the TUI for the full list. Highlights:
 | `R` | reload the current source (the tab shows a spinner while it runs) |
 | `/` | text search (AND with active status filters) |
 | `c` | comment on diff line |
+| `X` | resolve / unresolve a review thread (Comments tab) |
 | `v` | visual range for multi-line comment |
 | `s` | toggle unified / side-by-side diff |
 | `h` / `l` | switch diff column (side-by-side) |
