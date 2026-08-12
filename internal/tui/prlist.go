@@ -53,6 +53,10 @@ type prListModel struct {
 	// filters; syncListItems refreshes it whenever newer row data arrives.
 	selected map[string]pr.Summary
 
+	// fileCache persists each source's PR list to ~/.config/ghx/cache/ so a
+	// restart shows the previous results immediately while a fresh fetch runs.
+	fileCache *prFileCache
+
 	missStreak int
 	stale      bool
 
@@ -101,12 +105,24 @@ func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km *Keymap, d
 		errs:          make([]error, len(sources)),
 		selected:      make(map[string]pr.Summary),
 		statusFilters: make(map[prStatus]bool),
+		fileCache:     newPRFileCache(),
+	}
+	// Seed each tab from its on-disk cache so the first frame shows the previous
+	// session's results while the fetches run. The data may be stale; the
+	// background reload overwrites it the moment a fresh response arrives.
+	for i, s := range sources {
+		if cached := m.fileCache.load(s, 0); cached != nil {
+			m.caches[i] = cached
+		}
 	}
 	l := list.New(nil, prListDelegate{isSelected: m.isSelected}, 80, 20)
 	initListBase(&l)
 	configureListSearch(&l)
 	m.list = &l
 	m.pane = &SplitPane{List: m.list, ItemHeight: 1}
+	// Push the seeded rows (if any) into the list so the first frame shows them
+	// rather than a blank pane waiting for the fetch.
+	m.syncListItems()
 	return m
 }
 
@@ -233,6 +249,10 @@ func (m *prListModel) handlePRListMsg(msg prListMsg) tea.Cmd {
 	m.stale = false
 	m.errs[msg.sourceIdx] = nil
 	m.caches[msg.sourceIdx] = msg.prs
+	// Persist so the next session opens on these rows instead of re-fetching.
+	if m.fileCache != nil {
+		m.fileCache.save(m.sources[msg.sourceIdx], msg.prs)
+	}
 	if msg.sourceIdx == m.curTab {
 		m.syncListItems()
 	}
