@@ -288,22 +288,89 @@ func (d *prDetailModel) view(w, h int) string {
 	return joinVertical(d.renderTabs(w), d.renderActiveTab(w, h-1))
 }
 
-// renderTabs draws the tab strip with per-tab counts where they're meaningful.
+// renderTabs draws the tab strip, keeping every tab's index visible even when
+// the terminal narrows — same per-tab shrinking strategy as the PR list's
+// renderTabs, so detail tabs 4-6 don't vanish off the right edge.
 func (d *prDetailModel) renderTabs(w int) string {
-	var b strings.Builder
+	tabs := make([]string, len(d.tabs))
+	widths := make([]int, len(d.tabs))
+	total := 0
 	for i, t := range d.tabs {
 		label := fmt.Sprintf("%d %s", i+1, detailTabNames[t])
 		if c := d.tabCount(t); c != "" {
 			label += tabCountStyle.Render("(" + c + ")")
 		}
 		if t == d.activeTab {
-			b.WriteString(tabActiveStyle.Render("[" + label + "]"))
+			tabs[i] = tabActiveStyle.Render("[" + label + "]")
 		} else {
-			b.WriteString(tabDimStyle.Render(" " + label + " "))
+			tabs[i] = tabDimStyle.Render(" " + label + " ")
+		}
+		widths[i] = lipglossWidth(tabs[i])
+		total += widths[i]
+	}
+
+	if total <= w {
+		var b strings.Builder
+		for _, t := range tabs {
+			b.WriteString(t)
+		}
+		return b.String()
+	}
+
+	// Drop per-tab counts first; the index and name stay.
+	for i, t := range d.tabs {
+		if widths[i] <= 4 {
+			continue
+		}
+		label := fmt.Sprintf("%d %s", i+1, detailTabNames[t])
+		if t == d.activeTab {
+			tabs[i] = tabActiveStyle.Render("[" + label + "]")
+		} else {
+			tabs[i] = tabDimStyle.Render(" " + label + " ")
+		}
+		widths[i] = lipglossWidth(tabs[i])
+	}
+	total = 0
+	for _, w := range widths {
+		total += w
+	}
+	if total <= w {
+		var b strings.Builder
+		for _, t := range tabs {
+			b.WriteString(t)
+		}
+		return b.String()
+	}
+
+	// Cap each tab at an equal share, preserving at least the index.
+	per := w / len(tabs)
+	if per < 3 {
+		per = 3
+	}
+	var b strings.Builder
+	for i, t := range tabs {
+		if widths[i] <= per {
+			b.WriteString(t)
+			continue
+		}
+		trunc, _ := truncateExact(t, per)
+		if i != int(d.activeTabIndex()) && per > 3 && lipglossWidth(trunc) < per {
+			trunc += " "
+		}
+		b.WriteString(trunc)
+	}
+	return b.String()
+}
+
+// activeTabIndex returns the position of the active tab within d.tabs, for the
+// inactive-padding check in renderTabs.
+func (d *prDetailModel) activeTabIndex() int {
+	for i, t := range d.tabs {
+		if t == d.activeTab {
+			return i
 		}
 	}
-	out, _ := truncateExact(b.String(), w)
-	return out
+	return 0
 }
 
 func (d *prDetailModel) tabCount(t detailTabKind) string {
