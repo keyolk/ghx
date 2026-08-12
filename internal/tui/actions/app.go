@@ -31,18 +31,18 @@ type App struct {
 	client *gh.Client
 	repo   string
 
-	active   tab
-	width    int
-	height   int
+	active tab
+	width  int
+	height int
 
 	// data
 	runs      []gh.Run
 	workflows []gh.Workflow
 
 	// log viewer
-	logView  string
-	logBusy  bool
-	logOff   int
+	logView string
+	logBusy bool
+	logOff  int
 
 	// filter
 	failedOnly bool
@@ -373,23 +373,17 @@ func (a *App) View() string {
 }
 
 func (a *App) renderTabs() string {
-	var b strings.Builder
+	tabs := make([]tui.TabLabel, len(tabNames))
 	for i, name := range tabNames {
-		label := fmt.Sprintf("%d %s", i+1, name)
-		if tab(i) == a.active {
-			b.WriteString(tui.TabActiveStyle.Render("[" + label + "]"))
-		} else {
-			b.WriteString(tui.TabDimStyle.Render(" " + label + " "))
-		}
-		if i < len(tabNames)-1 {
-			b.WriteString(" ")
-		}
+		tabs[i] = tui.TabLabel{Name: name, Active: tab(i) == a.active}
 	}
+	strip := tui.RenderTabStrip(tabs, a.width)
 	if a.failedOnly && a.active == tabRuns {
-		b.WriteString(tui.TabActiveStyle.Render(" [failed only]"))
+		// Append the failed-only filter marker after the strip; it is a state
+		// toggle, not a tab, so it rides along at the end.
+		strip += " " + tui.TabActiveStyle.Render("[failed only]")
 	}
-	out, _ := tui.TruncateExact(b.String(), a.width)
-	return out
+	return strip
 }
 
 func (a *App) renderContent() string {
