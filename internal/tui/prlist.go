@@ -126,9 +126,29 @@ func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km *Keymap, d
 	return m
 }
 
+// init fetches the visible source first and leaves the rest to load lazily.
+//
+// Fetching every tab up front sends one API call per tab — eight on a detected
+// tmux window — for data the user is not looking at, and the visible tab's
+// response competes with seven others for the connection and the rate limit.
+// selectTab already loads a source on first visit, so the others cost nothing
+// until they are actually opened.
+//
+// Sources that were seeded from the disk cache are the exception worth
+// refreshing anyway: they render immediately from stale rows, so a background
+// update keeps them honest without delaying anything. They go out after the
+// visible tab so they queue behind it.
 func (m *prListModel) init() tea.Cmd {
+	if len(m.sources) == 0 {
+		return nil
+	}
 	cmds := make([]tea.Cmd, 0, len(m.sources))
+	m.loadings[m.curTab] = true
+	cmds = append(cmds, m.fetchSource(m.curTab))
 	for i := range m.sources {
+		if i == m.curTab || m.caches[i] == nil {
+			continue
+		}
 		m.loadings[i] = true
 		cmds = append(cmds, m.fetchSource(i))
 	}
