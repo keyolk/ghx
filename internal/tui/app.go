@@ -66,6 +66,11 @@ type App struct {
 	toast   string
 	toastAt time.Time
 
+	// verifyAccounts, when set, checks the configured GitHub accounts after the
+	// first frame. It is a func rather than a direct call so this package stays
+	// independent of how accounts are configured and verified.
+	verifyAccounts func(context.Context) error
+
 	spinnerFrame int
 }
 
@@ -95,12 +100,33 @@ func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedR
 	return a
 }
 
+// SetAccountVerifier installs a check to run after the first frame. Passing nil
+// disables it. Keeping this off the startup path is what lets the cached PR
+// rows render before any network round trip completes.
+func (a *App) SetAccountVerifier(verify func(context.Context) error) {
+	a.verifyAccounts = verify
+}
+
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		a.list.init(),
 		spinnerTickCmd(),
 		prListPollCmd(a.cfg.PollDuration()),
-	)
+	}
+	// Account verification is a `gh auth status` round trip per account. Running
+	// it here rather than before tea.NewProgram keeps it off the path to the
+	// first frame — the cached rows are already on screen while it runs, and a
+	// broken account surfaces as a warning instead of a blank startup delay.
+	if a.verifyAccounts != nil {
+		verify := a.verifyAccounts
+		cmds = append(cmds, func() tea.Msg {
+			if err := verify(context.Background()); err != nil {
+				return errMsg{err: err}
+			}
+			return nil
+		})
+	}
+	return tea.Batch(cmds...)
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

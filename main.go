@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -75,11 +76,10 @@ func run() (err error) {
 	// best-effort: outside a checkout, or with an unrelated remote, the list just
 	// opens on the configured sources as before.
 	detected := detectRepos(context.Background(), cfg)
-	if len(cfg.Accounts) > 0 {
-		if err := verifyAccounts(context.Background(), client, cfg.Accounts, os.Stderr); err != nil {
-			return err
-		}
-	} else {
+	if len(cfg.Accounts) == 0 {
+		// A single-identity setup still verifies up front: there is exactly one
+		// check, and without it a bad login yields an empty list with no
+		// explanation.
 		authClient := client
 		if len(detected) > 0 {
 			authClient = client.WithRepo(detected[0])
@@ -96,6 +96,14 @@ func run() (err error) {
 		}
 	}
 	app := tui.NewAppWithRepo(cfg, km, client, detected)
+	if len(cfg.Accounts) > 0 {
+		// Verified after the first frame: two accounts cost ~1.5s of `gh auth
+		// status`, and the cached rows are useful long before that returns.
+		accounts := cfg.Accounts
+		app.SetAccountVerifier(func(ctx context.Context) error {
+			return verifyAccounts(ctx, client, accounts, os.Stderr)
+		})
+	}
 
 	// NO_COLOR / non-tty gate: strip color before rendering.
 	if os.Getenv("NO_COLOR") != "" || !isTTY(os.Stdout) {
@@ -127,40 +135,66 @@ type accountVerifier interface {
 	CredentialToken(ctx context.Context, selector string) (string, bool)
 }
 
-// verifyAccounts checks every configured account before the TUI starts, so an
-// unusable identity is reported on the terminal rather than as an empty tab.
-// It fails only when no account works at all; partial failures are warnings,
-// since one broken account should not withhold the other's review queue.
+// verifyAccounts checks every configured account, so an unusable identity is
+// reported rather than showing up as a mysteriously empty tab. It fails only
+// when no account works at all; partial failures are warnings, since one broken
+// account should not withhold the other's review queue.
+//
+// Each check is a `gh auth status` round trip against the API — ~1.5s per
+// account — so they run concurrently. Serially this was the single largest
+// component of startup latency.
 func verifyAccounts(ctx context.Context, client accountVerifier, accounts []config.AccountDef, warn io.Writer) error {
+	type result struct {
+		label string
+		err   error
+		token string
+		hasTk bool
+	}
+	results := make([]result, len(accounts))
+	var wg sync.WaitGroup
+	for i, account := range accounts {
+		i, account := i, account
+		results[i].label = account.Label()
+		selector := account.Selector()
+		if selector == "" {
+			results[i].err = fmt.Errorf("gh_user or credential_repo is required")
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := client.AuthStatusFor(ctx, selector); err != nil {
+				results[i].err = err
+				return
+			}
+			results[i].token, results[i].hasTk = client.CredentialToken(ctx, selector)
+		}()
+	}
+	wg.Wait()
+
 	var authErrs []error
 	authenticated := 0
 	owners := make(map[string]string)
-	for _, account := range accounts {
-		selector := account.Selector()
-		if selector == "" {
-			authErrs = append(authErrs,
-				fmt.Errorf("account %s: gh_user or credential_repo is required", account.Label()))
-			continue
-		}
-		if authErr := client.AuthStatusFor(ctx, selector); authErr != nil {
-			authErrs = append(authErrs, fmt.Errorf("account %s: %w", account.Label(), authErr))
+	// Report in configuration order regardless of which check finished first.
+	for _, r := range results {
+		if r.err != nil {
+			authErrs = append(authErrs, fmt.Errorf("account %s: %w", r.label, r.err))
 			continue
 		}
 		authenticated++
 		// Two accounts resolving to one token is the silent failure this feature
 		// exists to avoid: every tab looks like it queried both identities while
 		// listing only one. The token is compared, never printed.
-		token, ok := client.CredentialToken(ctx, selector)
-		if !ok {
+		if !r.hasTk {
 			continue
 		}
-		if prev, dup := owners[token]; dup {
+		if prev, dup := owners[r.token]; dup {
 			fmt.Fprintf(warn,
 				"warning: accounts %s and %s resolve to the same token — only one identity's PRs will be listed\n",
-				prev, account.Label())
+				prev, r.label)
 			continue
 		}
-		owners[token] = account.Label()
+		owners[r.token] = r.label
 	}
 	if authenticated == 0 {
 		return fmt.Errorf("no configured GitHub account is authenticated: %w", errors.Join(authErrs...))
