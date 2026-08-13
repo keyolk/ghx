@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -59,37 +60,65 @@ func DetectAll(ctx context.Context, startDir string) []Result {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	var out []Result
-	seenSlug := make(map[string]bool)
+	// Collect the candidate directories first, deduplicated by path. Panes
+	// frequently share a directory (a split beside the same checkout), and
+	// skipping those before shelling out to git keeps a wide window fast.
+	type candidate struct {
+		dir    string
+		source string
+	}
+	var candidates []candidate
 	seenDir := make(map[string]bool)
-
-	add := func(dir, source string) {
+	addDir := func(dir, source string) {
 		if dir == "" {
 			return
 		}
-		// Panes frequently share a directory (a split beside the same checkout).
-		// Skipping those before shelling out to git keeps a wide window inside the
-		// detection timeout.
 		clean := filepath.Clean(dir)
 		if seenDir[clean] {
 			return
 		}
 		seenDir[clean] = true
-		slug, root := slugFromDir(ctx, dir)
+		candidates = append(candidates, candidate{dir: dir, source: source})
+	}
+	addDir(startDir, "cwd")
+	for _, dir := range tmuxWindowPanePaths(ctx) {
+		addDir(dir, "tmux")
+	}
+
+	// Each directory costs two git invocations, so resolve them concurrently.
+	// A wide tmux window otherwise serializes a dozen subprocess round trips
+	// into the startup path, delaying the first frame.
+	type resolved struct {
+		slug string
+		root string
+	}
+	found := make([]resolved, len(candidates))
+	var wg sync.WaitGroup
+	for i, c := range candidates {
+		i, c := i, c
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			found[i].slug, found[i].root = slugFromDir(ctx, c.dir)
+		}()
+	}
+	wg.Wait()
+
+	// Rebuild in candidate order so the working directory still leads and the
+	// tmux ordering is preserved regardless of which git call finished first.
+	var out []Result
+	seenSlug := make(map[string]bool)
+	for i, c := range candidates {
+		slug := found[i].slug
 		if slug == "" {
-			return
+			continue
 		}
 		key := strings.ToLower(slug)
 		if seenSlug[key] {
-			return
+			continue
 		}
 		seenSlug[key] = true
-		out = append(out, Result{Slug: slug, Source: source, Path: root})
-	}
-
-	add(startDir, "cwd")
-	for _, dir := range tmuxWindowPanePaths(ctx) {
-		add(dir, "tmux")
+		out = append(out, Result{Slug: slug, Source: c.source, Path: found[i].root})
 	}
 	return out
 }
