@@ -30,3 +30,8 @@ actions.
 - Styles are semantic tokens in styles.go, never raw hex in render paths.
 - Tabs and CJK width handled via expandTabs / lipgloss.Width.
 - Tests are hermetic: forceColor for ANSI assertions, t.Setenv for isolation.
+- `App.View` must render at most `height` rows: it always draws a title line and
+  a footer, so the body is sized to `contentRows()`, never to `a.height`. An
+  overflowing frame loses its TOP rows — bubbletea keeps the last `height` lines
+  — which silently hides the title and the tab strip. `view_height_test.go`
+  guards this for every tab and every overlay.
