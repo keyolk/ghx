@@ -197,18 +197,30 @@ func (c *Client) EnrichPRStatusREST(ctx context.Context, owner, repo string, num
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return "", false, "", fmt.Errorf("decode REST pull %d: %w", number, err)
 	}
-
-	raw, err = c.execRaw(ctx, "api", "--paginate",
-		fmt.Sprintf("repos/%s/%s/pulls/%d/reviews?per_page=100", owner, repo, number))
+	decision, err = c.reviewDecisionREST(ctx, owner, repo, number)
 	if err != nil {
 		return "", false, "", err
 	}
+	return restPRState(p.State, p.Merged || p.MergedAt != ""), p.Draft, decision, nil
+}
+
+// reviewDecisionREST is the half of the enrichment that genuinely needs a
+// per-PR request: reviews are not embedded in any list endpoint, so the A and C
+// markers cost one round trip each however the caller slices it.
+//
+// Kept separate from EnrichPRStatusREST so the common path — where the row
+// already knows its own state and draft flag — can ask for just this.
+func (c *Client) reviewDecisionREST(ctx context.Context, owner, repo string, number int) (string, error) {
+	raw, err := c.execRaw(ctx, "api", "--paginate",
+		fmt.Sprintf("repos/%s/%s/pulls/%d/reviews?per_page=100", owner, repo, number))
+	if err != nil {
+		return "", err
+	}
 	var reviews []restReview
 	if err := json.Unmarshal(raw, &reviews); err != nil {
-		return "", false, "", fmt.Errorf("decode REST reviews for %d: %w", number, err)
+		return "", fmt.Errorf("decode REST reviews for %d: %w", number, err)
 	}
-	return restPRState(p.State, p.Merged || p.MergedAt != ""), p.Draft,
-		restReviewDecision(reviews), nil
+	return restReviewDecision(reviews), nil
 }
 
 // restReviewDecision reduces a review list to APPROVED / CHANGES_REQUESTED / "".

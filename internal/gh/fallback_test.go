@@ -155,14 +155,20 @@ case "$*" in
   *) echo "unexpected: $*" >&2; exit 1 ;;
 esac
 `)
+	// State and IsDraft as both search paths deliver them — the row reaching
+	// enrichment already knows them, and the enrichment must preserve rather
+	// than re-fetch them.
 	got, err := NewClient(0).EnrichPRStatuses(context.Background(), []pr.Summary{
-		{ID: "PR_1", Number: 101, Repo: "acme/one", State: "OPEN"},
+		{ID: "PR_1", Number: 101, Repo: "acme/one", State: "OPEN", IsDraft: true},
 	})
 	if err != nil {
 		t.Fatalf("the fallback should have succeeded: %v", err)
 	}
 	if !got[0].IsDraft {
 		t.Error("the D marker lost its draft flag")
+	}
+	if got[0].State != "OPEN" {
+		t.Errorf("state = %q, want the row's own OPEN preserved", got[0].State)
 	}
 	// A later COMMENTED review must not erase the approval: COMMENTED is not a
 	// verdict, and letting it win drops the A marker off an approved PR.

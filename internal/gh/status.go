@@ -134,15 +134,28 @@ func (c *Client) EnrichPRStatuses(ctx context.Context, summaries []pr.Summary) (
 
 // enrichPRStatusGroupREST fills the markers REST can answer.
 //
-// The GraphQL path resolves a whole page in one request; REST needs two per PR,
-// so the group is walked concurrently — a 50-row queue is 100 sequential round
-// trips otherwise, which does not fit the fetch timeout. The cap keeps a large
-// queue from opening 100 connections at once and tripping abuse detection.
+// The GraphQL path resolves a whole page in one request; REST has no batch
+// equivalent for reviews, so this costs one round trip per PR and the group is
+// walked concurrently — a 78-row queue is 78 sequential round trips otherwise,
+// which does not fit the fetch timeout. The cap keeps a large queue from
+// opening a connection per PR and tripping abuse detection.
+//
+// One round trip per PR, not two. Both search paths already report state,
+// draft, and merged for every row they return, so re-fetching `pulls/{n}` to
+// learn them again is pure duplication — measured at 156 requests for a 78-row
+// queue, enough to exhaust the REST budget in about thirty tab switches. Only
+// reviews genuinely need asking, because no list endpoint embeds them.
+//
+// A row that somehow arrived without a state still gets the full lookup: the
+// D/M markers are the ones this exists to light up, and guessing them from an
+// empty string would put a wrong marker on screen.
 func enrichPRStatusGroupREST(ctx context.Context, client *Client, out []pr.Summary, indices map[string][]int) error {
 	type job struct {
 		owner, repo string
 		number      int
 		rows        []int
+		// full asks for state and draft too, for a row that did not carry them.
+		full bool
 	}
 	var jobs []job
 	for _, rows := range indices {
@@ -156,7 +169,10 @@ func enrichPRStatusGroupREST(ctx context.Context, client *Client, out []pr.Summa
 			// keeps whatever the base listing gave it.
 			continue
 		}
-		jobs = append(jobs, job{owner: owner, repo: repo, number: s.Number, rows: rows})
+		jobs = append(jobs, job{
+			owner: owner, repo: repo, number: s.Number, rows: rows,
+			full: s.State == "",
+		})
 	}
 	if len(jobs) == 0 {
 		return nil
@@ -173,7 +189,18 @@ func enrichPRStatusGroupREST(ctx context.Context, client *Client, out []pr.Summa
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			state, isDraft, decision, err := client.EnrichPRStatusREST(ctx, j.owner, j.repo, j.number)
+
+			var state string
+			var isDraft bool
+			var decision string
+			var err error
+			if j.full {
+				state, isDraft, decision, err = client.EnrichPRStatusREST(
+					ctx, j.owner, j.repo, j.number)
+			} else {
+				decision, err = client.reviewDecisionREST(ctx, j.owner, j.repo, j.number)
+			}
+
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -181,8 +208,10 @@ func enrichPRStatusGroupREST(ctx context.Context, client *Client, out []pr.Summa
 				return
 			}
 			for _, i := range j.rows {
-				out[i].State = state
-				out[i].IsDraft = isDraft
+				if j.full {
+					out[i].State = state
+					out[i].IsDraft = isDraft
+				}
 				out[i].ReviewDecision = decision
 				// Deliberately not set: REST has no thread-resolution bit, so the
 				// unresolved count stays unknown rather than being reported as zero.
