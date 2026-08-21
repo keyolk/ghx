@@ -456,10 +456,16 @@ func (d *prDetailModel) helpLine() string {
 	case tabChecks:
 		return d.checks.helpLine()
 	case tabFiles:
-		return fmtHints("j/k", "file", "enter", "open in diff", "1-6", "tab", "esc", "back")
+		return fmtHints("j/k", "file", "enter", "open in diff", "1-6", "tab",
+			"esc", "back")
 	default:
+		// M and y work here — and have all along — but the footer never said so,
+		// which for merge is the whole difference between a key existing and a
+		// key being usable: nothing else in the view hints that the PR can be
+		// merged from it.
 		return fmtHints("1-6", "tab", "h/l", "cycle", "a", "approve",
-			"r", "request", "C", "comment", "o", "browser", "esc", "back")
+			"r", "request", "M", "merge", "y", "copy", "o", "browser",
+			"esc", "back")
 	}
 }
 
