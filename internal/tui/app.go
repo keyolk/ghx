@@ -171,7 +171,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case threadResolvedMsg:
 		a.setToast("thread resolved")
 		if a.detail != nil {
-			return a, a.detail.load()
+			// The PR just changed, and the row's updatedAt has not caught up —
+			// the cached entry would still look valid for the state that just
+			// stopped being true.
+			return a, a.detail.reload()
 		}
 		return a, nil
 
@@ -273,7 +276,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.list.refreshCurrent()
 		}
 		if a.detail != nil {
-			return a, a.detail.load()
+			return a, a.detail.reload()
 		}
 		return a, nil
 
@@ -288,7 +291,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.list.refreshCurrent()
 		}
 		if a.detail != nil {
-			return a, a.detail.load()
+			return a, a.detail.reload()
 		}
 		return a, nil
 
@@ -309,7 +312,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.list.invalidateCachesAndRefresh()
 		}
 		if a.detail != nil && len(msg.completed) > 0 {
-			return a, a.detail.load()
+			return a, a.detail.reload()
 		}
 		return a, nil
 
@@ -456,7 +459,8 @@ func (a *App) detailActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case "M":
 		return a.startMerge(), true
 	case "R":
-		return a.detail.load(), true
+		// Explicitly asking to refresh must not be answered from disk.
+		return a.detail.reload(), true
 	}
 	return nil, false
 }
@@ -642,6 +646,10 @@ func (a *App) openSelected() tea.Cmd {
 	a.detail = newPRDetailModelWithCredential(
 		a.cfg, a.client, a.km, item.pr.Number, item.pr.Repo, item.pr.CredentialRepo,
 	)
+	// The row's updatedAt is what makes the detail cache safe to use: GitHub
+	// bumps it on every push, comment, review, and label change, so an entry
+	// stamped with the same value describes the same PR.
+	a.detail.updatedAt = item.pr.UpdatedAt
 	a.detail.resize(a.width, a.height)
 	return a.detail.load()
 }

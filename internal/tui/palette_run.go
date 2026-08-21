@@ -22,7 +22,7 @@ func (a *App) runPalette(line string) tea.Cmd {
 		return nil
 	case "refresh":
 		if a.state == viewPRDetail && a.detail != nil {
-			return a.detail.load()
+			return a.detail.reload()
 		}
 		return a.list.refreshCurrent()
 	case "approve":
