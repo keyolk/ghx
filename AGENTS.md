@@ -23,6 +23,7 @@ actions.
 - `internal/gh/credential.go` — repo별 Git credential 선택과 gh 인증 fallback
 - `internal/tui/account_search.go` — 복수 GitHub account 검색 병합과 중복 제거
 - `internal/tui/clipboard.go` — `y` / `:copy`, PR URL 복사 (외부 clipboard 명령)
+- `internal/tui/detail_diff_jump.go` — diff의 hunk/file 단위 점프 (`J`/`K`, `{`/`}`)
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
 ## Conventions

@@ -100,7 +100,8 @@ branch protection, with an explicit confirmation but no additional ghx policy.
 - **Multi-select** — `space` toggles a PR and `A` toggles all visible PRs;
   approve, close/reopen, or squash-merge the selected set with one confirmation
 - **Diff viewer** — unified and side-by-side (`s` to toggle), tab-aware column
-  alignment, comment line wrapping, file folding, syntax highlighting
+  alignment, comment line wrapping, file folding, syntax highlighting; `J`/`K`
+  jump hunk to hunk and `{`/`}` file to file
 - **Inline comments** — `c` on a diff line, `v` for visual range selection,
   replies via `enter` on a thread; posts to the correct path/line/side
 - **Review actions** — approve (`a`), request changes (`r`), PR-level comment
@@ -173,6 +174,8 @@ Press `?` inside the TUI for the full list. Highlights:
 | `h` / `l` | switch diff column (side-by-side) |
 | `o` | fold file (diff tab) / open selected PRs in browser |
 | `y` / `:copy` | copy the selected PRs' URLs to the clipboard (one per line) |
+| `J` / `K` | next / previous hunk (diff tab) |
+| `{` / `}` | previous / next file (diff tab) |
 | `:` | command palette |
 | `?` | help |
 

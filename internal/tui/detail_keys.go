@@ -175,6 +175,35 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 	case "end":
 		d.diff.toGutter(false)
 		return nil, true
+	case "J", "K":
+		// Coarse navigation: one hunk per press rather than one line. Shifted so
+		// j/k keep their meaning — reading a hunk and finding the next one are
+		// different jobs and both need a key.
+		//
+		// Ignored while a visual range is open: a jump crosses a hunk boundary by
+		// definition, and a range that does is not one GitHub accepts, so the
+		// selection would silently collapse to a single line. The key is still
+		// consumed so nothing else acts on it mid-selection.
+		if d.diff.visual {
+			return nil, true
+		}
+		delta := 1
+		if key == "K" {
+			delta = -1
+		}
+		d.diff.jumpHunk(delta)
+		return nil, true
+	case "{", "}":
+		// File-level jumps, for the same reason and with the same restriction.
+		if d.diff.visual {
+			return nil, true
+		}
+		delta := 1
+		if key == "{" {
+			delta = -1
+		}
+		d.diff.jumpFile(delta)
+		return nil, true
 	case "o":
 		d.diff.toggleFold()
 		return nil, true

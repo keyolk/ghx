@@ -761,6 +761,7 @@ func (v *diffView) helpLine() string {
 		}
 		hints := fmtHints(
 			"j/k", "line",
+			"J/K", "hunk",
 			"h/l", "column",
 			"c", "comment",
 			"v", "visual",
@@ -771,6 +772,7 @@ func (v *diffView) helpLine() string {
 		if !v.sideBySide {
 			hints = fmtHints(
 				"j/k", "line",
+				"J/K", "hunk",
 				"c", "comment",
 				"v", "visual",
 				"s", layout,
