@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -42,39 +43,55 @@ func TestViewNeverOverflowsTerminalHeight(t *testing.T) {
 		rows = append(rows, pr.Summary{Number: i + 1, Title: "a pull request", Repo: "o/n", State: "OPEN"})
 	}
 
-	for _, h := range []int{8, 12, 24, 30, 50} {
+	// Sizes span what the bug was actually reported at: a narrow pane, and a
+	// full-screen 250x62 terminal. Overflow is a function of content height,
+	// not terminal size, so a wide screen is not automatically safe — it just
+	// needs more content to overflow, which a long PR description supplies.
+	for _, dim := range []struct{ w, h int }{
+		{120, 8}, {120, 12}, {120, 24}, {120, 30}, {120, 50},
+		{250, 62}, {200, 45}, {80, 20},
+	} {
+		w, h := dim.w, dim.h
 		a := testApp(t, rows)
-		a.width, a.height = 120, h
-		a.list.resize(120, h)
+		a.width, a.height = w, h
+		a.list.resize(w, h)
 
 		a.state = viewPRDetail
 		a.detail = newPRDetailModel(a.cfg, a.client, a.km, 1, "o/n")
-		a.detail.resize(120, h)
+		a.detail.resize(w, h)
 		if err := a.detail.diff.setContent(raw.String(), threads); err != nil {
 			t.Fatal(err)
 		}
 		a.detail.comments.setThreads(threads)
 		a.detail.checks.setChecks(checks)
+		// A long description is what makes the Overview tab overflow, and
+		// Overview is where the header vanished in the field. Without a body
+		// this tab is a dozen rows and fits anywhere.
+		a.detail.detail = &pr.Detail{
+			Number: 1, Title: "a pull request", State: "OPEN",
+			Body: strings.Repeat("A line of the PR description.\n", 150),
+		}
 
 		for _, tab := range a.detail.tabs {
 			a.detail.activeTab = tab
-			assertFrameFits(t, a, h, detailTabNames[tab])
+			assertFrameFits(t, a, h, fmt.Sprintf("%s at %dx%d",
+				detailTabNames[tab], w, h))
 		}
 
 		// Every overlay pads the body out to the height it is handed, so each is
 		// its own chance to overflow the frame.
-		a.detail.activeTab = tabDiff
+		a.detail.activeTab = tabOverview
 		for _, ov := range overlayCases(a) {
 			ov.open()
-			assertFrameFits(t, a, h, "detail+"+ov.name)
+			assertFrameFits(t, a, h, fmt.Sprintf("detail+%s at %dx%d", ov.name, w, h))
 			ov.close()
 		}
 
 		a.state = viewPRList
-		assertFrameFits(t, a, h, "list")
+		assertFrameFits(t, a, h, fmt.Sprintf("list at %dx%d", w, h))
 		for _, ov := range overlayCases(a) {
 			ov.open()
-			assertFrameFits(t, a, h, "list+"+ov.name)
+			assertFrameFits(t, a, h, fmt.Sprintf("list+%s at %dx%d", ov.name, w, h))
 			ov.close()
 		}
 	}
