@@ -26,6 +26,7 @@ actions.
 - `internal/gh/rest.go` — 목록·검색·상태·리뷰 스레드의 REST 대체 경로
 - `internal/tui/clipboard.go` — `y` / `:copy`, PR URL 복사 (외부 clipboard 명령)
 - `internal/tui/detail_diff_jump.go` — diff의 hunk/file 단위 점프 (`J`/`K`, `{`/`}`)
+- `internal/tui/detail_cache.go` — PR 상세 디스크 캐시 (updatedAt로 유효성 판정)
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
 ## Conventions
@@ -41,6 +42,14 @@ actions.
   아예 GraphQL 없이 발급될 수 있으므로, 새 읽기 경로를 추가하면 `isGraphQLUnavailable`
   분기로 REST 대체를 함께 넣는다. REST가 답할 수 없는 것(스레드 resolution)은
   추측하지 말고 unknown으로 남긴다 — `pr.ReviewThread.ResolutionKnown`.
+- 요청 수를 늘리는 변경은 **측정하고 커밋 메시지에 남긴다.** 출력이 옳아도 비용이
+  틀릴 수 있고, 결과만 단언하는 테스트는 그 회귀를 통과시킨다. `gh`는 단일 관문
+  (`Client.exec`)을 지나므로 PATH에 로깅 shim을 두면 실제 TUI를 몰면서 전수 집계할
+  수 있다 — `internal/gh/rest_cost_test.go`의 `countingGH`, `refetch_scope_test.go`의
+  `countBatch`가 그 단언을 테스트로 고정한 예다.
+- 액션 후 재페치는 **그 액션이 바꾼 것만** 받는다. 스레드 resolve에 diff를 다시 받지
+  않는다. 다만 좁힌 경로도 캐시는 evict해야 한다 — ghx 안에서 한 액션은 리스트 행의
+  `updatedAt`을 움직이지 않으므로, 캐시가 방금 바뀐 상태를 계속 내놓는다.
 - `App.View` must render at most `height` rows: it always draws a title line and
   a footer, so the body is sized to `contentRows()`, never to `a.height`. An
   overflowing frame loses its TOP rows — bubbletea keeps the last `height` lines

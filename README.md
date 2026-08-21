@@ -120,6 +120,10 @@ branch protection, with an explicit confirmation but no additional ghx policy.
   instead. Thread *resolution* has no REST representation, so those threads read
   "resolution unknown" rather than guessing, and `X` explains why it cannot
   resolve them
+- **Caching** — PR lists and PR detail are cached to disk; a return visit to a
+  PR you just left costs nothing. Detail entries are validated against the row's
+  `updatedAt` rather than a TTL, so what you see is the PR as the list last saw
+  it. `R` and `:refresh` always re-read
 - **Responsive** — degrades gracefully on narrow terminals
 
 ## Configuration
