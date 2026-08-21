@@ -64,6 +64,21 @@ type prDetailModel struct {
 	// rawDiff is kept so threads arriving after the diff can rebuild the overlay
 	rawDiff string
 
+	// cache holds this PR's payload between visits; updatedAt is the row's
+	// timestamp, which decides whether a stored entry still describes the PR.
+	// A zero updatedAt (opened without a list row) disables the cache rather
+	// than trusting an entry nothing can validate.
+	cache     *detailFileCache
+	updatedAt time.Time
+
+	// fetched marks which of the four parts have landed this visit, so the
+	// entry is only written once all of them have. A partial write reads back
+	// as a PR with no diff, which is indistinguishable from one that has none.
+	fetchedDetail  bool
+	fetchedDiff    bool
+	fetchedChecks  bool
+	fetchedThreads bool
+
 	gen int
 
 	// spinner frame, pushed in by app.go so every spinner animates in step
@@ -90,6 +105,7 @@ func newPRDetailModelWithCredential(
 ) *prDetailModel {
 	d := &prDetailModel{
 		cfg: cfg, km: km, number: number, credentialRepo: credentialRepo,
+		cache:     newDetailFileCache(),
 		activeTab: tabOverview,
 		tabs:      []detailTabKind{tabOverview, tabFiles, tabDiff, tabComments, tabCommits, tabChecks},
 		diff:      newDiffView(),
@@ -118,11 +134,112 @@ func (d *prDetailModel) resize(w, h int) { d.width, d.height = w, h }
 
 // load fans out the independent fetches. Each section renders as soon as its
 // own request lands rather than waiting for the slowest one.
+//
+// A cached entry short-circuits all four: a PR's detail is the most expensive
+// thing ghx fetches, and returning to one you just left is the most common
+// movement in a review. The entry is only used when the row's updatedAt matches
+// what was stored, so what is shown is the PR as the list last saw it — not
+// something a timer has decided is probably still fine.
 func (d *prDetailModel) load() tea.Cmd {
+	if d.loadFromCache() {
+		return nil
+	}
+	return d.fetch()
+}
+
+// loadFromCache populates the view from disk, reporting whether it could.
+func (d *prDetailModel) loadFromCache() bool {
+	if d.cache == nil {
+		return false
+	}
+	repo := d.repoSlug()
+	if repo == "" {
+		return false
+	}
+	entry := d.cache.load(repo, d.number, d.updatedAt)
+	if entry == nil {
+		return false
+	}
+	d.detail = entry.Detail
+	d.rawDiff = entry.Diff
+	d.checks.setChecks(entry.Checks)
+	d.comments.setThreads(entry.Threads)
+	if err := d.diff.setContent(entry.Diff, entry.Threads); err != nil {
+		return d.discardCachedEntry(repo)
+	}
+	// The parser tolerates junk by returning no files rather than an error, so
+	// the check that matters is on the rows the view needs. A PR the detail says
+	// touches files, whose cached diff produces nothing to scroll, is a corrupt
+	// entry — and it would be shown as a PR with an empty diff, which looks like
+	// a real (if odd) state rather than a bug.
+	if entry.Detail.ChangedFiles > 0 && len(d.diff.rows) == 0 {
+		return d.discardCachedEntry(repo)
+	}
+	d.loadingDetail, d.loadingDiff = false, false
+	d.loadingChecks, d.loadingThreads = false, false
+	d.fetchedDetail, d.fetchedDiff = true, true
+	d.fetchedChecks, d.fetchedThreads = true, true
+	return true
+}
+
+// discardCachedEntry drops a corrupt entry and clears whatever it had already
+// populated, so the caller falls back to a clean fetch rather than rendering
+// half of something unusable. Always reports false, for use as a return value.
+func (d *prDetailModel) discardCachedEntry(repo string) bool {
+	d.cache.evict(repo, d.number)
+	d.detail, d.rawDiff = nil, ""
+	d.checks.setChecks(nil)
+	d.comments.setThreads(nil)
+	_ = d.diff.setContent("", nil)
+	return false
+}
+
+// reload forces the four fetches, bypassing the cache. R and every action that
+// changes the PR use this: the row's updatedAt has not caught up yet, so the
+// stored entry still looks valid for a state that just stopped being true.
+func (d *prDetailModel) reload() tea.Cmd {
+	if d.cache != nil {
+		if repo := d.repoSlug(); repo != "" {
+			d.cache.evict(repo, d.number)
+		}
+	}
+	return d.fetch()
+}
+
+// repoSlug is the "owner/name" this PR belongs to, or "" when it is not known.
+func (d *prDetailModel) repoSlug() string {
+	if d.owner == "" || d.repo == "" {
+		return ""
+	}
+	return d.owner + "/" + d.repo
+}
+
+// saveCache writes the entry once every part has landed.
+func (d *prDetailModel) saveCache() {
+	if d.cache == nil || !d.fetchedDetail || !d.fetchedDiff ||
+		!d.fetchedChecks || !d.fetchedThreads {
+		return
+	}
+	repo := d.repoSlug()
+	if repo == "" || d.detail == nil {
+		return
+	}
+	d.cache.save(repo, d.number, d.updatedAt, cachedDetail{
+		Detail:  d.detail,
+		Diff:    d.rawDiff,
+		Checks:  d.checks.checks,
+		Threads: d.comments.threads,
+	})
+}
+
+// fetch issues the four requests unconditionally.
+func (d *prDetailModel) fetch() tea.Cmd {
 	d.loadingDetail = true
 	d.loadingDiff = true
 	d.loadingChecks = true
 	d.loadingThreads = true
+	d.fetchedDetail, d.fetchedDiff = false, false
+	d.fetchedChecks, d.fetchedThreads = false, false
 	n := d.number
 	client := d.client
 
@@ -159,8 +276,16 @@ func (d *prDetailModel) load() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// refreshThreads re-fetches just the threads, used after posting a comment.
+// refreshThreads re-fetches just the threads, used after posting a comment or
+// resolving one. The diff and the commit list cannot have changed, and the
+// three requests that would fetch them again are the most expensive part of
+// opening a PR.
+//
+// It evicts the cached entry first: the stored copy still holds the old thread
+// list, and the row's updatedAt has not moved, so a return visit would serve
+// the comment that was just posted as if it had never been.
 func (d *prDetailModel) refreshThreads() tea.Cmd {
+	d.evictCache()
 	d.loadingThreads = true
 	n, client := d.number, d.client
 	owner, repo := d.owner, d.repo
@@ -176,6 +301,33 @@ func (d *prDetailModel) refreshThreads() tea.Cmd {
 		}
 		ts, err := client.ReviewThreads(c, owner, repo, n)
 		return prThreadsMsg{threads: ts, err: err}
+	}
+}
+
+// evictCache drops this PR's stored entry, for the actions that change the PR
+// without moving the row's updatedAt — which is every action taken from inside
+// ghx, since the list has not re-fetched yet.
+func (d *prDetailModel) evictCache() {
+	if d.cache == nil {
+		return
+	}
+	if repo := d.repoSlug(); repo != "" {
+		d.cache.evict(repo, d.number)
+	}
+}
+
+// refreshDetail re-fetches only the PR metadata: state, draft flag, review
+// decision, mergeability, labels. Everything an approve, a ready-for-review, or
+// a label edit can change, and nothing the diff or threads own.
+func (d *prDetailModel) refreshDetail() tea.Cmd {
+	d.evictCache()
+	d.loadingDetail = true
+	n, client := d.number, d.client
+	return func() tea.Msg {
+		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		det, err := client.ViewPR(c, n)
+		return prDetailMsg{detail: det, err: err}
 	}
 }
 
@@ -211,6 +363,8 @@ func (d *prDetailModel) handleDetailMsg(msg prDetailMsg) tea.Cmd {
 		return errCmd(msg.err)
 	}
 	d.detail = msg.detail
+	d.fetchedDetail = true
+	d.saveCache()
 	return nil
 }
 
@@ -223,6 +377,8 @@ func (d *prDetailModel) handleDiffMsg(msg prDiffMsg) tea.Cmd {
 	if err := d.diff.setContent(msg.diff, d.diff.threads); err != nil {
 		return errCmd(err)
 	}
+	d.fetchedDiff = true
+	d.saveCache()
 	return nil
 }
 
@@ -233,6 +389,8 @@ func (d *prDetailModel) handleThreadsMsg(msg prThreadsMsg) tea.Cmd {
 	}
 	d.comments.setThreads(msg.threads)
 	d.diff.setThreads(msg.threads)
+	d.fetchedThreads = true
+	d.saveCache()
 	return nil
 }
 
@@ -242,6 +400,8 @@ func (d *prDetailModel) handleChecksMsg(msg prChecksMsg) tea.Cmd {
 		return errCmd(msg.err)
 	}
 	d.checks.setChecks(msg.checks)
+	d.fetchedChecks = true
+	d.saveCache()
 	// Keep polling only while something is still running, so a settled PR
 	// costs nothing.
 	if d.activeTab == tabChecks && d.checks.hasPending() {
@@ -456,10 +616,16 @@ func (d *prDetailModel) helpLine() string {
 	case tabChecks:
 		return d.checks.helpLine()
 	case tabFiles:
-		return fmtHints("j/k", "file", "enter", "open in diff", "1-6", "tab", "esc", "back")
+		return fmtHints("j/k", "file", "enter", "open in diff", "1-6", "tab",
+			"esc", "back")
 	default:
+		// M and y work here — and have all along — but the footer never said so,
+		// which for merge is the whole difference between a key existing and a
+		// key being usable: nothing else in the view hints that the PR can be
+		// merged from it.
 		return fmtHints("1-6", "tab", "h/l", "cycle", "a", "approve",
-			"r", "request", "C", "comment", "o", "browser", "esc", "back")
+			"r", "request", "M", "merge", "y", "copy", "o", "browser",
+			"esc", "back")
 	}
 }
 

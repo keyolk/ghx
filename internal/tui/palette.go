@@ -27,6 +27,7 @@ var paletteCommands = []paletteCommand{
 	{"merge", "", "merge with confirmation"},
 	{"refresh", "", "reload the current view"},
 	{"open", "", "open in browser"},
+	{"copy", "", "copy the PR URL to the clipboard"},
 	{"source", "<name>", "switch PR list source"},
 	{"filter", "<query>", "filter the PR list"},
 	{"help", "", "show help"},

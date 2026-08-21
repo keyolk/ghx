@@ -63,8 +63,17 @@ type App struct {
 	labels       *labelPicker
 	statusFilter *statusFilterPicker
 
+	// suggestion gates applying a review suggestion — the only action in the
+	// diff view that writes a commit to someone's branch.
+	suggestion *suggestionPrompt
+
 	toast   string
 	toastAt time.Time
+
+	// copyClipboard, when set, replaces the real clipboard write. Tests set it
+	// so asserting that `y` copies does not overwrite the developer's clipboard
+	// and does not need pbcopy on PATH.
+	copyClipboard clipboardFunc
 
 	// verifyAccounts, when set, checks the configured GitHub accounts after the
 	// first frame. It is a func rather than a direct call so this package stays
@@ -166,7 +175,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case threadResolvedMsg:
 		a.setToast("thread resolved")
 		if a.detail != nil {
-			return a, a.detail.load()
+			// Only the thread list moved. Re-fetching the diff, the commits, and
+			// the checks to learn that one thread closed is three requests spent
+			// on data that cannot have changed.
+			return a, a.detail.refreshThreads()
 		}
 		return a, nil
 
@@ -268,7 +280,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.list.refreshCurrent()
 		}
 		if a.detail != nil {
-			return a, a.detail.load()
+			// A review changes the decision and the review list, both of which
+			// live on the PR metadata. The diff is untouched.
+			return a, a.detail.refreshDetail()
 		}
 		return a, nil
 
@@ -283,7 +297,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.list.refreshCurrent()
 		}
 		if a.detail != nil {
-			return a, a.detail.load()
+			// ready/draft, close/reopen, labels — all PR metadata. A checkout
+			// changes nothing on GitHub at all, but refreshing the metadata is
+			// cheap enough not to be worth special-casing.
+			return a, a.detail.refreshDetail()
 		}
 		return a, nil
 
@@ -304,7 +321,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.list.invalidateCachesAndRefresh()
 		}
 		if a.detail != nil && len(msg.completed) > 0 {
-			return a, a.detail.load()
+			return a, a.detail.reload()
 		}
 		return a, nil
 
@@ -323,6 +340,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		for _, name := range msg.mixed {
 			a.labels.mixed[name] = true
+		}
+		return a, nil
+
+	case openSuggestionMsg:
+		a.suggestion = msg.prompt
+		return a, nil
+
+	case suggestionAppliedMsg:
+		a.suggestion = nil
+		if msg.err != nil {
+			return a, errCmd(msg.err)
+		}
+		a.setToast(fmt.Sprintf("applied the suggestion to %s:%d", msg.path, msg.line))
+		if a.detail != nil {
+			// The branch now has a commit the loaded diff does not, so nothing on
+			// screen describes the PR any more.
+			return a, a.detail.reload()
 		}
 		return a, nil
 
@@ -364,6 +398,9 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	if a.confirm != nil {
 		return a.handleConfirmKey(msg)
+	}
+	if a.suggestion != nil {
+		return a.handleSuggestionKey(msg)
 	}
 	if a.statusFilter != nil {
 		return a.handleStatusFilterKey(msg)
@@ -451,7 +488,8 @@ func (a *App) detailActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case "M":
 		return a.startMerge(), true
 	case "R":
-		return a.detail.load(), true
+		// Explicitly asking to refresh must not be answered from disk.
+		return a.detail.reload(), true
 	}
 	return nil, false
 }
@@ -460,6 +498,10 @@ func (a *App) detailActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 // open one in the detail view, or the selected row in the list. Acting from the
 // list is the point: triaging a queue should not require opening every PR.
 //
+// `y` sits here rather than in a per-view handler for the same reason `o` does:
+// the URL you want to copy is the URL of the PR you are looking at, whichever
+// screen you are looking at it from.
+//
 // The irreversible-ish ones (approve, close, ready) go through a confirmation,
 // because in the list the cursor moves under the same fingers that press them.
 func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
@@ -467,7 +509,7 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch key {
 	// L rather than l: lowercase l is the vim "right" alias, which opens the
 	// preview pane in the list and cycles tabs in the detail view.
-	case "a", "x", "L", "r", "M", "d", "o":
+	case "a", "x", "L", "r", "M", "d", "o", "y":
 		// fall through to the target lookup below
 	default:
 		return nil, false
@@ -522,6 +564,12 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 			return errCmd(fmt.Errorf("no pull request selected")), true
 		}
 		return a.openTargetsInBrowser(targets), true
+	case "y":
+		targets, ok := a.actionTargets()
+		if !ok {
+			return errCmd(fmt.Errorf("no pull request selected")), true
+		}
+		return a.copyTargets(targets), true
 	}
 
 	t, ok := a.currentTarget()
@@ -627,6 +675,10 @@ func (a *App) openSelected() tea.Cmd {
 	a.detail = newPRDetailModelWithCredential(
 		a.cfg, a.client, a.km, item.pr.Number, item.pr.Repo, item.pr.CredentialRepo,
 	)
+	// The row's updatedAt is what makes the detail cache safe to use: GitHub
+	// bumps it on every push, comment, review, and label change, so an entry
+	// stamped with the same value describes the same PR.
+	a.detail.updatedAt = item.pr.UpdatedAt
 	a.detail.resize(a.width, a.height)
 	return a.detail.load()
 }

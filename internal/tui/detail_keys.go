@@ -151,6 +151,17 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 		d.diff.moveDown(-1)
 		return nil, true
 	case "left":
+		// On a file header h folds that file. The header has no columns to
+		// switch between — focusSide already refuses there — so this costs
+		// nothing the paired layout was using.
+		if path, ok := d.diff.foldPathForCursor(); ok {
+			if d.diff.setFold(path, true) {
+				return nil, true
+			}
+			// Already folded: fall through so h keeps cycling tabs, rather than
+			// swallowing a keypress that did nothing.
+			return nil, false
+		}
 		// In the paired layout the columns are two halves of one screen row, so
 		// h/l switch between them. Falling through when there is nothing to
 		// switch to keeps h available for cycling tabs.
@@ -159,6 +170,12 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 		}
 		return nil, false
 	case "right":
+		if path, ok := d.diff.foldPathForCursor(); ok {
+			if d.diff.setFold(path, false) {
+				return nil, true
+			}
+			return nil, false
+		}
 		if d.diff.sideBySide && d.diff.focusSide(sideRight) {
 			return nil, true
 		}
@@ -174,6 +191,38 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 		return nil, true
 	case "end":
 		d.diff.toGutter(false)
+		return nil, true
+	case "J", "K":
+		// Coarse navigation: one hunk per press rather than one line. Shifted so
+		// j/k keep their meaning — reading a hunk and finding the next one are
+		// different jobs and both need a key.
+		//
+		// Ignored while a visual range is open: a jump crosses a hunk boundary by
+		// definition, and a range that does is not one GitHub accepts, so the
+		// selection would silently collapse to a single line. The key is still
+		// consumed so nothing else acts on it mid-selection.
+		if d.diff.visual {
+			return nil, true
+		}
+		delta := 1
+		if key == "K" {
+			delta = -1
+		}
+		d.diff.jumpHunk(delta)
+		return nil, true
+	case "H", "L", "{", "}":
+		// File-level jumps, for the same reason and with the same restriction.
+		// H/L pairs with J/K — shifted for coarse movement, one letter apart for
+		// hunk versus file. { and } stay as aliases for the paragraph-motion
+		// habit they come from.
+		if d.diff.visual {
+			return nil, true
+		}
+		delta := 1
+		if key == "H" || key == "{" {
+			delta = -1
+		}
+		d.diff.jumpFile(delta)
 		return nil, true
 	case "o":
 		d.diff.toggleFold()
@@ -198,6 +247,10 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 			d.diff.syncSideFocus()
 		}
 		return nil, true
+	case "A":
+		// Apply the suggestion under the cursor. A is free here: the list's A
+		// (select all visible) has no meaning with a PR open.
+		return d.requestApplySuggestion(), true
 	case "c":
 		return d.composeInline(), true
 	case "enter":
@@ -306,6 +359,14 @@ func (d *prDetailModel) updateComments(key string) (tea.Cmd, bool) {
 		// list so the marker flips immediately; the reload reconciles on failure.
 		thread, resolve, ok := d.comments.toggleThreadResolved()
 		if !ok {
+			// A thread recovered over REST has no GraphQL node to resolve, and
+			// resolveReviewThread is GraphQL-only. Say why rather than letting the
+			// key look broken.
+			if t, found := d.comments.selected(); found && !t.ResolutionKnown {
+				return errCmd(fmt.Errorf(
+					"resolving a thread needs GraphQL access, which this token or " +
+						"rate limit did not allow — the thread list came from REST")), true
+			}
 			return nil, true
 		}
 		return d.resolveThread(thread, resolve), true

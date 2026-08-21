@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/keyolk/ghx/internal/pr"
 )
@@ -15,7 +16,7 @@ import (
 const prStatusBatchQuery = `query($ids:[ID!]!){
   nodes(ids:$ids){
     ... on PullRequest{
-      id state reviewDecision
+      id state isDraft reviewDecision
       reviewThreads(first:100){
         nodes{isResolved}
         pageInfo{hasNextPage endCursor}
@@ -46,8 +47,13 @@ type statusThreadConnection struct {
 }
 
 type statusNode struct {
-	ID             string                 `json:"id"`
-	State          string                 `json:"state"`
+	ID    string `json:"id"`
+	State string `json:"state"`
+	// IsDraft is asked for here rather than trusted from the base listing: a PR
+	// marked ready (or sent back to draft) after the list was cached would keep
+	// showing the stale marker, and the enrichment pass is what everything else
+	// on the row is refreshed from.
+	IsDraft        bool                   `json:"isDraft"`
 	ReviewDecision string                 `json:"reviewDecision"`
 	ReviewThreads  statusThreadConnection `json:"reviewThreads"`
 }
@@ -107,11 +113,115 @@ func (c *Client) EnrichPRStatuses(ctx context.Context, summaries []pr.Summary) (
 
 	var errs []error
 	for _, group := range groups {
-		if err := enrichPRStatusGroup(ctx, group.client, out, group.indices); err != nil {
-			errs = append(errs, err)
+		err := enrichPRStatusGroup(ctx, group.client, out, group.indices)
+		if err == nil {
+			continue
 		}
+		// Without these the row's D/M/A/C/U markers are all dark, which reads as
+		// "nothing to see" on a PR that may be blocked on changes. REST can answer
+		// all but the conversation count, so ask it rather than showing a queue
+		// stripped of the signals it exists to surface.
+		if isGraphQLUnavailable(err) {
+			if restErr := enrichPRStatusGroupREST(ctx, group.client, out, group.indices); restErr != nil {
+				errs = append(errs, fmt.Errorf("%w (REST fallback: %v)", err, restErr))
+			}
+			continue
+		}
+		errs = append(errs, err)
 	}
 	return out, errors.Join(errs...)
+}
+
+// enrichPRStatusGroupREST fills the markers REST can answer.
+//
+// The GraphQL path resolves a whole page in one request; REST has no batch
+// equivalent for reviews, so this costs one round trip per PR and the group is
+// walked concurrently — a 78-row queue is 78 sequential round trips otherwise,
+// which does not fit the fetch timeout. The cap keeps a large queue from
+// opening a connection per PR and tripping abuse detection.
+//
+// One round trip per PR, not two. Both search paths already report state,
+// draft, and merged for every row they return, so re-fetching `pulls/{n}` to
+// learn them again is pure duplication — measured at 156 requests for a 78-row
+// queue, enough to exhaust the REST budget in about thirty tab switches. Only
+// reviews genuinely need asking, because no list endpoint embeds them.
+//
+// A row that somehow arrived without a state still gets the full lookup: the
+// D/M markers are the ones this exists to light up, and guessing them from an
+// empty string would put a wrong marker on screen.
+func enrichPRStatusGroupREST(ctx context.Context, client *Client, out []pr.Summary, indices map[string][]int) error {
+	type job struct {
+		owner, repo string
+		number      int
+		rows        []int
+		// full asks for state and draft too, for a row that did not carry them.
+		full bool
+	}
+	var jobs []job
+	for _, rows := range indices {
+		if len(rows) == 0 {
+			continue
+		}
+		s := out[rows[0]]
+		owner, repo, ok := splitSlug(s.Repo)
+		if !ok || s.Number <= 0 {
+			// Without a repository there is nothing to ask REST about. The row
+			// keeps whatever the base listing gave it.
+			continue
+		}
+		jobs = append(jobs, job{
+			owner: owner, repo: repo, number: s.Number, rows: rows,
+			full: s.State == "",
+		})
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	const workers = 8
+	sem := make(chan struct{}, workers)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var errs []error
+	for _, j := range jobs {
+		wg.Add(1)
+		go func(j job) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			var state string
+			var isDraft bool
+			var decision string
+			var err error
+			if j.full {
+				state, isDraft, decision, err = client.EnrichPRStatusREST(
+					ctx, j.owner, j.repo, j.number)
+			} else {
+				decision, err = client.reviewDecisionREST(ctx, j.owner, j.repo, j.number)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+				return
+			}
+			for _, i := range j.rows {
+				if j.full {
+					out[i].State = state
+					out[i].IsDraft = isDraft
+				}
+				out[i].ReviewDecision = decision
+				// Deliberately not set: REST has no thread-resolution bit, so the
+				// unresolved count stays unknown rather than being reported as zero.
+				out[i].ConversationsKnown = false
+				out[i].UnresolvedConversations = 0
+			}
+		}(j)
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 func enrichPRStatusGroup(ctx context.Context, client *Client, out []pr.Summary, indices map[string][]int) error {
@@ -145,6 +255,7 @@ func enrichPRStatusGroup(ctx context.Context, client *Client, out []pr.Summary, 
 		}
 		for _, i := range indices[node.ID] {
 			out[i].State = node.State
+			out[i].IsDraft = node.IsDraft
 			out[i].ReviewDecision = node.ReviewDecision
 			out[i].UnresolvedConversations = unresolved
 			out[i].ConversationsKnown = true

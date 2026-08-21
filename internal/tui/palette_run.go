@@ -22,7 +22,7 @@ func (a *App) runPalette(line string) tea.Cmd {
 		return nil
 	case "refresh":
 		if a.state == viewPRDetail && a.detail != nil {
-			return a.detail.load()
+			return a.detail.reload()
 		}
 		return a.list.refreshCurrent()
 	case "approve":
@@ -83,6 +83,14 @@ func (a *App) runPalette(line string) tea.Cmd {
 			return a.paletteNeedsPR()
 		}
 		return a.openTargetsInBrowser(targets)
+	case "copy":
+		// Shares the `y` key's path for the same reason `open` shares `o`'s: the
+		// row's own URL is what belongs on the clipboard.
+		targets, ok := a.actionTargets()
+		if !ok {
+			return a.paletteNeedsPR()
+		}
+		return a.copyTargets(targets)
 	case "source":
 		if !a.list.selectSourceByName(arg) {
 			return errCmd(fmt.Errorf("no source named %q", arg))

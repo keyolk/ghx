@@ -10,6 +10,7 @@ import (
 type prStatus string
 
 const (
+	statusDraft            prStatus = "draft"
 	statusMerged           prStatus = "merged"
 	statusApproved         prStatus = "approved"
 	statusChangesRequested prStatus = "changes requested"
@@ -17,6 +18,7 @@ const (
 )
 
 var prStatusOptions = []prStatus{
+	statusDraft,
 	statusMerged,
 	statusApproved,
 	statusChangesRequested,
@@ -50,6 +52,8 @@ func matchesStatusFilters(p prSummary, active map[prStatus]bool) bool {
 
 func prHasStatus(p prSummary, status prStatus) bool {
 	switch status {
+	case statusDraft:
+		return p.IsDraft
 	case statusMerged:
 		return strings.EqualFold(p.State, "MERGED")
 	case statusApproved:
@@ -130,5 +134,9 @@ func (a *App) renderStatusFilter(width, height int) string {
 		b.WriteString(line + "\n")
 	}
 	b.WriteString("\n" + fmtHints("sp", "toggle", "enter", "apply", "c", "clear", "esc", "cancel"))
-	return decoratedPane("status filter", b.String(), min(width-4, 58), 11, true)
+	// The box is sized from the option list rather than a literal: adding a
+	// status used to leave the last one clipped off the bottom.
+	//   header + blank + one row per option + blank + hints + two border rows
+	h := len(prStatusOptions) + 6
+	return decoratedPane("status filter", b.String(), min(width-4, 58), h, true)
 }

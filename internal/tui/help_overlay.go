@@ -18,6 +18,9 @@ func helpSections() []helpSection {
 	return []helpSection{
 		{"Navigation", [][2]string{
 			{"j / k", "move down / up"},
+			{"J / K", "next / previous hunk (diff)"},
+			{"H / L", "previous / next file (diff; { } also)"},
+			{"h / l", "fold / unfold a file, on its header row (diff)"},
 			{"g / G", "jump to top / bottom"},
 			{"^f / ^b", "page down / up"},
 			{"h / l", "cycle tabs (detail) · pane focus (list)"},
@@ -34,11 +37,14 @@ func helpSections() []helpSection {
 			{"a", "approve (asks first)"},
 			{"r", "request changes"},
 			{"o", "open selected PRs in browser (fold file, in the diff tab)"},
+			{"y", "copy the selected PRs' URLs to the clipboard"},
+			{"A", "apply the suggestion under the cursor (asks first)"},
 		}},
 		{"PR actions", [][2]string{
 			{"space / A", "toggle row / all visible rows for multi-select"},
 			{"a / x / M", "approve · close/reopen · squash-merge selected PRs"},
 			{"o / :open", "open selected PRs in the browser"},
+			{"y / :copy", "copy selected PRs' URLs to the clipboard"},
 			{"L", "edit common labels on selected PRs"},
 			{"d / :ready", "toggle ready/draft on selected PRs"},
 			{":checkout", "check the branch out locally"},
@@ -53,7 +59,7 @@ func helpSections() []helpSection {
 			{"6 Checks", "CI results; enter opens the log"},
 		}},
 		{"Filters & status", [][2]string{
-			{"M / A / C / U", "merged · approved · changes requested · unresolved"},
+			{"D M A C U", "draft · merged · approved · changes requested · unresolved"},
 			{"f", "filter by one or more PR statuses"},
 			{"/", "search text; combines with status filters"},
 			{"esc", "clear text, then status, then selection"},

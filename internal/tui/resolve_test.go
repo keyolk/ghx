@@ -17,8 +17,8 @@ import (
 func TestToggleThreadResolvedFlipsSelectedThread(t *testing.T) {
 	v := newCommentsView()
 	v.setThreads([]pr.ReviewThread{
-		{ID: "T1", Path: "a.go", Line: 1, IsResolved: false, Comments: []pr.ThreadComment{{DatabaseID: 7, Body: "x"}}},
-		{ID: "T2", Path: "b.go", Line: 2, IsResolved: true, Comments: []pr.ThreadComment{{DatabaseID: 8, Body: "y"}}},
+		{ID: "T1", Path: "a.go", Line: 1, IsResolved: false, ResolutionKnown: true, Comments: []pr.ThreadComment{{DatabaseID: 7, Body: "x"}}},
+		{ID: "T2", Path: "b.go", Line: 2, IsResolved: true, ResolutionKnown: true, Comments: []pr.ThreadComment{{DatabaseID: 8, Body: "y"}}},
 	})
 	v.hideResolved = false
 
@@ -55,7 +55,7 @@ func TestToggleThreadResolvedWithNoSelection(t *testing.T) {
 // "toggleResolved" at one point; this pins them apart.
 func TestTKeyTogglesFilterNotThread(t *testing.T) {
 	v := newCommentsView()
-	v.setThreads([]pr.ReviewThread{{ID: "T1", IsResolved: true}})
+	v.setThreads([]pr.ReviewThread{{ID: "T1", IsResolved: true, ResolutionKnown: true}})
 	before := v.hideResolved
 	v.toggleResolvedFilter()
 	if v.hideResolved == before {
@@ -95,7 +95,7 @@ esac
 	a := testApp(t, []pr.Summary{{Number: 1, Repo: "o/n", State: "OPEN"}})
 	a.detail = newPRDetailModel(a.cfg, a.client, a.km, 1, "o/n")
 	a.detail.comments.setThreads([]pr.ReviewThread{
-		{ID: "T1", IsResolved: false, Comments: []pr.ThreadComment{{DatabaseID: 1}}},
+		{ID: "T1", IsResolved: false, ResolutionKnown: true, Comments: []pr.ThreadComment{{DatabaseID: 1}}},
 	})
 
 	cmd := a.detail.resolveThread(pr.ReviewThread{ID: "T1"}, true)
@@ -125,7 +125,7 @@ exit 1
 	a := testApp(t, []pr.Summary{{Number: 1, Repo: "o/n", State: "OPEN"}})
 	a.detail = newPRDetailModel(a.cfg, a.client, a.km, 1, "o/n")
 	a.detail.comments.setThreads([]pr.ReviewThread{
-		{ID: "T1", IsResolved: false, Comments: []pr.ThreadComment{{DatabaseID: 1}}},
+		{ID: "T1", IsResolved: false, ResolutionKnown: true, Comments: []pr.ThreadComment{{DatabaseID: 1}}},
 	})
 
 	// Optimistic flip to resolved, then the failing mutation reverts it.

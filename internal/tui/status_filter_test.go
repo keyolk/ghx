@@ -60,18 +60,20 @@ func TestStatusFilterPickerApplyCancelAndClear(t *testing.T) {
 	if a.statusFilter == nil {
 		t.Fatal("f should open the status picker")
 	}
+	first := prStatusOptions[0]
 	a.handleStatusFilterKey(keyMsg("space"))
 	a.handleStatusFilterKey(keyMsg("enter"))
-	if !a.list.statusFilters[statusMerged] {
-		t.Error("enter should apply the toggled merged filter")
+	if !a.list.statusFilters[first] {
+		t.Errorf("enter should apply the toggled %q filter", first)
 	}
 
+	second := prStatusOptions[1]
 	a.openStatusFilter()
 	a.handleStatusFilterKey(keyMsg("j"))
 	a.handleStatusFilterKey(keyMsg("space"))
 	a.handleStatusFilterKey(keyMsg("esc"))
-	if a.list.statusFilters[statusApproved] {
-		t.Error("esc should discard pending picker changes")
+	if a.list.statusFilters[second] {
+		t.Errorf("esc should discard the pending %q change", second)
 	}
 
 	a.openStatusFilter()
@@ -115,12 +117,25 @@ func TestPRStatusCellShowsCombinedFixedWidthFlags(t *testing.T) {
 		ConversationsKnown:      true,
 		UnresolvedConversations: 1,
 	}
+	// Draft leads the cell: D M A C U.
 	plain := prStatusMark(p)
-	if plain != "M A · U" {
-		t.Errorf("status mark = %q, want %q", plain, "M A · U")
+	if plain != "· M A · U" {
+		t.Errorf("status mark = %q, want %q", plain, "· M A · U")
 	}
-	if got := lipgloss.Width(prStatusCell(p)); got != 7 {
-		t.Errorf("styled status cell width = %d, want 7", got)
+	// The styled and plain forms must stay the same width, or every column after
+	// the status cell drifts between the cursor row and the rest.
+	if got, want := lipgloss.Width(prStatusCell(p)), lipgloss.Width(plain); got != want {
+		t.Errorf("styled status cell width = %d, plain = %d", got, want)
+	}
+	if got := lipgloss.Width(prStatusCell(p)); got != 9 {
+		t.Errorf("styled status cell width = %d, want 9", got)
+	}
+
+	// A draft PR lights the D.
+	d := p
+	d.IsDraft = true
+	if got := prStatusMark(d); got != "D M A · U" {
+		t.Errorf("draft status mark = %q, want %q", got, "D M A · U")
 	}
 
 	items := []list.Item{prListItem{pr: p}}

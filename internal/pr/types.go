@@ -120,8 +120,15 @@ type Check struct {
 
 // ReviewThread is an inline review thread with line-position data, fetched via GraphQL.
 type ReviewThread struct {
-	ID                string          `json:"id"`
-	IsResolved        bool            `json:"isResolved"`
+	ID         string `json:"id"`
+	IsResolved bool   `json:"isResolved"`
+	// ResolutionKnown distinguishes "not resolved" from "we could not find out".
+	// REST has no resolution bit at all, so a thread recovered over that path
+	// leaves this false — and the UI must then neither mark it resolved nor
+	// present it as an outstanding conversation. A zero value that means
+	// "unknown" is deliberate: a thread built without going through the GraphQL
+	// decoder has not learned anything about its resolution.
+	ResolutionKnown   bool            `json:"-"`
 	IsCollapsed       bool            `json:"isCollapsed"`
 	Path              string          `json:"path"`
 	Line              int             `json:"line"`

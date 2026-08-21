@@ -21,6 +21,10 @@ func (a *App) View() string {
 			a.width, a.height)
 	}
 
+	// Everything below is sized to rows, never to a.height: the title line and
+	// the footer are always drawn too.
+	rows := a.contentRows()
+
 	var content string
 	switch a.state {
 	case viewPRList:
@@ -29,39 +33,71 @@ func (a *App) View() string {
 		if a.detail == nil {
 			content = renderSpinner(a.spinnerFrame, "Loading…")
 		} else {
-			content = a.detail.view(a.width, a.height)
+			content = a.detail.view(a.width, rows)
 		}
 	}
+	// Normalize before compositing: overlayBody pads its base out to the height
+	// it is given, so a body of the wrong length becomes an overflowing frame
+	// the moment any modal opens.
+	content = fitRows(content, rows)
 
 	// Overlays are composited last, innermost first.
 	if a.helpOpen {
-		content = overlayBody(content, renderHelpOverlay(a.width, a.height), a.width, a.height)
+		content = overlayBody(content, renderHelpOverlay(a.width, rows), a.width, rows)
 	}
 	if a.palette.active {
-		content = overlayBody(content, a.palette.render(a.width, a.height), a.width, a.height)
+		content = overlayBody(content, a.palette.render(a.width, rows), a.width, rows)
 	}
 	if a.search.active {
-		content = overlayBody(content, a.search.render(a.width, a.height), a.width, a.height)
+		content = overlayBody(content, a.search.render(a.width, rows), a.width, rows)
 	}
 	if a.mergePrompt != nil {
-		content = overlayBody(content, a.renderMergePrompt(a.width, a.height), a.width, a.height)
+		content = overlayBody(content, a.renderMergePrompt(a.width, rows), a.width, rows)
 	}
 	if a.labels != nil {
-		content = overlayBody(content, a.renderLabelPicker(a.width, a.height), a.width, a.height)
+		content = overlayBody(content, a.renderLabelPicker(a.width, rows), a.width, rows)
 	}
 	if a.statusFilter != nil {
-		content = overlayBody(content, a.renderStatusFilter(a.width, a.height), a.width, a.height)
+		content = overlayBody(content, a.renderStatusFilter(a.width, rows), a.width, rows)
 	}
 	// The confirmation sits above everything else it can coexist with: it is the
 	// last thing between a keypress and an action that cannot be taken back.
 	if a.confirm != nil {
-		content = overlayBody(content, a.renderConfirm(a.width, a.height), a.width, a.height)
+		content = overlayBody(content, a.renderConfirm(a.width, rows), a.width, rows)
+	}
+	if a.suggestion != nil {
+		content = overlayBody(content, a.renderSuggestionPrompt(a.width, rows), a.width, rows)
 	}
 	if a.composer.active {
-		content = overlayBody(content, a.composer.render(a.width, a.height), a.width, a.height)
+		content = overlayBody(content, a.composer.render(a.width, rows), a.width, rows)
 	}
 
 	return joinVertical(a.titleLine(), content, a.helpLine())
+}
+
+// contentRows is how many rows the body may occupy: the terminal minus the
+// title line and the footer, both of which View always draws.
+//
+// Getting this wrong is invisible in the obvious direction and ugly in the
+// other: bubbletea's renderer keeps the LAST height lines of an overflowing
+// frame, so the rows that get dropped are the title and the tab strip. That is
+// the "the tab index strip is sometimes missing in the PR detail view" report —
+// it appeared exactly when the active tab's body was tall enough to fill the
+// screen, and disappeared again on a short diff.
+func (a *App) contentRows() int { return max(a.height-2, 1) }
+
+// fitRows pads or clips s to exactly h rows. Padding matters as much as
+// clipping: overlayBody anchors a modal to the bottom of the height it is
+// given, so a short body would otherwise leave the modal floating mid-screen.
+func fitRows(s string, h int) string {
+	if h <= 0 {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:h], "\n")
 }
 
 func (a *App) titleLine() string {
@@ -97,6 +133,12 @@ func (a *App) helpLine() string {
 	}
 	if a.confirm != nil {
 		return truncateFooter(fmtHints("y", "yes", "n", "no"), a.width)
+	}
+	if a.suggestion != nil {
+		if a.suggestion.busy {
+			return truncateFooter(dimStyle.Render("committing…"), a.width)
+		}
+		return truncateFooter(fmtHints("y", "apply", "n", "cancel"), a.width)
 	}
 	if a.labels != nil {
 		return truncateFooter(

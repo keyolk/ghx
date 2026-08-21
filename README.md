@@ -10,7 +10,7 @@ ghx  platform-tools · 50
 #898    ✓ platform-tools     [CPLAT-10365] Add first/last and five-page jump controls to the pager
 #897    ● platform-tools     [CPLAT-10365] Bump Makefile default image tag to v0.0.191
 #854    ● platform-tools     Bump brace-expansion from 5.0.6 to 5.0.8 in /drongo/web/frontend
-↵:open · a:approve · x:close · L:labels · r:request · o:browser · /:filter · R:refresh · ::palette · ?:help
+↵:open · a:approve · x:close · L:labels · r:request · o:browser · y:copy · /:filter · R:refresh · ::palette · ?:help
 ```
 
 A `*` marks a tab for a repository you are working in. ghx detects the launch
@@ -92,24 +92,43 @@ branch protection, with an explicit confirmation but no additional ghx policy.
 - **PR list** — source tabs (My PRs, My reviews, Assigned, configured repos),
   merged queues across configured GitHub accounts, repo detection from the cwd
   and the tmux window's panes, client-side filtering, live polling
-- **PR status** — compact `M/A/C/U` markers for merged, approved, changes
-  requested, and unresolved conversations
+- **PR status** — compact `D/M/A/C/U` markers for draft, merged, approved,
+  changes requested, and unresolved conversations
 - **Status filters** — `f` selects one or more statuses (OR); combines with `/`
   text search using AND. Filters stay within the current source query, so merged
   PRs require a source that includes merged results (`state:all`/`state:merged`)
 - **Multi-select** — `space` toggles a PR and `A` toggles all visible PRs;
   approve, close/reopen, or squash-merge the selected set with one confirmation
 - **Diff viewer** — unified and side-by-side (`s` to toggle), tab-aware column
-  alignment, comment line wrapping, file folding, syntax highlighting
+  alignment, comment line wrapping, file folding, syntax highlighting; `J`/`K`
+  jump hunk to hunk and `{`/`}` file to file
 - **Inline comments** — `c` on a diff line, `v` for visual range selection,
   replies via `enter` on a thread; posts to the correct path/line/side
+- **Suggestions** — a comment carrying a ```suggestion block is marked as such,
+  and `A` applies it: the file is read at the PR's head, the anchored lines are
+  replaced, and the result is committed to the head branch. The confirmation
+  shows the exact before/after first, and `expectedHeadOid` makes a concurrent
+  push fail the apply rather than clobber it
 - **Review actions** — approve (`a`), request changes (`r`), PR-level comment
   (`C`), all from the list without opening the PR
 - **Checks** — CI status with bucket colors, workflow run log viewer
 - **Label picker** — `L` to toggle labels with live filtering
 - **Merge** — explicit strategy/confirmation, authorized by the selected repository credential
+- **Copy URLs** — `y` puts the focused PR's URL, or the whole multi-selection's,
+  on the clipboard
 - **Command palette** — `:` for vim-style ex commands
 - **NO_COLOR** — reverse-video selection, readable in monochrome
+- **GraphQL / REST fallback** — nearly everything gh reads is GraphQL under the
+  hood (`pr list`, `pr view`, `search prs`), and its budget is far smaller than
+  REST's — a fine-grained token can also lack GraphQL entirely. When GraphQL
+  refuses, the PR list, status markers, and inline review threads come from REST
+  instead. Thread *resolution* has no REST representation, so those threads read
+  "resolution unknown" rather than guessing, and `X` explains why it cannot
+  resolve them
+- **Caching** — PR lists and PR detail are cached to disk; a return visit to a
+  PR you just left costs nothing. Detail entries are validated against the row's
+  `updatedAt` rather than a TTL, so what you see is the PR as the list last saw
+  it. `R` and `:refresh` always re-read
 - **Responsive** — degrades gracefully on narrow terminals
 
 ## Configuration
@@ -142,6 +161,10 @@ editor: ""
 # Command that opens PR URLs; empty uses $BROWSER, then open/xdg-open
 browser: ""
 
+# Command that receives copied text on stdin; empty uses pbcopy on macOS,
+# then wl-copy, then "xclip -selection clipboard"
+clipboard: ""
+
 # List/preview split ratio
 diff_split_ratio: 40
 ```
@@ -157,7 +180,7 @@ Press `?` inside the TUI for the full list. Highlights:
 | `a` / `x` / `M` / `o` | approve / close-reopen / squash-merge / open selected PRs (from list) |
 | `L` | edit labels on selected PRs; cross-repo selections show common labels |
 | `d` / `:ready` | toggle ready/draft on selected PRs |
-| `f` | choose merged / approved / changes requested / unresolved filters |
+| `f` | choose draft / merged / approved / changes requested / unresolved filters |
 | `R` | reload the current source (the tab shows a spinner while it runs) |
 | `/` | text search (AND with active status filters) |
 | `c` | comment on diff line |
@@ -166,6 +189,11 @@ Press `?` inside the TUI for the full list. Highlights:
 | `s` | toggle unified / side-by-side diff |
 | `h` / `l` | switch diff column (side-by-side) |
 | `o` | fold file (diff tab) / open selected PRs in browser |
+| `y` / `:copy` | copy the selected PRs' URLs to the clipboard (one per line) |
+| `J` / `K` | next / previous hunk (diff tab) |
+| `H` / `L` | previous / next file (diff tab; `{` `}` also) |
+| `h` / `l` | fold / unfold a file, on its header row (diff tab) |
+| `A` | apply the suggestion under the cursor (asks first) |
 | `:` | command palette |
 | `?` | help |
 
