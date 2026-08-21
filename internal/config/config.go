@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -22,6 +23,7 @@ type Config struct {
 	Colors         ColorOverrides  `yaml:"colors"`
 	Editor         string          `yaml:"editor"`
 	Browser        string          `yaml:"browser"`
+	Clipboard      string          `yaml:"clipboard"`
 	PollInterval   string          `yaml:"poll_interval"`
 	DiffSplitRatio int             `yaml:"diff_split_ratio"`
 
@@ -158,6 +160,9 @@ func merge(dst *Config, file *Config) {
 	}
 	if file.Browser != "" {
 		dst.Browser = file.Browser
+	}
+	if file.Clipboard != "" {
+		dst.Clipboard = file.Clipboard
 	}
 	if file.PollInterval != "" {
 		dst.PollInterval = file.PollInterval
@@ -346,6 +351,28 @@ func (c *Config) BrowserCommand() string {
 		return "open"
 	}
 	return "xdg-open"
+}
+
+// ClipboardCommand resolves the command that receives text to copy on stdin:
+// config > the platform default (pbcopy on macOS, wl-copy or xclip elsewhere).
+//
+// Split on whitespace at the use site, so a value with arguments works —
+// "xclip -selection clipboard" is the form that actually reaches the system
+// clipboard rather than X11's primary selection.
+func (c *Config) ClipboardCommand() string {
+	if c.Clipboard != "" {
+		return c.Clipboard
+	}
+	if runtime.GOOS == "darwin" {
+		return "pbcopy"
+	}
+	// Wayland first: on a Wayland session xclip either fails or writes to an
+	// X11 clipboard nothing is reading. wl-copy is absent on X11, where the
+	// xclip fallback is the one that works.
+	if _, err := exec.LookPath("wl-copy"); err == nil {
+		return "wl-copy"
+	}
+	return "xclip -selection clipboard"
 }
 
 // Ensure pr.Summary is referenced so the import stays valid even if the

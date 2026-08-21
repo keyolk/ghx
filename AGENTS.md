@@ -22,6 +22,7 @@ actions.
 - `internal/repodetect` — cwd/tmux repo detection
 - `internal/gh/credential.go` — repo별 Git credential 선택과 gh 인증 fallback
 - `internal/tui/account_search.go` — 복수 GitHub account 검색 병합과 중복 제거
+- `internal/tui/clipboard.go` — `y` / `:copy`, PR URL 복사 (외부 clipboard 명령)
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
 ## Conventions
@@ -30,6 +31,8 @@ actions.
 - Styles are semantic tokens in styles.go, never raw hex in render paths.
 - Tabs and CJK width handled via expandTabs / lipgloss.Width.
 - Tests are hermetic: forceColor for ANSI assertions, t.Setenv for isolation.
+  Side effects that reach outside the process (clipboard writes) go through an
+  injected func so a test never touches the developer's real clipboard.
 - `App.View` must render at most `height` rows: it always draws a title line and
   a footer, so the body is sized to `contentRows()`, never to `a.height`. An
   overflowing frame loses its TOP rows — bubbletea keeps the last `height` lines

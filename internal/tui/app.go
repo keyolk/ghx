@@ -66,6 +66,11 @@ type App struct {
 	toast   string
 	toastAt time.Time
 
+	// copyClipboard, when set, replaces the real clipboard write. Tests set it
+	// so asserting that `y` copies does not overwrite the developer's clipboard
+	// and does not need pbcopy on PATH.
+	copyClipboard clipboardFunc
+
 	// verifyAccounts, when set, checks the configured GitHub accounts after the
 	// first frame. It is a func rather than a direct call so this package stays
 	// independent of how accounts are configured and verified.
@@ -460,6 +465,10 @@ func (a *App) detailActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 // open one in the detail view, or the selected row in the list. Acting from the
 // list is the point: triaging a queue should not require opening every PR.
 //
+// `y` sits here rather than in a per-view handler for the same reason `o` does:
+// the URL you want to copy is the URL of the PR you are looking at, whichever
+// screen you are looking at it from.
+//
 // The irreversible-ish ones (approve, close, ready) go through a confirmation,
 // because in the list the cursor moves under the same fingers that press them.
 func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
@@ -467,7 +476,7 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch key {
 	// L rather than l: lowercase l is the vim "right" alias, which opens the
 	// preview pane in the list and cycles tabs in the detail view.
-	case "a", "x", "L", "r", "M", "d", "o":
+	case "a", "x", "L", "r", "M", "d", "o", "y":
 		// fall through to the target lookup below
 	default:
 		return nil, false
@@ -522,6 +531,12 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 			return errCmd(fmt.Errorf("no pull request selected")), true
 		}
 		return a.openTargetsInBrowser(targets), true
+	case "y":
+		targets, ok := a.actionTargets()
+		if !ok {
+			return errCmd(fmt.Errorf("no pull request selected")), true
+		}
+		return a.copyTargets(targets), true
 	}
 
 	t, ok := a.currentTarget()

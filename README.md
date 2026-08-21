@@ -10,7 +10,7 @@ ghx  platform-tools · 50
 #898    ✓ platform-tools     [CPLAT-10365] Add first/last and five-page jump controls to the pager
 #897    ● platform-tools     [CPLAT-10365] Bump Makefile default image tag to v0.0.191
 #854    ● platform-tools     Bump brace-expansion from 5.0.6 to 5.0.8 in /drongo/web/frontend
-↵:open · a:approve · x:close · L:labels · r:request · o:browser · /:filter · R:refresh · ::palette · ?:help
+↵:open · a:approve · x:close · L:labels · r:request · o:browser · y:copy · /:filter · R:refresh · ::palette · ?:help
 ```
 
 A `*` marks a tab for a repository you are working in. ghx detects the launch
@@ -108,6 +108,8 @@ branch protection, with an explicit confirmation but no additional ghx policy.
 - **Checks** — CI status with bucket colors, workflow run log viewer
 - **Label picker** — `L` to toggle labels with live filtering
 - **Merge** — explicit strategy/confirmation, authorized by the selected repository credential
+- **Copy URLs** — `y` puts the focused PR's URL, or the whole multi-selection's,
+  on the clipboard
 - **Command palette** — `:` for vim-style ex commands
 - **NO_COLOR** — reverse-video selection, readable in monochrome
 - **Responsive** — degrades gracefully on narrow terminals
@@ -142,6 +144,10 @@ editor: ""
 # Command that opens PR URLs; empty uses $BROWSER, then open/xdg-open
 browser: ""
 
+# Command that receives copied text on stdin; empty uses pbcopy on macOS,
+# then wl-copy, then "xclip -selection clipboard"
+clipboard: ""
+
 # List/preview split ratio
 diff_split_ratio: 40
 ```
@@ -166,6 +172,7 @@ Press `?` inside the TUI for the full list. Highlights:
 | `s` | toggle unified / side-by-side diff |
 | `h` / `l` | switch diff column (side-by-side) |
 | `o` | fold file (diff tab) / open selected PRs in browser |
+| `y` / `:copy` | copy the selected PRs' URLs to the clipboard (one per line) |
 | `:` | command palette |
 | `?` | help |
 

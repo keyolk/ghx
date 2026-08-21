@@ -34,11 +34,13 @@ func helpSections() []helpSection {
 			{"a", "approve (asks first)"},
 			{"r", "request changes"},
 			{"o", "open selected PRs in browser (fold file, in the diff tab)"},
+			{"y", "copy the selected PRs' URLs to the clipboard"},
 		}},
 		{"PR actions", [][2]string{
 			{"space / A", "toggle row / all visible rows for multi-select"},
 			{"a / x / M", "approve · close/reopen · squash-merge selected PRs"},
 			{"o / :open", "open selected PRs in the browser"},
+			{"y / :copy", "copy selected PRs' URLs to the clipboard"},
 			{"L", "edit common labels on selected PRs"},
 			{"d / :ready", "toggle ready/draft on selected PRs"},
 			{":checkout", "check the branch out locally"},
