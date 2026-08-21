@@ -335,6 +335,14 @@ func (d *prDetailModel) updateComments(key string) (tea.Cmd, bool) {
 		// list so the marker flips immediately; the reload reconciles on failure.
 		thread, resolve, ok := d.comments.toggleThreadResolved()
 		if !ok {
+			// A thread recovered over REST has no GraphQL node to resolve, and
+			// resolveReviewThread is GraphQL-only. Say why rather than letting the
+			// key look broken.
+			if t, found := d.comments.selected(); found && !t.ResolutionKnown {
+				return errCmd(fmt.Errorf(
+					"resolving a thread needs GraphQL access, which this token or " +
+						"rate limit did not allow — the thread list came from REST")), true
+			}
 			return nil, true
 		}
 		return d.resolveThread(thread, resolve), true

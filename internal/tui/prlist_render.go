@@ -38,7 +38,7 @@ func (d prListDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 		repoW   = 18
 		authorW = 14
 		ageW    = 5 // "12mo" plus a digit of headroom
-		statusW = 7 // fixed "M A C U" status cell
+		statusW = 9 // fixed "D M A C U" status cell
 		// Past this a title is just whitespace; the leftover width is better
 		// spent as a gap than as a title column stretched across the terminal.
 		titleMaxW = 90
@@ -105,6 +105,7 @@ func prStatusMark(p prSummary) string {
 		status prStatus
 		mark   string
 	}{
+		{statusDraft, "D"},
 		{statusMerged, "M"},
 		{statusApproved, "A"},
 		{statusChangesRequested, "C"},
@@ -121,26 +122,31 @@ func prStatusMark(p prSummary) string {
 	return strings.Join(parts, " ")
 }
 
-// prStatusCell styles each state independently while preserving the same seven
-// display cells as prStatusMark: Merged, Approved, Changes requested, Unresolved.
+// prStatusCell styles each state independently while preserving the same nine
+// display cells as prStatusMark: Draft, Merged, Approved, Changes requested,
+// Unresolved.
 func prStatusCell(p prSummary) string {
 	cell := []string{
 		dimStyle.Render("·"),
 		dimStyle.Render("·"),
 		dimStyle.Render("·"),
 		dimStyle.Render("·"),
+		dimStyle.Render("·"),
+	}
+	if prHasStatus(p, statusDraft) {
+		cell[0] = prDraftStyle.Render("D")
 	}
 	if prHasStatus(p, statusMerged) {
-		cell[0] = prMergedStyle.Render("M")
+		cell[1] = prMergedStyle.Render("M")
 	}
 	if prHasStatus(p, statusApproved) {
-		cell[1] = prApprovedStyle.Render("A")
+		cell[2] = prApprovedStyle.Render("A")
 	}
 	if prHasStatus(p, statusChangesRequested) {
-		cell[2] = prChangesStyle.Render("C")
+		cell[3] = prChangesStyle.Render("C")
 	}
 	if prHasStatus(p, statusUnresolved) {
-		cell[3] = prUnresolvedStyle.Render("U")
+		cell[4] = prUnresolvedStyle.Render("U")
 	}
 	return strings.Join(cell, " ")
 }

@@ -269,8 +269,12 @@ func renderThreadSummary(t pr.ReviewThread, expanded bool) string {
 	if n := len(t.Comments); n > 1 {
 		meta = append(meta, fmt.Sprintf("%d replies", n-1))
 	}
-	if t.IsResolved {
+	if threadIsResolved(t) {
 		meta = append(meta, "resolved")
+	} else if !t.ResolutionKnown {
+		// Not the same as unresolved: say so rather than letting the absence of a
+		// tag read as "still open".
+		meta = append(meta, "resolution unknown")
 	}
 	// A multi-line thread names its range so the anchor row isn't misleading.
 	if lo, hi, ok := threadRange(t); ok {

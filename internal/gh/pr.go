@@ -30,6 +30,12 @@ func (c *Client) ListPRs(ctx context.Context, query string, limit int) ([]pr.Sum
 	)
 	var out []pr.Summary
 	if err := c.execJSON(ctx, &out, args...); err != nil {
+		// `gh pr list --json` is GraphQL under the hood despite the REST-shaped
+		// subcommand, so a GraphQL refusal empties the tab entirely. REST search
+		// answers the same question.
+		if isGraphQLUnavailable(err) {
+			return c.ListPRsREST(ctx, query, limit)
+		}
 		return nil, err
 	}
 	if c.credentialExplicit {

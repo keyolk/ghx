@@ -36,17 +36,28 @@ func (c *commentsView) setThreads(threads []pr.ReviewThread) {
 }
 
 // visible applies the resolved filter.
+//
+// A thread whose resolution could not be determined stays visible: hiding it
+// would be asserting it is resolved, and the whole point of the unknown state
+// is that nothing here knows that.
 func (c *commentsView) visible() []pr.ReviewThread {
 	if !c.hideResolved {
 		return c.threads
 	}
 	out := make([]pr.ReviewThread, 0, len(c.threads))
 	for _, t := range c.threads {
-		if !t.IsResolved {
+		if !threadIsResolved(t) {
 			out = append(out, t)
 		}
 	}
 	return out
+}
+
+// threadIsResolved reports resolution only when it was actually learned. REST
+// carries no resolution bit, so a thread recovered that way answers false here
+// and is tagged "resolution unknown" instead of being shown as outstanding.
+func threadIsResolved(t pr.ReviewThread) bool {
+	return t.ResolutionKnown && t.IsResolved
 }
 
 func (c *commentsView) moveCursor(delta int) {
@@ -88,7 +99,10 @@ func (c *commentsView) toggleResolvedFilter() {
 // reload will reconcile on failure.
 func (c *commentsView) toggleThreadResolved() (thread pr.ReviewThread, resolve bool, ok bool) {
 	t, found := c.selected()
-	if !found || t.ID == "" {
+	// An empty ID means the thread did not come from GraphQL, so there is no node
+	// to resolve. Flipping the marker locally would show a resolution that was
+	// never persisted.
+	if !found || t.ID == "" || !t.ResolutionKnown {
 		return pr.ReviewThread{}, false, false
 	}
 	for i := range c.threads {
@@ -108,6 +122,7 @@ func (c *commentsView) render(width, height int) string {
 			return dimStyle.Render(fmt.Sprintf(
 				"All %d threads are resolved — press t to show them.", len(c.threads)))
 		}
+
 		return dimStyle.Render("No review threads.")
 	}
 
@@ -162,8 +177,10 @@ func (c *commentsView) threadHeader(t pr.ReviewThread, selected bool, width int)
 	if n := len(t.Comments); n > 1 {
 		tags = append(tags, fmt.Sprintf("%d replies", n-1))
 	}
-	if t.IsResolved {
+	if threadIsResolved(t) {
 		tags = append(tags, "resolved")
+	} else if !t.ResolutionKnown {
+		tags = append(tags, "resolution unknown")
 	}
 	tag := ""
 	if len(tags) > 0 {
@@ -189,7 +206,7 @@ func (c *commentsView) threadHeader(t pr.ReviewThread, selected bool, width int)
 	}
 
 	style := threadStyle
-	if t.IsResolved {
+	if threadIsResolved(t) {
 		style = threadResolved
 	}
 	line := style.Render(head)

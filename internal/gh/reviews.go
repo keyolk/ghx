@@ -82,6 +82,12 @@ func (c *Client) ReviewThreads(ctx context.Context, owner, repo string, number i
 		// query variables here.
 		raw, err := c.execRaw(ctx, args...)
 		if err != nil {
+			// Inline threads are the substance of a review, so losing GraphQL must
+			// not empty the Comments tab. What comes back over REST has no
+			// resolution bit — see ReviewThreadsREST.
+			if isGraphQLUnavailable(err) {
+				return c.ReviewThreadsREST(ctx, owner, repo, number)
+			}
 			return nil, err
 		}
 		var resp threadsResponse
@@ -93,6 +99,7 @@ func (c *Client) ReviewThreads(ctx context.Context, owner, repo string, number i
 			out = append(out, pr.ReviewThread{
 				ID:                n.ID,
 				IsResolved:        n.IsResolved,
+				ResolutionKnown:   true,
 				IsCollapsed:       n.IsCollapsed,
 				Path:              n.Path,
 				Line:              n.Line,

@@ -57,7 +57,7 @@ func helpSections() []helpSection {
 			{"6 Checks", "CI results; enter opens the log"},
 		}},
 		{"Filters & status", [][2]string{
-			{"M / A / C / U", "merged · approved · changes requested · unresolved"},
+			{"D M A C U", "draft · merged · approved · changes requested · unresolved"},
 			{"f", "filter by one or more PR statuses"},
 			{"/", "search text; combines with status filters"},
 			{"esc", "clear text, then status, then selection"},

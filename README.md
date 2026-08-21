@@ -92,8 +92,8 @@ branch protection, with an explicit confirmation but no additional ghx policy.
 - **PR list** — source tabs (My PRs, My reviews, Assigned, configured repos),
   merged queues across configured GitHub accounts, repo detection from the cwd
   and the tmux window's panes, client-side filtering, live polling
-- **PR status** — compact `M/A/C/U` markers for merged, approved, changes
-  requested, and unresolved conversations
+- **PR status** — compact `D/M/A/C/U` markers for draft, merged, approved,
+  changes requested, and unresolved conversations
 - **Status filters** — `f` selects one or more statuses (OR); combines with `/`
   text search using AND. Filters stay within the current source query, so merged
   PRs require a source that includes merged results (`state:all`/`state:merged`)
@@ -113,6 +113,13 @@ branch protection, with an explicit confirmation but no additional ghx policy.
   on the clipboard
 - **Command palette** — `:` for vim-style ex commands
 - **NO_COLOR** — reverse-video selection, readable in monochrome
+- **GraphQL / REST fallback** — nearly everything gh reads is GraphQL under the
+  hood (`pr list`, `pr view`, `search prs`), and its budget is far smaller than
+  REST's — a fine-grained token can also lack GraphQL entirely. When GraphQL
+  refuses, the PR list, status markers, and inline review threads come from REST
+  instead. Thread *resolution* has no REST representation, so those threads read
+  "resolution unknown" rather than guessing, and `X` explains why it cannot
+  resolve them
 - **Responsive** — degrades gracefully on narrow terminals
 
 ## Configuration
@@ -164,7 +171,7 @@ Press `?` inside the TUI for the full list. Highlights:
 | `a` / `x` / `M` / `o` | approve / close-reopen / squash-merge / open selected PRs (from list) |
 | `L` | edit labels on selected PRs; cross-repo selections show common labels |
 | `d` / `:ready` | toggle ready/draft on selected PRs |
-| `f` | choose merged / approved / changes requested / unresolved filters |
+| `f` | choose draft / merged / approved / changes requested / unresolved filters |
 | `R` | reload the current source (the tab shows a spinner while it runs) |
 | `/` | text search (AND with active status filters) |
 | `c` | comment on diff line |

@@ -68,6 +68,12 @@ func (c *Client) SearchPRs(ctx context.Context, query string, limit int) ([]pr.S
 	)
 	raw, err := c.execRaw(ctx, args...)
 	if err != nil {
+		// `gh search prs` spends the GraphQL search budget, which is the smallest
+		// of them all — this is the call that runs out first in practice. REST
+		// search is metered separately, so the cross-repo tabs survive.
+		if isGraphQLUnavailable(err) {
+			return c.SearchPRsREST(ctx, query, limit)
+		}
 		return nil, err
 	}
 	var results []searchResult
