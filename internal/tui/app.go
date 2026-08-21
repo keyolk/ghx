@@ -171,10 +171,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case threadResolvedMsg:
 		a.setToast("thread resolved")
 		if a.detail != nil {
-			// The PR just changed, and the row's updatedAt has not caught up —
-			// the cached entry would still look valid for the state that just
-			// stopped being true.
-			return a, a.detail.reload()
+			// Only the thread list moved. Re-fetching the diff, the commits, and
+			// the checks to learn that one thread closed is three requests spent
+			// on data that cannot have changed.
+			return a, a.detail.refreshThreads()
 		}
 		return a, nil
 
@@ -276,7 +276,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.list.refreshCurrent()
 		}
 		if a.detail != nil {
-			return a, a.detail.reload()
+			// A review changes the decision and the review list, both of which
+			// live on the PR metadata. The diff is untouched.
+			return a, a.detail.refreshDetail()
 		}
 		return a, nil
 
@@ -291,7 +293,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.list.refreshCurrent()
 		}
 		if a.detail != nil {
-			return a, a.detail.reload()
+			// ready/draft, close/reopen, labels — all PR metadata. A checkout
+			// changes nothing on GitHub at all, but refreshing the metadata is
+			// cheap enough not to be worth special-casing.
+			return a, a.detail.refreshDetail()
 		}
 		return a, nil
 

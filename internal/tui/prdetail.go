@@ -276,8 +276,16 @@ func (d *prDetailModel) fetch() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// refreshThreads re-fetches just the threads, used after posting a comment.
+// refreshThreads re-fetches just the threads, used after posting a comment or
+// resolving one. The diff and the commit list cannot have changed, and the
+// three requests that would fetch them again are the most expensive part of
+// opening a PR.
+//
+// It evicts the cached entry first: the stored copy still holds the old thread
+// list, and the row's updatedAt has not moved, so a return visit would serve
+// the comment that was just posted as if it had never been.
 func (d *prDetailModel) refreshThreads() tea.Cmd {
+	d.evictCache()
 	d.loadingThreads = true
 	n, client := d.number, d.client
 	owner, repo := d.owner, d.repo
@@ -293,6 +301,33 @@ func (d *prDetailModel) refreshThreads() tea.Cmd {
 		}
 		ts, err := client.ReviewThreads(c, owner, repo, n)
 		return prThreadsMsg{threads: ts, err: err}
+	}
+}
+
+// evictCache drops this PR's stored entry, for the actions that change the PR
+// without moving the row's updatedAt — which is every action taken from inside
+// ghx, since the list has not re-fetched yet.
+func (d *prDetailModel) evictCache() {
+	if d.cache == nil {
+		return
+	}
+	if repo := d.repoSlug(); repo != "" {
+		d.cache.evict(repo, d.number)
+	}
+}
+
+// refreshDetail re-fetches only the PR metadata: state, draft flag, review
+// decision, mergeability, labels. Everything an approve, a ready-for-review, or
+// a label edit can change, and nothing the diff or threads own.
+func (d *prDetailModel) refreshDetail() tea.Cmd {
+	d.evictCache()
+	d.loadingDetail = true
+	n, client := d.number, d.client
+	return func() tea.Msg {
+		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		det, err := client.ViewPR(c, n)
+		return prDetailMsg{detail: det, err: err}
 	}
 }
 
