@@ -394,8 +394,20 @@ func (v *diffView) toggleFold() {
 	if len(v.rows) == 0 {
 		return
 	}
-	path := v.rows[v.cursor].path
-	v.folded[path] = !v.folded[path]
+	v.setFold(v.rows[v.cursor].path, !v.folded[v.rows[v.cursor].path])
+}
+
+// setFold folds or unfolds one file and leaves the cursor on its header, which
+// is the only row guaranteed to still exist afterwards.
+//
+// Reports false when nothing changed, so a caller bound to a directional key
+// can fall through rather than consuming a keypress that did nothing — h on an
+// already-folded file should still be free to mean something else.
+func (v *diffView) setFold(path string, fold bool) bool {
+	if path == "" || v.folded[path] == fold {
+		return false
+	}
+	v.folded[path] = fold
 	v.rebuild()
 	for i, r := range v.rows {
 		if r.kind == rowFileHeader && r.path == path {
@@ -403,6 +415,24 @@ func (v *diffView) toggleFold() {
 			break
 		}
 	}
+	return true
+}
+
+// foldPathForCursor is the file h/l would act on: the one the cursor is in.
+//
+// Only a header row qualifies. Inside a hunk, h and l are the paired layout's
+// column keys — taking them there would cost the only way to aim a comment at
+// a deleted line, since a modification puts both sides on one screen row and
+// the cursor cannot be moved to the other half any other way.
+func (v *diffView) foldPathForCursor() (string, bool) {
+	if len(v.rows) == 0 {
+		return "", false
+	}
+	r := v.rows[v.cursor]
+	if r.kind != rowFileHeader || r.path == "" {
+		return "", false
+	}
+	return r.path, true
 }
 
 // commentTarget reports what the cursor is pointing at, for the composer.
@@ -763,24 +793,39 @@ func (v *diffView) helpLine() string {
 				"esc", "back",
 			)
 		}
+		// On a file header h/l fold rather than switch columns, so the footer
+		// says which — the same two keys mean different things a row apart.
+		if _, onHeader := v.foldPathForCursor(); onHeader {
+			return fmtHints(
+				"j/k", "line",
+				"J/K", "hunk",
+				"H/L", "file",
+				"h/l", "fold",
+				"s", layout,
+				"esc", "back",
+			)
+		}
 		hints := fmtHints(
 			"j/k", "line",
 			"J/K", "hunk",
+			"H/L", "file",
 			"h/l", "column",
 			"c", "comment",
 			"v", "visual",
 			"s", layout,
-			"o", "fold",
 			"esc", "back",
 		)
 		if !v.sideBySide {
+			// o:fold is dropped rather than H/L: h/l fold from a file header,
+			// which is where you are when folding, and the line stops fitting a
+			// 100-column terminal at ten hints. o still works, and is in ?.
 			hints = fmtHints(
 				"j/k", "line",
 				"J/K", "hunk",
+				"H/L", "file",
 				"c", "comment",
 				"v", "visual",
 				"s", layout,
-				"o", "fold",
 				"enter", "thread",
 				"esc", "back",
 			)

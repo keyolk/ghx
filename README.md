@@ -186,7 +186,8 @@ Press `?` inside the TUI for the full list. Highlights:
 | `o` | fold file (diff tab) / open selected PRs in browser |
 | `y` / `:copy` | copy the selected PRs' URLs to the clipboard (one per line) |
 | `J` / `K` | next / previous hunk (diff tab) |
-| `{` / `}` | previous / next file (diff tab) |
+| `H` / `L` | previous / next file (diff tab; `{` `}` also) |
+| `h` / `l` | fold / unfold a file, on its header row (diff tab) |
 | `:` | command palette |
 | `?` | help |
 

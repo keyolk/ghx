@@ -211,12 +211,19 @@ func TestJumpKeysDoNotDisturbLineNavigation(t *testing.T) {
 		t.Errorf("k moved the cursor to %d, want 0", v.cursor)
 	}
 
-	// h and l are untouched: the unified layout has no column to switch between,
-	// so the diff tab leaves them to whatever else claims them — which is what
-	// it did before the jump keys existed.
+	// h and l stay free on a diff line: in the unified layout there is no column
+	// to switch between and no file to fold from here, so they fall through to
+	// tab cycling as they always did. (Their fold behaviour on a file header is
+	// covered by the fold tests.)
+	for i, r := range v.rows {
+		if r.kind == rowDiffLine {
+			v.cursor = i
+			break
+		}
+	}
 	for _, key := range []string{"h", "l"} {
 		if _, handled := a.detail.update(keyMsg(key)); handled {
-			t.Errorf("the diff tab now consumes %s in the unified layout", key)
+			t.Errorf("the diff tab now consumes %s on a diff line in the unified layout", key)
 		}
 	}
 

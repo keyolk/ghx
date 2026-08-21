@@ -19,7 +19,8 @@ func helpSections() []helpSection {
 		{"Navigation", [][2]string{
 			{"j / k", "move down / up"},
 			{"J / K", "next / previous hunk (diff)"},
-			{"{ / }", "previous / next file (diff)"},
+			{"H / L", "previous / next file (diff; { } also)"},
+			{"h / l", "fold / unfold a file, on its header row (diff)"},
 			{"g / G", "jump to top / bottom"},
 			{"^f / ^b", "page down / up"},
 			{"h / l", "cycle tabs (detail) · pane focus (list)"},

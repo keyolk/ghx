@@ -151,6 +151,17 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 		d.diff.moveDown(-1)
 		return nil, true
 	case "left":
+		// On a file header h folds that file. The header has no columns to
+		// switch between — focusSide already refuses there — so this costs
+		// nothing the paired layout was using.
+		if path, ok := d.diff.foldPathForCursor(); ok {
+			if d.diff.setFold(path, true) {
+				return nil, true
+			}
+			// Already folded: fall through so h keeps cycling tabs, rather than
+			// swallowing a keypress that did nothing.
+			return nil, false
+		}
 		// In the paired layout the columns are two halves of one screen row, so
 		// h/l switch between them. Falling through when there is nothing to
 		// switch to keeps h available for cycling tabs.
@@ -159,6 +170,12 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 		}
 		return nil, false
 	case "right":
+		if path, ok := d.diff.foldPathForCursor(); ok {
+			if d.diff.setFold(path, false) {
+				return nil, true
+			}
+			return nil, false
+		}
 		if d.diff.sideBySide && d.diff.focusSide(sideRight) {
 			return nil, true
 		}
@@ -193,13 +210,16 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 		}
 		d.diff.jumpHunk(delta)
 		return nil, true
-	case "{", "}":
+	case "H", "L", "{", "}":
 		// File-level jumps, for the same reason and with the same restriction.
+		// H/L pairs with J/K — shifted for coarse movement, one letter apart for
+		// hunk versus file. { and } stay as aliases for the paragraph-motion
+		// habit they come from.
 		if d.diff.visual {
 			return nil, true
 		}
 		delta := 1
-		if key == "{" {
+		if key == "H" || key == "{" {
 			delta = -1
 		}
 		d.diff.jumpFile(delta)
