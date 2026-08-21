@@ -266,6 +266,12 @@ func renderThreadSummary(t pr.ReviewThread, expanded bool) string {
 		body = commentPreview(t.Comments[0].Body)
 	}
 	var meta []string
+	// A suggestion is actionable, unlike the rest of a comment's content, so it
+	// is named on the collapsed row — otherwise the only way to find out one
+	// exists is to expand every thread.
+	if len(t.Comments) > 0 && pr.HasSuggestion(t.Comments[0].Body) {
+		meta = append(meta, "suggestion · A applies")
+	}
 	if n := len(t.Comments); n > 1 {
 		meta = append(meta, fmt.Sprintf("%d replies", n-1))
 	}
@@ -784,6 +790,18 @@ func (v *diffView) helpLine() string {
 			action := "reply"
 			if v.threadHasReplies() {
 				action = "replies"
+			}
+			// A applies only where there is something to apply, so it is named
+			// only there — a hint for a key that would refuse is worse than none.
+			if _, _, ok := v.suggestionUnderCursor(); ok {
+				return fmtHints(
+					"j/k", "line",
+					"A", "apply suggestion",
+					"enter", action,
+					"c", "reply",
+					"s", layout,
+					"esc", "back",
+				)
 			}
 			return fmtHints(
 				"j/k", "line",

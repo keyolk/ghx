@@ -65,6 +65,9 @@ func (a *App) View() string {
 	if a.confirm != nil {
 		content = overlayBody(content, a.renderConfirm(a.width, rows), a.width, rows)
 	}
+	if a.suggestion != nil {
+		content = overlayBody(content, a.renderSuggestionPrompt(a.width, rows), a.width, rows)
+	}
 	if a.composer.active {
 		content = overlayBody(content, a.composer.render(a.width, rows), a.width, rows)
 	}
@@ -130,6 +133,12 @@ func (a *App) helpLine() string {
 	}
 	if a.confirm != nil {
 		return truncateFooter(fmtHints("y", "yes", "n", "no"), a.width)
+	}
+	if a.suggestion != nil {
+		if a.suggestion.busy {
+			return truncateFooter(dimStyle.Render("committing…"), a.width)
+		}
+		return truncateFooter(fmtHints("y", "apply", "n", "cancel"), a.width)
 	}
 	if a.labels != nil {
 		return truncateFooter(

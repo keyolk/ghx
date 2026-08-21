@@ -63,6 +63,10 @@ type App struct {
 	labels       *labelPicker
 	statusFilter *statusFilterPicker
 
+	// suggestion gates applying a review suggestion — the only action in the
+	// diff view that writes a commit to someone's branch.
+	suggestion *suggestionPrompt
+
 	toast   string
 	toastAt time.Time
 
@@ -339,6 +343,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case openSuggestionMsg:
+		a.suggestion = msg.prompt
+		return a, nil
+
+	case suggestionAppliedMsg:
+		a.suggestion = nil
+		if msg.err != nil {
+			return a, errCmd(msg.err)
+		}
+		a.setToast(fmt.Sprintf("applied the suggestion to %s:%d", msg.path, msg.line))
+		if a.detail != nil {
+			// The branch now has a commit the loaded diff does not, so nothing on
+			// screen describes the PR any more.
+			return a, a.detail.reload()
+		}
+		return a, nil
+
 	case openURLMsg:
 		return a, a.openBrowser(msg.url)
 
@@ -377,6 +398,9 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	if a.confirm != nil {
 		return a.handleConfirmKey(msg)
+	}
+	if a.suggestion != nil {
+		return a.handleSuggestionKey(msg)
 	}
 	if a.statusFilter != nil {
 		return a.handleStatusFilterKey(msg)

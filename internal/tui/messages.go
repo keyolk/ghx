@@ -145,3 +145,15 @@ type labelsLoadedMsg struct {
 
 // openURLMsg asks app.go to open a resolved URL in the browser.
 type openURLMsg struct{ url string }
+
+// suggestionAppliedMsg reports the outcome of committing a review suggestion.
+type suggestionAppliedMsg struct {
+	path string
+	line int
+	err  error
+}
+
+// openSuggestionMsg asks app.go to open the apply-suggestion confirmation.
+// The detail model builds the prompt (it owns the diff and the threads); app.go
+// owns the modal stack.
+type openSuggestionMsg struct{ prompt *suggestionPrompt }

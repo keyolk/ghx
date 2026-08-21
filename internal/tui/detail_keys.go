@@ -247,6 +247,10 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 			d.diff.syncSideFocus()
 		}
 		return nil, true
+	case "A":
+		// Apply the suggestion under the cursor. A is free here: the list's A
+		// (select all visible) has no meaning with a PR open.
+		return d.requestApplySuggestion(), true
 	case "c":
 		return d.composeInline(), true
 	case "enter":

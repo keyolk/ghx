@@ -38,6 +38,7 @@ func helpSections() []helpSection {
 			{"r", "request changes"},
 			{"o", "open selected PRs in browser (fold file, in the diff tab)"},
 			{"y", "copy the selected PRs' URLs to the clipboard"},
+			{"A", "apply the suggestion under the cursor (asks first)"},
 		}},
 		{"PR actions", [][2]string{
 			{"space / A", "toggle row / all visible rows for multi-select"},

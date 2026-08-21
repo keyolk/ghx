@@ -104,6 +104,11 @@ branch protection, with an explicit confirmation but no additional ghx policy.
   jump hunk to hunk and `{`/`}` file to file
 - **Inline comments** — `c` on a diff line, `v` for visual range selection,
   replies via `enter` on a thread; posts to the correct path/line/side
+- **Suggestions** — a comment carrying a ```suggestion block is marked as such,
+  and `A` applies it: the file is read at the PR's head, the anchored lines are
+  replaced, and the result is committed to the head branch. The confirmation
+  shows the exact before/after first, and `expectedHeadOid` makes a concurrent
+  push fail the apply rather than clobber it
 - **Review actions** — approve (`a`), request changes (`r`), PR-level comment
   (`C`), all from the list without opening the PR
 - **Checks** — CI status with bucket colors, workflow run log viewer
@@ -188,6 +193,7 @@ Press `?` inside the TUI for the full list. Highlights:
 | `J` / `K` | next / previous hunk (diff tab) |
 | `H` / `L` | previous / next file (diff tab; `{` `}` also) |
 | `h` / `l` | fold / unfold a file, on its header row (diff tab) |
+| `A` | apply the suggestion under the cursor (asks first) |
 | `:` | command palette |
 | `?` | help |
 

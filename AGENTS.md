@@ -27,6 +27,8 @@ actions.
 - `internal/tui/clipboard.go` — `y` / `:copy`, PR URL 복사 (외부 clipboard 명령)
 - `internal/tui/detail_diff_jump.go` — diff의 hunk/file 단위 점프 (`J`/`K`, `{`/`}`)
 - `internal/tui/detail_cache.go` — PR 상세 디스크 캐시 (updatedAt로 유효성 판정)
+- `internal/pr/suggestion.go` — 코멘트의 ```suggestion 블록 파싱
+- `internal/gh/suggestion.go` — suggestion 적용 (createCommitOnBranch, expectedHeadOid)
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
 ## Conventions
