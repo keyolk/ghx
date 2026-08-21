@@ -116,7 +116,23 @@ func (c *Client) PRChecks(ctx context.Context, number int) ([]pr.Check, error) {
 	}
 	var out []pr.Check
 	if err := c.execJSON(ctx, &out, args...); err != nil {
+		// "no checks reported" exits 1, the same as a real failure. A PR whose
+		// repository has no CI is an ordinary PR, not an error: reporting one
+		// puts a red toast on screen every time such a PR is opened, and — since
+		// the caller cannot tell the two apart — leaves the checks fetch
+		// permanently unfinished.
+		if isNoChecksReported(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return out, nil
+}
+
+// isNoChecksReported recognizes gh's way of saying a PR has no CI at all.
+// The exit status is 1 for this and for a genuine failure alike, so the message
+// is what distinguishes them.
+func isNoChecksReported(err error) bool {
+	return err != nil &&
+		strings.Contains(strings.ToLower(err.Error()), "no checks reported")
 }

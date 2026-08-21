@@ -126,3 +126,34 @@ esac
 		t.Errorf("pulls/{n} requests = %d, want exactly 1 for a stateless row", pulls)
 	}
 }
+
+// `gh pr checks` exits 1 when a PR's repository has no CI at all, with the same
+// status a real failure uses. Treating that as an error puts a red toast on
+// screen every time such a PR is opened — and leaves the caller's checks fetch
+// permanently unfinished, which is how the detail cache never got written for
+// any PR without CI.
+func TestPRChecksTreatsNoChecksAsEmptyNotAnError(t *testing.T) {
+	fakeGH(t, `
+echo "no checks reported on the 'feat/x' branch" >&2
+exit 1
+`)
+	got, err := NewClient(0).PRChecks(context.Background(), 15)
+	if err != nil {
+		t.Fatalf("a PR with no CI is not an error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("checks = %d, want none", len(got))
+	}
+}
+
+// A real failure must still surface. Swallowing every exit 1 would hide a
+// broken token or an unreachable API behind an empty checks tab.
+func TestPRChecksStillReportsRealFailures(t *testing.T) {
+	fakeGH(t, `
+echo "HTTP 403: Resource not accessible by personal access token" >&2
+exit 1
+`)
+	if _, err := NewClient(0).PRChecks(context.Background(), 15); err == nil {
+		t.Error("a 403 was swallowed as an empty check list")
+	}
+}
