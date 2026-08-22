@@ -52,7 +52,7 @@ func (v *diffView) suggestionUnderCursor() (pr.ReviewThread, pr.Suggestion, bool
 		return pr.ReviewThread{}, pr.Suggestion{}, false
 	}
 	for _, t := range v.threads {
-		if t.ID != id || len(t.Comments) == 0 {
+		if threadIdentity(t) != id || len(t.Comments) == 0 {
 			continue
 		}
 		found := pr.ParseSuggestions(t.Comments[0].Body)
