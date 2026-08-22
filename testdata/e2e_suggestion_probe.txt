@@ -1,6 +1,7 @@
 alpha
 BRAVO-applied
 charlie
-delta
-echo
+DELTA-applied
+ECHO-applied
+EXTRA-line
 foxtrot
