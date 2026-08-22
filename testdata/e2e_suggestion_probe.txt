@@ -4,4 +4,3 @@ charlie
 DELTA-applied
 ECHO-applied
 EXTRA-line
-foxtrot
