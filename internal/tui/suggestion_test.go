@@ -219,3 +219,29 @@ func TestApplySuggestionIgnoresARepliesBlock(t *testing.T) {
 		t.Error("a reply's suggestion was applied at the opening comment's anchor")
 	}
 }
+
+// An outdated thread is the trap this guard exists for, and it does not look
+// like one: GitHub drops `line` to null, threadLine falls back to
+// originalLine, and that number usually still exists in the new diff — so the
+// row renders normally, in the right place, anchored to whatever happens to be
+// at that line now. Applying a suggestion outdates its own thread, which makes
+// a second A the ordinary way to hit this rather than an exotic one.
+func TestApplySuggestionRefusesAnOutdatedThread(t *testing.T) {
+	stale := threadWithSuggestion(0)
+	stale.OriginalLine = 2
+	stale.IsOutdated = true
+	a, v := suggestionApp(t, []pr.ReviewThread{stale})
+	cursorOnThread(t, v)
+
+	cmd := a.handleKey(keyMsg("A"))
+	if cmd == nil {
+		t.Fatal("A produced no command")
+	}
+	e, ok := cmd().(errMsg)
+	if !ok {
+		t.Fatal("an outdated thread's suggestion was accepted")
+	}
+	if !strings.Contains(e.err.Error(), "outdated") {
+		t.Errorf("refused for the wrong reason: %v", e.err)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -138,6 +139,35 @@ func (c *Client) ApplySuggestion(
 	if err != nil {
 		return err
 	}
+	return c.applyAt(ctx, head, head.OID, t, replacement, deletion)
+}
+
+// ApplySuggestionAtHead is ApplySuggestion pinned to a specific commit: the
+// write is rejected unless the branch is still there. Callers that read the
+// diff at a known OID should pass it, which widens the guarantee from "the
+// branch did not move during this call" to "the branch did not move since what
+// the reviewer looked at".
+func (c *Client) ApplySuggestionAtHead(
+	ctx context.Context, number int, expectedOID string,
+	t SuggestionTarget, replacement string, deletion bool,
+) error {
+	head, err := c.PRHeadRef(ctx, number)
+	if err != nil {
+		return err
+	}
+	// The file is still read at the real head — replacing lines in an older
+	// revision would build the commit from stale content. Only the collision
+	// check uses the caller's OID.
+	return c.applyAt(ctx, head, expectedOID, t, replacement, deletion)
+}
+
+// applyAt reads the file at head.OID and commits the result, asserting the
+// branch is at expectedOID. The two are the same for the ordinary path and
+// differ only when a caller pins an older revision it has already shown.
+func (c *Client) applyAt(
+	ctx context.Context, head headRef, expectedOID string,
+	t SuggestionTarget, replacement string, deletion bool,
+) error {
 	original, err := c.FileAtRef(ctx, head.Owner, head.Repo, head.OID, t.Path)
 	if err != nil {
 		return fmt.Errorf("read %s at %s: %w", t.Path, head.OID[:min(7, len(head.OID))], err)
@@ -168,16 +198,35 @@ func (c *Client) ApplySuggestion(
 				"contents": base64.StdEncoding.EncodeToString([]byte(updated)),
 			}},
 		},
-		"expectedHeadOid": head.OID,
+		"expectedHeadOid": expectedOID,
 	}
-	payload, err := json.Marshal(input)
+	// Neither -f nor -F can carry an object: they are the same flag family and
+	// both send the value as a JSON *string*, which the server rejects with
+	// "Expected ... to be a key-value object". The whole request body has to go
+	// in as one document instead. It goes through a file rather than stdin
+	// because exec's credential fallback re-runs the command, and a stdin reader
+	// is already drained by then.
+	body, err := json.Marshal(map[string]any{
+		"query":     m,
+		"variables": map[string]any{"input": input},
+	})
 	if err != nil {
 		return fmt.Errorf("encode commit input: %w", err)
 	}
-	// -f with a JSON string would be sent as a string, not an object; the raw
-	// field form is what makes gh parse it as the input object.
-	_, err = c.execRaw(ctx, "api", "graphql",
-		"-f", "query="+m, "--raw-field", "input="+string(payload))
+	f, err := os.CreateTemp("", "ghx-suggestion-*.json")
+	if err != nil {
+		return fmt.Errorf("stage commit input: %w", err)
+	}
+	defer os.Remove(f.Name())
+	_, writeErr := f.Write(body)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return fmt.Errorf("stage commit input: %w", writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("stage commit input: %w", closeErr)
+	}
+	_, err = c.execRaw(ctx, "api", "graphql", "--input", f.Name())
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "expected") {
 			return fmt.Errorf(

@@ -128,8 +128,14 @@ type ReviewThread struct {
 	// present it as an outstanding conversation. A zero value that means
 	// "unknown" is deliberate: a thread built without going through the GraphQL
 	// decoder has not learned anything about its resolution.
-	ResolutionKnown   bool            `json:"-"`
-	IsCollapsed       bool            `json:"isCollapsed"`
+	ResolutionKnown bool `json:"-"`
+	IsCollapsed     bool `json:"isCollapsed"`
+	// IsOutdated marks a thread GitHub no longer anchors to the current diff:
+	// the branch moved under it, so `line` comes back null and only
+	// `originalLine` survives. That old number still resolves against the
+	// current file, which is why this flag is needed rather than inferred —
+	// nothing about the coordinates themselves says they are stale.
+	IsOutdated        bool            `json:"isOutdated"`
 	Path              string          `json:"path"`
 	Line              int             `json:"line"`
 	OriginalLine      int             `json:"originalLine"`
