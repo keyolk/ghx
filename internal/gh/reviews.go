@@ -23,7 +23,7 @@ const graphQLThreadsQuery = `query($owner:String!,$repo:String!,$number:Int!,$af
         totalCount
         pageInfo{hasNextPage endCursor}
         nodes{
-          id isResolved isCollapsed path line originalLine diffSide startLine originalStartLine
+          id isResolved isCollapsed isOutdated path line originalLine diffSide startLine originalStartLine
           comments(first:100){nodes{id databaseId body author{login} path line originalLine createdAt}}
         }
       }
@@ -46,6 +46,7 @@ type threadsResponse struct {
 						ID                string `json:"id"`
 						IsResolved        bool   `json:"isResolved"`
 						IsCollapsed       bool   `json:"isCollapsed"`
+						IsOutdated        bool   `json:"isOutdated"`
 						Path              string `json:"path"`
 						Line              int    `json:"line"`
 						OriginalLine      int    `json:"originalLine"`
@@ -101,6 +102,7 @@ func (c *Client) ReviewThreads(ctx context.Context, owner, repo string, number i
 				IsResolved:        n.IsResolved,
 				ResolutionKnown:   true,
 				IsCollapsed:       n.IsCollapsed,
+				IsOutdated:        n.IsOutdated,
 				Path:              n.Path,
 				Line:              n.Line,
 				OriginalLine:      n.OriginalLine,

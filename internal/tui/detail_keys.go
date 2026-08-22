@@ -288,7 +288,7 @@ func (d *prDetailModel) composeInline() tea.Cmd {
 
 func (d *prDetailModel) composeReply(threadID string) tea.Cmd {
 	for _, t := range d.comments.threads {
-		if t.ID != threadID || len(t.Comments) == 0 {
+		if threadIdentity(t) != threadID || len(t.Comments) == 0 {
 			continue
 		}
 		// The reply goes to the parent comment, and via REST — which wants the

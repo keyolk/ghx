@@ -29,6 +29,7 @@ actions.
 - `internal/tui/detail_cache.go` — PR 상세 디스크 캐시 (updatedAt로 유효성 판정)
 - `internal/pr/suggestion.go` — 코멘트의 ```suggestion 블록 파싱
 - `internal/gh/suggestion.go` — suggestion 적용 (createCommitOnBranch, expectedHeadOid)
+- `internal/tui/detail_comments.go` — `threadIdentity` (REST 스레드의 안정적 식별자)
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
 ## Conventions
@@ -52,6 +53,20 @@ actions.
 - 액션 후 재페치는 **그 액션이 바꾼 것만** 받는다. 스레드 resolve에 diff를 다시 받지
   않는다. 다만 좁힌 경로도 캐시는 evict해야 한다 — ghx 안에서 한 액션은 리스트 행의
   `updatedAt`을 움직이지 않으므로, 캐시가 방금 바뀐 상태를 계속 내놓는다.
+- REST로 복구된 스레드는 `ID`가 없다 — REST에 thread 객체 자체가 없다. UI에서
+  스레드를 식별할 때는 `t.ID`가 아니라 `threadIdentity(t)`를 쓴다. 빈 ID로 비교하면
+  전부 첫 스레드에 매칭돼, `A`가 **다른 스레드의** suggestion을 그 스레드의 줄에
+  커밋한다.
+- suggestion 적용은 `isOutdated`로 게이팅한다. 적용하면 그 스레드 자신이 outdated가
+  되고 `line`이 null로 떨어지는데, 남은 `originalLine`이 새 diff에도 대개 존재해서
+  행은 멀쩡히 렌더된다 — 좌표만으로는 stale인지 알 수 없다.
+- `gh api graphql`에 **객체 변수를 플래그로 넘길 수 없다.** `-f`와 `--raw-field`는
+  같은 플래그이고 둘 다 값을 JSON *문자열*로 보낸다. 본문 전체를 `--input <file>`로
+  넘긴다 (stdin은 안 된다 — credential fallback이 명령을 재실행한다).
+- 네트워크가 필요한 경로는 `-tags e2e` 테스트로 실제로 태워본다. `suggestion_e2e_test.go`,
+  `rest_parity_e2e_test.go`가 그 예이고, 둘 다 `GHX_E2E_REPO`/`GHX_E2E_PR`로 게이팅된다.
+  suggestion 적용 경로가 단 한 번도 성공할 수 없는 상태로 머지됐던 이유가 이것이다 —
+  파서와 줄 연산은 유닛 테스트가 덮었지만 요청 자체는 아무도 보내보지 않았다.
 - `App.View` must render at most `height` rows: it always draws a title line and
   a footer, so the body is sized to `contentRows()`, never to `a.height`. An
   overflowing frame loses its TOP rows — bubbletea keeps the last `height` lines

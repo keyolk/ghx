@@ -1,6 +1,11 @@
 package gh
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -123,5 +128,67 @@ func TestReplaceLinesLeavesCRLFAlone(t *testing.T) {
 	}
 	if strings.Count(got, "\r") != 2 {
 		t.Errorf("carriage returns changed on lines the suggestion did not touch: %q", got)
+	}
+}
+
+// The mutation's variable is an input *object*, and neither -f nor -F can carry
+// one: they are the same flag family and both send the value as a JSON string,
+// which the server rejects with "Expected ... to be a key-value object". The
+// whole path shipped that way and could never have committed anything, because
+// nothing exercised it end to end. So this asserts the shape of the argv, which
+// is the part that was wrong — the body must arrive as one document.
+func TestApplySuggestionSendsTheInputAsADocument(t *testing.T) {
+	// The input file is removed as soon as ApplySuggestion returns, so the shim
+	// copies it aside — the body is the half of this assertion that matters.
+	saved := filepath.Join(t.TempDir(), "sent.json")
+	calls := countingGH(t, fmt.Sprintf(`
+case "$*" in
+  *headRefName*) cat <<'JSON'
+{"data":{"repository":{"pullRequest":{"headRefName":"topic","headRefOid":"abc1234",
+"headRepository":{"name":"n","owner":{"login":"o"}}}}}}
+JSON
+  ;;
+  *contents*) printf '"%%s"\n' "$(printf 'one\ntwo\nthree\n' | base64)" ;;
+  *) for a in "$@"; do case "$a" in *.json) cp "$a" %q ;; esac; done
+     printf '{"data":{"createCommitOnBranch":{"commit":{"oid":"deadbee"}}}}\n' ;;
+esac`, saved))
+
+	err := NewClient(0).WithRepo("o/n").ApplySuggestion(context.Background(), 7,
+		SuggestionTarget{Path: "f.txt", Line: 2}, "TWO", false)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var mutation string
+	for _, c := range calls() {
+		if strings.Contains(c, "--input") {
+			mutation = c
+		}
+	}
+	if mutation == "" {
+		t.Fatalf("the commit did not go through --input; calls were %q", calls())
+	}
+	// -f query=... alongside --input would mean the variable is still being
+	// passed as a flag, which is the bug.
+	if strings.Contains(mutation, "query=") {
+		t.Errorf("the query is still passed as a flag: %s", mutation)
+	}
+
+	body, err := os.ReadFile(saved)
+	if err != nil {
+		t.Fatalf("the shim never saw an input document: %v", err)
+	}
+	var doc struct {
+		Query     string `json:"query"`
+		Variables struct {
+			Input map[string]any `json:"input"`
+		} `json:"variables"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("the body is not a GraphQL document: %v", err)
+	}
+	if doc.Variables.Input["expectedHeadOid"] != "abc1234" {
+		t.Errorf("expectedHeadOid = %v, want the head the file was read at",
+			doc.Variables.Input["expectedHeadOid"])
 	}
 }

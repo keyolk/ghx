@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/keyolk/ghx/internal/pr"
@@ -77,12 +78,34 @@ func (c *commentsView) selected() (pr.ReviewThread, bool) {
 }
 
 // toggleExpand shows or hides the replies of the selected thread.
+// threadIdentity is the key a thread is tracked by in the UI: which row the
+// cursor is on, which threads are expanded, which one an action applies to.
+//
+// It cannot be t.ID. A thread recovered over REST has none — REST has no thread
+// object, only a comment list grouped by in_reply_to_id — so every such thread
+// carries the empty string, and every lookup written as `t.ID == id` matches
+// the first one. Pressing A on the third thread would then apply the first
+// thread's suggestion, at the first thread's line. The root comment's numeric
+// id is what REST does give, and it is unique per thread by construction.
+func threadIdentity(t pr.ReviewThread) string {
+	if t.ID != "" {
+		return t.ID
+	}
+	if len(t.Comments) > 0 && t.Comments[0].DatabaseID != 0 {
+		return "rest:" + strconv.FormatInt(t.Comments[0].DatabaseID, 10)
+	}
+	// Nothing identifies this thread. Returning "" would collide with every
+	// other such thread, so anchor-derived text is the last resort — two threads
+	// on the same line are rare, and it is still better than all of them.
+	return "anchor:" + threadKey(t.Path, orDefault(t.DiffSide, "RIGHT"), threadLine(t))
+}
+
 func (c *commentsView) toggleExpand() {
 	t, ok := c.selected()
 	if !ok {
 		return
 	}
-	c.expanded[t.ID] = !c.expanded[t.ID]
+	c.expanded[threadIdentity(t)] = !c.expanded[threadIdentity(t)]
 }
 
 // toggleResolvedFilter flips whether resolved threads are hidden, for the `t`
@@ -105,8 +128,9 @@ func (c *commentsView) toggleThreadResolved() (thread pr.ReviewThread, resolve b
 	if !found || t.ID == "" || !t.ResolutionKnown {
 		return pr.ReviewThread{}, false, false
 	}
+	id := threadIdentity(t)
 	for i := range c.threads {
-		if c.threads[i].ID == t.ID {
+		if threadIdentity(c.threads[i]) == id {
 			c.threads[i].IsResolved = !c.threads[i].IsResolved
 			break
 		}
@@ -133,7 +157,7 @@ func (c *commentsView) render(width, height int) string {
 	for i, t := range v {
 		starts[i] = len(lines)
 		lines = append(lines, c.threadHeader(t, i == c.cursor, width))
-		if c.expanded[t.ID] {
+		if c.expanded[threadIdentity(t)] {
 			for _, cm := range t.Comments {
 				lines = append(lines, c.commentLines(cm, width)...)
 			}

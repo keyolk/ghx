@@ -38,16 +38,21 @@ type suggestionPrompt struct {
 // suggestion is a counter-proposal in a conversation, and the anchor recorded
 // on the thread belongs to the original comment — applying a reply's block at
 // that anchor would write the wrong lines.
+//
+// An orphan is refused for the same reason, more urgently: its anchor is not in
+// this diff at all, because the branch moved after the comment was written. The
+// line number it carries still resolves against the current file, so applying it
+// would write the suggestion at coordinates nobody has looked at.
 func (v *diffView) suggestionUnderCursor() (pr.ReviewThread, pr.Suggestion, bool) {
 	id, ok := v.threadUnderCursor()
 	if !ok {
 		return pr.ReviewThread{}, pr.Suggestion{}, false
 	}
-	if r := v.rows[v.cursor]; r.commentIdx != 0 {
+	if r := v.rows[v.cursor]; r.commentIdx != 0 || r.orphan {
 		return pr.ReviewThread{}, pr.Suggestion{}, false
 	}
 	for _, t := range v.threads {
-		if t.ID != id || len(t.Comments) == 0 {
+		if threadIdentity(t) != id || len(t.Comments) == 0 {
 			continue
 		}
 		found := pr.ParseSuggestions(t.Comments[0].Body)
@@ -72,6 +77,16 @@ func (d *prDetailModel) startApplySuggestion() (*suggestionPrompt, error) {
 	}
 	if thread.IsResolved {
 		return nil, fmt.Errorf("that thread is resolved — unresolve it first if the suggestion still applies")
+	}
+	if thread.IsOutdated {
+		// The branch moved after the comment was written, so GitHub dropped the
+		// thread's `line` and only `originalLine` is left. That number still
+		// resolves against the current file — which is exactly the danger: the
+		// commit would land at coordinates that no longer mean what the reviewer
+		// read. Applying a suggestion makes its own thread outdated, so this is
+		// also what stops a second A from writing the same block twice.
+		return nil, fmt.Errorf(
+			"that suggestion is outdated — the branch moved since it was written; press R and re-read the diff")
 	}
 	if thread.DiffSide == "LEFT" {
 		// A suggestion on a deleted line has nothing in the new file to replace.

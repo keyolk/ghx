@@ -143,13 +143,14 @@ func (v *diffView) rebuild() {
 	rows := make([]diffRow, 0, 256)
 
 	appendThread := func(t pr.ReviewThread, fi, hi int, side string, anchor int, orphan bool) {
+		id := threadIdentity(t)
 		rows = append(rows, diffRow{
 			kind:       rowThread,
 			fileIdx:    fi,
 			path:       t.Path,
 			hunkIdx:    hi,
-			threadID:   t.ID,
-			text:       renderThreadSummary(t, v.expanded[t.ID]),
+			threadID:   id,
+			text:       renderThreadSummary(t, v.expanded[id]),
 			side:       side,
 			anchorLine: anchor,
 			commentIdx: 0,
@@ -157,7 +158,7 @@ func (v *diffView) rebuild() {
 		})
 		// Replies are hidden until asked for: a bot thread can run to a dozen
 		// comments and would bury the code it is about.
-		if !v.expanded[t.ID] {
+		if !v.expanded[id] {
 			return
 		}
 		for ci := 1; ci < len(t.Comments); ci++ {
@@ -166,7 +167,7 @@ func (v *diffView) rebuild() {
 				fileIdx:    fi,
 				path:       t.Path,
 				hunkIdx:    hi,
-				threadID:   t.ID,
+				threadID:   id,
 				text:       renderThreadReply(t.Comments[ci]),
 				side:       side,
 				anchorLine: anchor,
@@ -511,7 +512,7 @@ func (v *diffView) threadHasReplies() bool {
 		return false
 	}
 	for _, t := range v.threads {
-		if t.ID == id {
+		if threadIdentity(t) == id {
 			return len(t.Comments) > 1
 		}
 	}

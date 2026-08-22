@@ -219,3 +219,110 @@ func TestApplySuggestionIgnoresARepliesBlock(t *testing.T) {
 		t.Error("a reply's suggestion was applied at the opening comment's anchor")
 	}
 }
+
+// An outdated thread is the trap this guard exists for, and it does not look
+// like one: GitHub drops `line` to null, threadLine falls back to
+// originalLine, and that number usually still exists in the new diff — so the
+// row renders normally, in the right place, anchored to whatever happens to be
+// at that line now. Applying a suggestion outdates its own thread, which makes
+// a second A the ordinary way to hit this rather than an exotic one.
+func TestApplySuggestionRefusesAnOutdatedThread(t *testing.T) {
+	stale := threadWithSuggestion(0)
+	stale.OriginalLine = 2
+	stale.IsOutdated = true
+	a, v := suggestionApp(t, []pr.ReviewThread{stale})
+	cursorOnThread(t, v)
+
+	cmd := a.handleKey(keyMsg("A"))
+	if cmd == nil {
+		t.Fatal("A produced no command")
+	}
+	e, ok := cmd().(errMsg)
+	if !ok {
+		t.Fatal("an outdated thread's suggestion was accepted")
+	}
+	if !strings.Contains(e.err.Error(), "outdated") {
+		t.Errorf("refused for the wrong reason: %v", e.err)
+	}
+}
+
+// restFallbackThread is what the REST fallback produces: no thread ID, because REST has
+// no thread object to give one.
+func restFallbackThread(dbID int64, line int, body string) pr.ReviewThread {
+	return pr.ReviewThread{
+		Path: "a.txt", Line: line, DiffSide: "RIGHT",
+		Comments: []pr.ThreadComment{{
+			DatabaseID: dbID, Body: body, Author: pr.User{Login: "reviewer"},
+		}},
+	}
+}
+
+// Threads recovered over REST all carry the empty ID, so a lookup written as
+// `t.ID == id` matches whichever one comes first. With the suggestion thread
+// first in the list, pressing A on a *different* thread's row used to return
+// that suggestion — and apply it at that suggestion's line, which is not the
+// line the cursor was on.
+func TestApplySuggestionDoesNotConfuseRESTThreads(t *testing.T) {
+	withSuggestion := restFallbackThread(2, 3, suggestionBody)
+	plain := restFallbackThread(1, 2, "just a comment")
+	a, v := suggestionApp(t, []pr.ReviewThread{withSuggestion, plain})
+
+	var checked int
+	for i, r := range v.rows {
+		if r.kind != rowThread || r.commentIdx != 0 {
+			continue
+		}
+		checked++
+		v.cursor = i
+		got, _, ok := v.suggestionUnderCursor()
+		if r.anchorLine == 2 {
+			if ok {
+				t.Errorf("the plain comment at line 2 offered a suggestion from line %d",
+					got.Line)
+			}
+			continue
+		}
+		if !ok {
+			t.Errorf("the suggestion at line %d was not found", r.anchorLine)
+		} else if got.Line != r.anchorLine {
+			t.Errorf("row at line %d matched the thread at line %d",
+				r.anchorLine, got.Line)
+		}
+	}
+	if checked != 2 {
+		t.Fatalf("expected 2 thread rows, saw %d", checked)
+	}
+	_ = a
+}
+
+// Expanding one REST thread must not expand the others: the expanded set is
+// keyed by the same identifier, so an empty ID collapses them all into one.
+func TestExpandingOneRESTThreadLeavesTheOthers(t *testing.T) {
+	first := restFallbackThread(1, 2, "first")
+	first.Comments = append(first.Comments, pr.ThreadComment{DatabaseID: 11, Body: "reply"})
+	second := restFallbackThread(2, 3, "second")
+	second.Comments = append(second.Comments, pr.ThreadComment{DatabaseID: 22, Body: "reply"})
+	_, v := suggestionApp(t, []pr.ReviewThread{first, second})
+
+	for i, r := range v.rows {
+		if r.kind == rowThread && r.anchorLine == 2 && r.commentIdx == 0 {
+			v.cursor = i
+			break
+		}
+	}
+	v.toggleThread()
+
+	replies := map[int]int{}
+	for _, r := range v.rows {
+		if r.kind == rowThread && r.commentIdx > 0 {
+			replies[r.anchorLine]++
+		}
+	}
+	if replies[2] != 1 {
+		t.Errorf("the expanded thread shows %d replies, want 1", replies[2])
+	}
+	if replies[3] != 0 {
+		t.Errorf("expanding one thread also expanded another (%d replies at line 3)",
+			replies[3])
+	}
+}
