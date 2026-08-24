@@ -20,7 +20,11 @@ type prListMsg struct {
 }
 
 // prListTickMsg fires the periodic background refresh of the current source.
-type prListTickMsg time.Time
+// gen is the poll generation it was armed with; a stale one is ignored.
+type prListTickMsg struct {
+	at  time.Time
+	gen uint64
+}
 
 // detailDebounceMsg fires after the list-navigation debounce to load PR detail.
 type detailDebounceMsg struct{ gen int }

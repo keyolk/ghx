@@ -14,6 +14,7 @@ import (
 // reviewThreads connection has no unresolved-only filter, so the first 100
 // resolution bits are fetched here and exceptional larger threads paginate.
 const prStatusBatchQuery = `query($ids:[ID!]!){
+  rateLimit{remaining limit resetAt}
   nodes(ids:$ids){
     ... on PullRequest{
       id state isDraft reviewDecision
@@ -58,9 +59,18 @@ type statusNode struct {
 	ReviewThreads  statusThreadConnection `json:"reviewThreads"`
 }
 
+// statusRateLimit is the rateLimit block the batch query carries so the
+// account's remaining GraphQL allowance costs nothing extra to learn.
+type statusRateLimit struct {
+	Remaining int    `json:"remaining"`
+	Limit     int    `json:"limit"`
+	ResetAt   string `json:"resetAt"`
+}
+
 type statusBatchResponse struct {
 	Data struct {
-		Nodes []statusNode `json:"nodes"`
+		RateLimit statusRateLimit `json:"rateLimit"`
+		Nodes     []statusNode    `json:"nodes"`
 	} `json:"data"`
 }
 
@@ -236,6 +246,12 @@ func enrichPRStatusGroup(ctx context.Context, client *Client, out []pr.Summary, 
 	var resp statusBatchResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return fmt.Errorf("decode PR statuses: %w", err)
+	}
+	// Record the allowance this response reported. Every poll goes through here,
+	// so the reading is as fresh as the rows without costing a request.
+	if rl := resp.Data.RateLimit; rl.Limit > 0 {
+		resetAt, _ := parseGitHubTime(rl.ResetAt)
+		client.budget.observe(rl.Remaining, rl.Limit, resetAt)
 	}
 
 	seen := make(map[string]bool, len(resp.Data.Nodes))

@@ -27,6 +27,18 @@ type Config struct {
 	PollInterval   string          `yaml:"poll_interval"`
 	DiffSplitRatio int             `yaml:"diff_split_ratio"`
 
+	// IdleAfter is how long without a keypress before the background poll backs
+	// off to IdlePollInterval. A ghx left open in a tmux window for days is the
+	// normal case, not the exception, and every one of them shares the account's
+	// GraphQL budget — six idle instances at 30s cost the same as one instance
+	// polling every five seconds. Set idle_after to "0" to poll at the same
+	// cadence forever.
+	IdleAfter string `yaml:"idle_after"`
+	// IdlePollInterval is the cadence used once idle. It only has to be short
+	// enough that returning to a window shows something recent, because the
+	// first keypress refreshes immediately.
+	IdlePollInterval string `yaml:"idle_poll_interval"`
+
 	// DetectRepo leads the PR list with the repositories the launch directory and
 	// the current tmux window belong to. Set it to false to always open on the
 	// configured sources — useful when ghx is run from inside one repo but used
@@ -39,8 +51,10 @@ type Config struct {
 	// contribute more leading tabs than the 1-9 jump keys reach.
 	DetectPanes *bool `yaml:"detect_panes"`
 
-	// Derived (not YAML). PollInterval parsed into a duration.
-	pollDuration time.Duration
+	// Derived (not YAML). The interval strings parsed into durations.
+	pollDuration     time.Duration
+	idleAfter        time.Duration
+	idlePollDuration time.Duration
 }
 
 // SourceDef is one PR list tab: a named gh search query, optionally scoped.
@@ -135,9 +149,14 @@ func DefaultConfig() *Config {
 			{Name: "Assigned to me", Query: "assignee:@me state:open"},
 			{Name: "Mentioned", Query: "mentions:@me state:open"},
 		},
-		Editor:         "", // resolve from $EDITOR or "vi" at use site
-		PollInterval:   "30s",
-		DiffSplitRatio: 40,
+		Editor:       "", // resolve from $EDITOR or "vi" at use site
+		PollInterval: "30s",
+		// Ten minutes of no keypresses is well past "stepped away"; five minutes
+		// between polls keeps a parked window roughly current for a tenth of the
+		// requests.
+		IdleAfter:        "10m",
+		IdlePollInterval: "5m",
+		DiffSplitRatio:   40,
 	}
 }
 
@@ -163,6 +182,12 @@ func merge(dst *Config, file *Config) {
 	}
 	if file.Clipboard != "" {
 		dst.Clipboard = file.Clipboard
+	}
+	if file.IdleAfter != "" {
+		dst.IdleAfter = file.IdleAfter
+	}
+	if file.IdlePollInterval != "" {
+		dst.IdlePollInterval = file.IdlePollInterval
 	}
 	if file.PollInterval != "" {
 		dst.PollInterval = file.PollInterval
@@ -319,6 +344,59 @@ func (c *Config) PollDuration() time.Duration {
 	}
 	c.pollDuration = d
 	return d
+}
+
+// IdleAfterDuration returns how long without a keypress counts as idle, or 0
+// when the backoff is disabled.
+//
+// Unlike PollDuration a zero here is meaningful — it turns the feature off — so
+// an unparseable value falls back to the default rather than to zero, and only
+// an explicit "0" disables it.
+func (c *Config) IdleAfterDuration() time.Duration {
+	if c.idleAfter != 0 {
+		return max(c.idleAfter, 0)
+	}
+	if c.IdleAfter == "" {
+		c.idleAfter = 10 * time.Minute
+		return c.idleAfter
+	}
+	d, err := time.ParseDuration(c.IdleAfter)
+	if err != nil {
+		d = 10 * time.Minute
+	}
+	if d <= 0 {
+		// Negative is nonsense; both it and "0" mean "never back off". Stored as
+		// -1 so the zero value still means "not parsed yet".
+		c.idleAfter = -1
+		return 0
+	}
+	c.idleAfter = d
+	return d
+}
+
+// IdlePollDuration returns the poll interval to use while idle. It is never
+// shorter than the active interval: a config that inverted them would make
+// going idle cost more, not less.
+func (c *Config) IdlePollDuration() time.Duration {
+	if c.idlePollDuration > 0 {
+		return c.idlePollDuration
+	}
+	d, err := time.ParseDuration(c.IdlePollInterval)
+	if err != nil || d <= 0 {
+		d = 5 * time.Minute
+	}
+	c.idlePollDuration = max(d, c.PollDuration())
+	return c.idlePollDuration
+}
+
+// ResetDerivedForTest clears the parsed-duration cache so a test can change an
+// interval string on an already-used Config. The accessors memoize, which is
+// what makes them cheap on the poll path and what would otherwise make a test
+// assert against the value it replaced.
+func (c *Config) ResetDerivedForTest() {
+	c.pollDuration = 0
+	c.idleAfter = 0
+	c.idlePollDuration = 0
 }
 
 // EditorCommand resolves the editor command: config > $EDITOR > "vi".
