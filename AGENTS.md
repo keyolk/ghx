@@ -30,6 +30,7 @@ actions.
 - `internal/pr/suggestion.go` — 코멘트의 ```suggestion 블록 파싱
 - `internal/gh/suggestion.go` — suggestion 적용 (createCommitOnBranch, expectedHeadOid)
 - `internal/tui/detail_comments.go` — `threadIdentity` (REST 스레드의 안정적 식별자)
+- `internal/gh/budget.go` — 계정 GraphQL 예산 관측 (응답에 실려오는 rateLimit)
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
 ## Conventions
@@ -67,6 +68,16 @@ actions.
   `rest_parity_e2e_test.go`가 그 예이고, 둘 다 `GHX_E2E_REPO`/`GHX_E2E_PR`로 게이팅된다.
   suggestion 적용 경로가 단 한 번도 성공할 수 없는 상태로 머지됐던 이유가 이것이다 —
   파서와 줄 연산은 유닛 테스트가 덮었지만 요청 자체는 아무도 보내보지 않았다.
+- 백그라운드 폴링은 인스턴스별이지만 **GraphQL 예산은 계정별**이다. tmux 창마다 켜둔
+  ghx가 여러 개면 서로를 모르는 채 한 풀을 나눠 쓴다 — 실측으로 6개 × 30초 폴링이
+  분당 ~141포인트를 태워 5,000 예산을 35분에 비웠다. 그래서 (1) 키 입력이 없으면
+  `idle_after` 뒤에 `idle_poll_interval`로 물러나고, (2) enrichment 응답에 실려오는
+  `rateLimit`으로 남은 예산을 **공짜로** 읽어 더 늘린다. 폴링 비용을 바꾸는 변경은
+  이 두 축을 같이 본다.
+- **타이머를 무장하는 곳은 `Init`과 `prListMsg` 단 두 곳**이다. 다른 데서 `armPoll`을
+  부르면 *현재* generation 타이머가 둘이 되고, generation 검사는 둘 다 현행이라
+  구분하지 못한다 — cadence가 조용히 2배가 된다. `idle_poll_test.go`의
+  `TestWakingDoesNotDuplicateThePollChain`이 이 불변식을 고정한다.
 - `App.View` must render at most `height` rows: it always draws a title line and
   a footer, so the body is sized to `contentRows()`, never to `a.height`. An
   overflowing frame loses its TOP rows — bubbletea keeps the last `height` lines

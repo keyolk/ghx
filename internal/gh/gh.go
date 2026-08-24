@@ -20,6 +20,11 @@ type Client struct {
 	credentialRepo     string // repo URL used only to select a Git credential
 	credentialExplicit bool   // configured accounts must not fall back to another identity
 	credentials        *credentialCache
+	// budget is shared by every derived client: WithRepo and
+	// WithCredentialRepo copy the struct, but the GraphQL budget they spend is
+	// one account-wide pool, so an observation made through any of them has to
+	// be visible through all of them.
+	budget *budgetTracker
 }
 
 // NewClient returns a gh wrapper with the given per-call timeout (default 30s).
@@ -27,7 +32,7 @@ func NewClient(timeout time.Duration) *Client {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	return &Client{timeout: timeout, credentials: newCredentialCache()}
+	return &Client{timeout: timeout, credentials: newCredentialCache(), budget: &budgetTracker{}}
 }
 
 // WithRepo scopes subsequent calls to a specific "owner/repo". Unless an

@@ -70,6 +70,28 @@ type App struct {
 	toast   string
 	toastAt time.Time
 
+	// lastKeyAt is when the user last pressed a key, which is what decides
+	// whether the background poll runs at the active or the idle cadence. It is
+	// the only signal available: a ghx sitting in a tmux window nobody is looking
+	// at is indistinguishable from one being read, and both are indistinguishable
+	// from a terminal whose window is not even visible.
+	//
+	// This matters because the instances multiply. Six ghx windows left open for
+	// days all poll every 30 seconds against one account's GraphQL budget, which
+	// is the same load as one window polling every five seconds — measured at
+	// ~141 points/minute, or the whole 5,000/hour budget in 35 minutes, with
+	// nobody watching any of them.
+	lastKeyAt time.Time
+
+	// pollGen invalidates in-flight poll timers. Backing off means arming a new
+	// timer while an old one is still pending; without this the first keypress
+	// after an idle stretch would leave both running.
+	pollGen uint64
+
+	// nowFunc is time.Now, replaced in tests so idle behaviour can be asserted
+	// without sleeping through the real interval.
+	nowFunc func() time.Time
+
 	// copyClipboard, when set, replaces the real clipboard write. Tests set it
 	// so asserting that `y` copies does not overwrite the developer's clipboard
 	// and does not need pbcopy on PATH.
@@ -104,9 +126,124 @@ func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedR
 		composer: newComposer(),
 		palette:  &palette{},
 		search:   &search{},
+		nowFunc:  time.Now,
 	}
+	// Startup counts as activity: opening ghx is the most deliberate keypress
+	// there is, and an app that began life idle would poll at the slow cadence
+	// while being actively read.
+	a.lastKeyAt = a.nowFunc()
 	a.list = newPRListModelWithRepo(cfg, client, km, detectedRepos)
 	return a
+}
+
+// now reads the clock through nowFunc so tests can move it.
+func (a *App) now() time.Time {
+	if a.nowFunc == nil {
+		return time.Now()
+	}
+	return a.nowFunc()
+}
+
+// idle reports whether enough time has passed with no keypress that the poll
+// should back off.
+func (a *App) idle() bool {
+	after := a.cfg.IdleAfterDuration()
+	if after <= 0 {
+		return false
+	}
+	return a.now().Sub(a.lastKeyAt) >= after
+}
+
+// pollInterval is the cadence for the next background poll: the idle backoff,
+// then stretched further when the account's GraphQL budget is running out.
+//
+// The budget guard exists because the idle backoff only governs *this* window.
+// The budget is shared account-wide, so what actually empties it is several ghx
+// instances plus whatever else is using the token — and the only signal any of
+// them has about the others is how much allowance is left. Slowing down as it
+// drains is what keeps the list from going blank entirely; a stale row is worth
+// more to a reviewer than no rows.
+func (a *App) pollInterval() time.Duration {
+	base := a.cfg.PollDuration()
+	if a.idle() {
+		base = a.cfg.IdlePollDuration()
+	}
+	return applyBudgetBackoff(base, a.budget())
+}
+
+// budget is the last observed allowance, discarded once its window has closed.
+//
+// The throttle and the reading feed each other: a low reading stretches the
+// interval, and a stretched interval is exactly what stops a fresh reading from
+// arriving. At 4% remaining the poll is 100 minutes apart, so an hourly reset
+// comes and goes while ghx still believes the budget is nearly gone — throttling
+// on a number that expired, and telling the user "API 4%" when the account is
+// back to full.
+func (a *App) budget() gh.GraphQLBudget {
+	b := a.client.GraphQLBudget()
+	if b.Known && !b.ResetAt.IsZero() && !b.ResetAt.After(a.now()) {
+		return gh.GraphQLBudget{}
+	}
+	return b
+}
+
+// budgetBackoff maps a remaining-budget fraction to a poll multiplier. Coarse
+// steps rather than a curve: the point is to be obviously bounded, and a
+// reviewer should be able to predict the cadence from the marker in the footer.
+var budgetBackoff = []struct {
+	below      float64
+	multiplier int
+}{
+	{0.05, 20}, // ~5% left: 30s becomes 10m
+	{0.15, 8},
+	{0.30, 4},
+	{0.50, 2},
+}
+
+// applyBudgetBackoff stretches interval according to how little budget is left.
+// An unobserved budget reports a full fraction, so this is a no-op until a
+// response has actually said otherwise.
+func applyBudgetBackoff(interval time.Duration, b gh.GraphQLBudget) time.Duration {
+	f := b.Fraction()
+	for _, step := range budgetBackoff {
+		if f < step.below {
+			return interval * time.Duration(step.multiplier)
+		}
+	}
+	return interval
+}
+
+// armPoll schedules the next poll at whichever cadence currently applies,
+// stamping it with the current generation so a timer armed before a keypress
+// does not also fire.
+func (a *App) armPoll() tea.Cmd {
+	return prListPollCmd(a.pollInterval(), a.pollGen)
+}
+
+// noteActivity records a keypress. When it ends an idle stretch it refreshes
+// immediately: the rows on screen are up to an idle interval old, and the
+// person who just pressed a key is the one who would be reading them.
+//
+// It fetches but does not arm a timer. Exactly two places arm one — Init and
+// the prListMsg that settles a fetch — which is what keeps a single chain
+// alive. Arming here as well would leave two timers of the *current* generation
+// running (the one armed here, and the one the woken fetch arms when it lands),
+// and the generation check cannot tell them apart because both are current. The
+// result was a poll cadence that doubled every time someone came back to a
+// parked window, in a change whose whole purpose is polling less.
+//
+// Bumping the generation is still required: it retires the pending idle timer,
+// so the slow tick does not fire alongside the newly active chain.
+func (a *App) noteActivity() tea.Cmd {
+	wasIdle := a.idle()
+	a.lastKeyAt = a.now()
+	if !wasIdle {
+		return nil
+	}
+	a.pollGen++
+	// A nil here means a fetch is already in flight; its prListMsg re-arms at
+	// the bumped generation, so the chain continues either way.
+	return a.list.handlePollTick()
 }
 
 // SetAccountVerifier installs a check to run after the first frame. Passing nil
@@ -120,7 +257,7 @@ func (a *App) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		a.list.init(),
 		spinnerTickCmd(),
-		prListPollCmd(a.cfg.PollDuration()),
+		a.armPoll(),
 	}
 	// Account verification is a `gh auth status` round trip per account. Running
 	// it here rather than before tea.NewProgram keeps it off the path to the
@@ -150,7 +287,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyMsg:
-		return a, a.handleKey(msg)
+		// Recorded before the key is handled: the handler can quit, and a key that
+		// ends an idle stretch should refresh even if it also does something else.
+		wake := a.noteActivity()
+		if cmd := a.handleKey(msg); cmd != nil {
+			return a, tea.Batch(wake, cmd)
+		}
+		return a, wake
 
 	case spinnerTickMsg:
 		// Only animate while something is loading; idle costs no redraws.
@@ -191,10 +334,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ever running two fetches at once.
 		return a, tea.Batch(
 			a.list.handlePRListMsg(msg),
-			prListPollCmd(a.cfg.PollDuration()),
+			a.armPoll(),
 		)
 
 	case prListTickMsg:
+		// A tick from a superseded generation is a timer armed under the other
+		// cadence. Dropping it rather than re-arming is what makes the switch a
+		// switch instead of two overlapping schedules.
+		if msg.gen != a.pollGen {
+			return a, nil
+		}
 		return a, a.list.handlePollTick()
 
 	case searchSubmitMsg:

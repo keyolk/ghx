@@ -167,6 +167,25 @@ clipboard: ""
 
 # List/preview split ratio
 diff_split_ratio: 40
+
+# Background refresh of the current tab.
+#
+# The GraphQL budget is 5,000 points/hour per *account*, not per process, and
+# nearly everything ghx reads is GraphQL. Several ghx windows left open in tmux
+# therefore share one pool without knowing about each other: six of them at 30s
+# costs the same as one at 5s, and none of them is being looked at.
+#
+# So after idle_after without a keypress the refresh drops to
+# idle_poll_interval, and the first keypress refreshes immediately and restores
+# the fast cadence. ghx also reads the remaining allowance out of the responses
+# it already makes (free — no extra request) and stretches the interval further
+# as it drains, up to 20x below 5% left. Whenever the interval is not the
+# configured one, the title bar says so and why.
+#
+# Set idle_after: "0" to poll at the same cadence forever.
+poll_interval: "30s"
+idle_after: "10m"
+idle_poll_interval: "5m"
 ```
 
 ## Key bindings

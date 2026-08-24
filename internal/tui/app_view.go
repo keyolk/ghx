@@ -114,8 +114,46 @@ func (a *App) titleLine() string {
 		}
 	}
 	line := title + " " + dimStyle.Render(crumb)
+	// A backed-off poll is right-aligned so it never pushes the crumb around,
+	// and only appears when it has something to say. Slowing the refresh
+	// silently would read as ghx being broken, which is exactly the wrong
+	// conclusion — it is the account's budget that ran low, not ghx.
+	if note := a.pollStatusNote(); note != "" {
+		gap := a.width - lipglossWidth(line) - lipglossWidth(note)
+		if gap >= 2 {
+			line += strings.Repeat(" ", gap) + note
+		}
+	}
 	out, _ := truncateExact(line, a.width)
 	return out
+}
+
+// pollStatusNote describes the poll cadence when it is not the configured one.
+func (a *App) pollStatusNote() string {
+	interval := a.pollInterval()
+	if interval <= a.cfg.PollDuration() {
+		return ""
+	}
+	b := a.client.GraphQLBudget()
+	// The budget is the more urgent of the two reasons and the one the user can
+	// act on (close some windows), so it wins the single slot.
+	if b.Known && b.Fraction() < 0.5 {
+		return dimStyle.Render(fmt.Sprintf("API %d%% · poll %s ",
+			int(b.Fraction()*100), shortDuration(interval)))
+	}
+	return dimStyle.Render(fmt.Sprintf("idle · poll %s ", shortDuration(interval)))
+}
+
+// shortDuration renders a poll interval the way a person would say it.
+func shortDuration(d time.Duration) string {
+	switch {
+	case d >= time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	case d >= time.Minute:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
 }
 
 func (a *App) helpLine() string {

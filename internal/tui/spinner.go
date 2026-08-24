@@ -26,7 +26,11 @@ func renderSpinner(frame int, label string) string {
 	return "  " + s.Render(spinnerFrames[idx]+" "+label)
 }
 
-// prListPollCmd arms the next background poll at the configured interval.
-func prListPollCmd(d time.Duration) tea.Cmd {
-	return tea.Tick(d, func(t time.Time) tea.Msg { return prListTickMsg(t) })
+// prListPollCmd arms the next background poll at the given interval. The
+// generation lets the app drop a timer it armed before the cadence changed —
+// bubbletea has no way to cancel a pending tea.Tick.
+func prListPollCmd(d time.Duration, gen uint64) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg {
+		return prListTickMsg{at: t, gen: gen}
+	})
 }
