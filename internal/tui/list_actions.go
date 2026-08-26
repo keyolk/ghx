@@ -88,6 +88,11 @@ func targetFromSummary(p prSummary) actionTarget {
 
 // actionTargets returns the explicit multi-selection in list view, falling back
 // to the focused PR when nothing is marked or a detail view is open.
+//
+// The selection is scoped to what is on screen, so a mark left on another tab or
+// behind a filter is not a target here. Marks that are all off-screen therefore
+// leave nothing to act on, and the focused row takes over — same as an empty
+// selection, which is what the list looks like from the user's side.
 func (a *App) actionTargets() ([]actionTarget, bool) {
 	if a.state == viewPRList && a.list != nil && len(a.list.selected) > 0 {
 		summaries := a.list.selectedSummaries()
@@ -95,7 +100,9 @@ func (a *App) actionTargets() ([]actionTarget, bool) {
 		for _, summary := range summaries {
 			targets = append(targets, targetFromSummary(summary))
 		}
-		return targets, true
+		if len(targets) > 0 {
+			return targets, true
+		}
 	}
 	target, ok := a.currentTarget()
 	if !ok {

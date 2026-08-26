@@ -49,8 +49,9 @@ type prListModel struct {
 	statusFilters map[prStatus]bool
 
 	// selected is keyed by owner/repo#number so cross-repo queues cannot collide.
-	// The summary value lets bulk actions retain their targets across tabs and
-	// filters; syncListItems refreshes it whenever newer row data arrives.
+	// It spans every tab so a mark survives a detour, but only the marks on
+	// screen are acted on — see selectedSummaries. syncListItems refreshes the
+	// stored summary whenever newer row data arrives.
 	selected map[string]pr.Summary
 
 	// fileCache persists each source's PR list to ~/.config/ghx/cache/ so a
@@ -379,10 +380,24 @@ func (m *prListModel) toggleAllVisible() {
 
 func (m *prListModel) clearSelected() { clear(m.selected) }
 
+// selectedSummaries returns the marked PRs that are actually on screen — the
+// current tab, past the current filters.
+//
+// The mark outlives the view that made it: switching tabs or narrowing the
+// filter hides a row without unmarking it, so `selected` can hold PRs the user
+// cannot see. Acting on those is the bug this scopes away — a checked row two
+// tabs back would open again alongside the one just checked. The mark itself is
+// kept, so returning to that tab finds the selection where it was left.
 func (m *prListModel) selectedSummaries() []pr.Summary {
 	out := make([]pr.Summary, 0, len(m.selected))
-	for _, summary := range m.selected {
-		out = append(out, summary)
+	for _, item := range m.list.VisibleItems() {
+		row, ok := item.(prListItem)
+		if !ok {
+			continue
+		}
+		if summary, marked := m.selected[selectionKey(row.pr)]; marked {
+			out = append(out, summary)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Repo != out[j].Repo {
@@ -391,6 +406,17 @@ func (m *prListModel) selectedSummaries() []pr.Summary {
 		return out[i].Number < out[j].Number
 	})
 	return out
+}
+
+// visibleSelectedCount counts the marks the user can currently see.
+func (m *prListModel) visibleSelectedCount() int {
+	n := 0
+	for _, item := range m.list.VisibleItems() {
+		if row, ok := item.(prListItem); ok && m.isSelected(row.pr) {
+			n++
+		}
+	}
+	return n
 }
 
 // syncListItems pushes the current source's rows (filtered) into the list.
@@ -518,9 +544,16 @@ func (m *prListModel) title() string {
 	s := m.sources[m.curTab].Name
 	n := len(m.list.VisibleItems())
 	total := len(m.caches[m.curTab])
+	// Report the visible marks, since those are what an action will take, and
+	// name the hidden ones separately so a selection left on another tab is not
+	// silently invisible.
 	selected := ""
-	if count := len(m.selected); count > 0 {
-		selected = fmt.Sprintf(" · %d selected", count)
+	visible := m.visibleSelectedCount()
+	if visible > 0 {
+		selected = fmt.Sprintf(" · %d selected", visible)
+	}
+	if hidden := len(m.selected) - visible; hidden > 0 {
+		selected += fmt.Sprintf(" · %d marked elsewhere", hidden)
 	}
 	filtered := m.query != "" || len(m.statusFilters) > 0
 	if filtered {
