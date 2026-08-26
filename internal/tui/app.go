@@ -676,7 +676,9 @@ func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		if !ok {
 			return errCmd(fmt.Errorf("no pull request selected")), true
 		}
-		if a.state == viewPRList && a.list != nil && len(a.list.selected) > 0 {
+		// Visible marks, not every mark: an off-screen selection resolved to the
+		// focused row above, and that row belongs on the single-PR path.
+		if a.state == viewPRList && a.list != nil && a.list.visibleSelectedCount() > 0 {
 			kind := confirmClose
 			if len(targets) > 1 {
 				kind = confirmToggleState
