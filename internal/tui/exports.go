@@ -33,9 +33,9 @@ var DiffCursorStyle = diffCursorStyle
 
 // DiffAddStyle, DiffDelStyle, DiffCtxStyle are diff line coloring.
 var (
-	DiffAddStyle  = diffAddStyle
-	DiffDelStyle  = diffDelStyle
-	DiffCtxStyle  = diffCtxStyle
+	DiffAddStyle = diffAddStyle
+	DiffDelStyle = diffDelStyle
+	DiffCtxStyle = diffCtxStyle
 )
 
 // CheckPassStyle, CheckFailStyle, CheckPendingStyle, CheckSkipStyle are
@@ -64,3 +64,19 @@ func TruncateFooter(s string, w int) string { return truncateFooter(s, w) }
 
 // LipglossWidth is exported for sub-TUIs that need cell-accurate width.
 func LipglossWidth(s string) int { return lipgloss.Width(s) }
+
+// --- shared list scaffolding for the subcommand TUIs ---
+
+// FitRows is exported so the subcommand TUIs size their frame the way the PR
+// app does. Without it an overflowing frame loses its top rows — the title and
+// the tab strip — because bubbletea keeps the last `height` lines.
+func FitRows(s string, h int) string { return fitRows(s, h) }
+
+// FilterRows keeps the rows whose haystack matches every term in the query.
+func FilterRows(query string, n int, haystack func(int) string) []int {
+	return filterRows(query, n, haystack)
+}
+
+// RenderSearchBar draws the one-line query prompt the subcommands show while
+// filtering.
+func RenderSearchBar(query string, w int) string { return renderSearchBar(query, w) }

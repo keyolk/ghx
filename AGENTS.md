@@ -31,6 +31,8 @@ actions.
 - `internal/gh/suggestion.go` — suggestion 적용 (createCommitOnBranch, expectedHeadOid)
 - `internal/tui/detail_comments.go` — `threadIdentity` (REST 스레드의 안정적 식별자)
 - `internal/gh/budget.go` — 계정 GraphQL 예산 관측 (응답에 실려오는 rateLimit)
+- `internal/tui/listpane.go` — 서브커맨드 TUI 공용 스크롤 리스트·필터 (`ListPane`)
+- `internal/tui/admin` — `ghx admin`: People/Teams/보호규칙/릴리스/브랜치/태그/웹훅
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
 ## Conventions
@@ -74,6 +76,27 @@ actions.
   `idle_after` 뒤에 `idle_poll_interval`로 물러나고, (2) enrichment 응답에 실려오는
   `rateLimit`으로 남은 예산을 **공짜로** 읽어 더 늘린다. 폴링 비용을 바꾸는 변경은
   이 두 축을 같이 본다.
+- **프레임은 절대 `height`보다 커지면 안 된다.** bubbletea 렌더러는 넘치는 프레임의
+  **뒤쪽** `height`줄을 남긴다(standard_renderer.go:186) — 즉 잘려나가는 건 위쪽,
+  title과 tab strip이다. 화면이 있는 자리를 알려주는 두 줄이 사라지므로 "탭이 없어졌다"로
+  보인다. 본문은 `a.height`가 아니라 `contentRows()`(= height − title − 헤더 − footer)로
+  잘라 `FitRows`로 정규화한다. `FitRows`는 패딩도 한다 — 짧은 리스트에서 footer가
+  화면 중간에 떠오르는 것을 막는다. 메인 앱은 #15에서 고쳤고 서브커맨드는 남아 있었다.
+- **리스트는 자기 행 안에서 스크롤한다.** 전부 그려놓고 렌더러에 맡기면 위 항목이 된다.
+  `tui.ListPane`이 offset을 소유하고, 커서가 창 밖으로 나갈 때만 최소한으로 움직인다
+  (이미 보이는 커서를 재중앙정렬하지 않는다). 필터로 리스트가 줄면 offset이 끝을 넘어
+  남을 수 있어 `scrollTo`가 마지막에 clamp한다 — 없으면 필터를 넓혔을 때 존재하는 행이
+  빈 화면으로 보인다.
+- **커서는 항상 필터링된 슬라이스를 인덱싱한다.** 원본을 인덱싱하면 필터 이전에 그
+  자리에 있던 행에 액션이 간다 — `d`/`r`/`c`에서는 다른 대상을 지우거나 재실행한다.
+  `visible*()` 헬퍼를 통해서만 행에 접근한다.
+- **검색 프롬프트는 열려 있는 동안 키보드를 독점한다.** 그렇지 않으면 `j`, `q`, `r`,
+  숫자가 든 질의를 입력할 수 없다 — 이름과 워크플로 이름에는 전부 들어간다.
+- **`collaborators` 엔드포인트는 team을 개인으로 평탄화한다.** 응답에 team 정보가 없어서
+  org 레포는 "개인 150명"으로 보인다 — 실측: `sendbird/ops-k8s`는 150명 중 **직접 권한이
+  1명**, 나머지 149명은 19개 팀 경유다. `affiliation=direct`를 한 번 더 불러 대조해야
+  구분되고, 구조 자체는 `repos/{repo}/teams`에만 있다. 팀 경유 사용자에게 `d`를 눌러도
+  레포에는 해제할 것이 없다 — 그래서 행이 출처를 밝힌다.
 - **타이머를 무장하는 곳은 `Init`과 `prListMsg` 단 두 곳**이다. 다른 데서 `armPoll`을
   부르면 *현재* generation 타이머가 둘이 되고, generation 검사는 둘 다 현행이라
   구분하지 못한다 — cadence가 조용히 2배가 된다. `idle_poll_test.go`의

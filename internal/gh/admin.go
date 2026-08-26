@@ -17,22 +17,105 @@ type Collaborator struct {
 	Login      string `json:"login"`
 	RoleName   string `json:"role_name"`
 	Permission struct {
-		Admin     bool `json:"admin"`
-		Maintain  bool `json:"maintain"`
-		Push      bool `json:"push"`
-		Triage    bool `json:"triage"`
-		Pull      bool `json:"pull"`
+		Admin    bool `json:"admin"`
+		Maintain bool `json:"maintain"`
+		Push     bool `json:"push"`
+		Triage   bool `json:"triage"`
+		Pull     bool `json:"pull"`
 	} `json:"permissions"`
+
+	// Direct is true when the user was granted access on the repository itself
+	// rather than through a team. The collaborators endpoint flattens both into
+	// one list of people and says nothing about which is which — on a repo whose
+	// access is all team-based that reads as a hundred and fifty individual
+	// grants, none of which can be revoked from here. Filled in by
+	// ListCollaborators from the affiliation=direct list.
+	Direct bool `json:"-"`
 }
 
-// ListCollaborators returns the repository's collaborators with their permissions.
+// ListCollaborators returns the repository's collaborators.
+//
+// Two calls rather than one: affiliation=all is the full roster with team
+// members flattened in, and affiliation=direct is the subset granted on the
+// repository itself. The difference is what tells a real collaborator apart
+// from someone who is only here because of a team — a distinction the API
+// exposes nowhere in the row itself, and the one that decides whether removing
+// them from this repo can work at all.
+//
+// A failure on the direct call is not fatal: the roster is still the truth
+// about who has access, and losing the marker is better than showing nothing.
 func (c *Client) ListCollaborators(ctx context.Context) ([]Collaborator, error) {
 	out, err := c.execRaw(ctx, "api", "--paginate",
 		fmt.Sprintf("repos/%s/collaborators?affiliation=all&per_page=100", c.repoPath()))
 	if err != nil {
 		return nil, err
 	}
-	return decodeJSON[[]Collaborator](out)
+	all, err := decodeJSON[[]Collaborator](out)
+	if err != nil {
+		return nil, err
+	}
+	directOut, err := c.execRaw(ctx, "api", "--paginate",
+		fmt.Sprintf("repos/%s/collaborators?affiliation=direct&per_page=100", c.repoPath()))
+	if err != nil {
+		return all, nil
+	}
+	direct, err := decodeJSON[[]Collaborator](directOut)
+	if err != nil {
+		return all, nil
+	}
+	isDirect := make(map[string]bool, len(direct))
+	for _, d := range direct {
+		isDirect[strings.ToLower(d.Login)] = true
+	}
+	for i := range all {
+		all[i].Direct = isDirect[strings.ToLower(all[i].Login)]
+	}
+	return all, nil
+}
+
+// Team is a team with access to the repository.
+type Team struct {
+	Name        string `json:"name"`
+	Slug        string `json:"slug"`
+	Description string `json:"description"`
+	Privacy     string `json:"privacy"`
+	Permission  string `json:"permission"`
+	Parent      *struct {
+		Slug string `json:"slug"`
+	} `json:"parent"`
+}
+
+// ListTeams returns the teams granted access to the repository.
+//
+// This is the structure the collaborators endpoint throws away. On an org repo
+// the roster is mostly team-derived, so without this the panel can say who has
+// access but not why, and not what to change to alter it.
+func (c *Client) ListTeams(ctx context.Context) ([]Team, error) {
+	out, err := c.execRaw(ctx, "api", "--paginate",
+		fmt.Sprintf("repos/%s/teams?per_page=100", c.repoPath()))
+	if err != nil {
+		return nil, err
+	}
+	return decodeJSON[[]Team](out)
+}
+
+// TeamMember is one member of a team.
+type TeamMember struct {
+	Login string `json:"login"`
+	// Role is "member" or "maintainer"; it comes from the membership endpoint,
+	// not the member list, so it is only set when asked for separately.
+	Role string `json:"-"`
+}
+
+// ListTeamMembers returns a team's members. org is the organization the team
+// belongs to, which is the owner half of the repository slug.
+func (c *Client) ListTeamMembers(ctx context.Context, org, slug string) ([]TeamMember, error) {
+	out, err := c.execRaw(ctx, "api", "--paginate",
+		fmt.Sprintf("orgs/%s/teams/%s/members?per_page=100", org, slug))
+	if err != nil {
+		return nil, err
+	}
+	return decodeJSON[[]TeamMember](out)
 }
 
 // AddCollaborator invites a user with the given permission level.
@@ -63,8 +146,8 @@ type BranchProtection struct {
 		DismissRestrictions []string `json:"dismissal_restrictions"`
 	} `json:"required_pull_request_reviews"`
 	RequiredStatusChecks *struct {
-		Strict    bool     `json:"strict"`
-		Contexts  []string `json:"contexts"`
+		Strict   bool     `json:"strict"`
+		Contexts []string `json:"contexts"`
 	} `json:"required_status_checks"`
 	EnforceAdmins struct {
 		Enabled bool `json:"enabled"`
@@ -182,7 +265,7 @@ func (c *Client) DeleteBranch(ctx context.Context, name string) error {
 
 // Tag is a repository tag.
 type Tag struct {
-	Name string `json:"name"`
+	Name   string `json:"name"`
 	Commit struct {
 		SHA string `json:"sha"`
 	} `json:"commit"`
@@ -207,10 +290,10 @@ func (c *Client) DeleteTag(ctx context.Context, name string) error {
 
 // Webhook is a repository webhook (read-only in this TUI).
 type Webhook struct {
-	ID     int    `json:"id"`
-	URL    string `json:"url"`
+	ID     int      `json:"id"`
+	URL    string   `json:"url"`
 	Events []string `json:"events"`
-	Active bool   `json:"active"`
+	Active bool     `json:"active"`
 	Config struct {
 		URL         string `json:"url"`
 		ContentType string `json:"content_type"`

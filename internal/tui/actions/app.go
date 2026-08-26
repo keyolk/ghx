@@ -53,8 +53,12 @@ type App struct {
 	toast   string
 	toastAt time.Time
 
-	cursor int
-	offset int
+	// list scrolls inside its own rows; see tui.ListPane.
+	pane tui.ListPane
+
+	// query filters the active list; searching is true while it is being typed.
+	query     string
+	searching bool
 }
 
 // NewApp constructs the actions TUI.
@@ -124,7 +128,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.runs = msg.runs
-		a.cursor = 0
+		a.pane.Reset()
 		return a, nil
 
 	case workflowsMsg:
@@ -134,7 +138,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.workflows = msg.workflows
-		a.cursor = 0
+		a.pane.Reset()
 		return a, nil
 
 	case logMsg:
@@ -175,39 +179,62 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
+	// The search prompt owns the keyboard while it is open, so a query can
+	// contain j, k, q, f, and the digits without triggering navigation.
+	if a.searching {
+		return a.handleSearchKey(msg)
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return tea.Quit
+	case "/":
+		a.searching = true
+		return nil
+	case "esc":
+		if a.query != "" {
+			a.query = ""
+			a.pane.Reset()
+		}
+		return nil
 	case "1":
 		a.active = tabRuns
-		a.cursor = 0
+		a.query = ""
+		a.pane.Reset()
 		if a.runs == nil {
 			return a.loadRuns()
 		}
 		return nil
 	case "2":
 		a.active = tabWorkflows
-		a.cursor = 0
+		a.query = ""
+		a.pane.Reset()
 		if a.workflows == nil {
 			return a.loadWorkflows()
 		}
 		return nil
 	case "j", "down":
-		a.cursor = min(a.cursor+1, a.itemCount()-1)
+		a.pane.Move(1, a.itemCount())
 		return nil
 	case "k", "up":
-		a.cursor = max(a.cursor-1, 0)
+		a.pane.Move(-1, a.itemCount())
+		return nil
+	case "ctrl+d", "pgdown":
+		a.pane.Move(a.listRows()/2, a.itemCount())
+		return nil
+	case "ctrl+u", "pgup":
+		a.pane.Move(-a.listRows()/2, a.itemCount())
 		return nil
 	case "g":
-		a.cursor = 0
+		a.pane.Top()
 		return nil
 	case "G":
-		a.cursor = max(a.itemCount()-1, 0)
+		a.pane.Bottom(a.itemCount())
 		return nil
 	case "f":
 		// Toggle failed-only filter (runs tab)
 		a.failedOnly = !a.failedOnly
-		a.cursor = 0
+		a.pane.Reset()
 		return nil
 	case "enter":
 		return a.onEnter()
@@ -237,10 +264,10 @@ func (a *App) onEnter() tea.Cmd {
 
 func (a *App) fetchLogs() tea.Cmd {
 	items := a.visibleRuns()
-	if a.cursor >= len(items) {
+	if a.pane.Cursor >= len(items) {
 		return nil
 	}
-	run := items[a.cursor]
+	run := items[a.pane.Cursor]
 	a.logBusy = true
 	client, ctx := a.client, context.Background()
 	runID := fmt.Sprint(run.DatabaseID)
@@ -255,10 +282,10 @@ func (a *App) rerun(failedOnly bool) tea.Cmd {
 		return nil
 	}
 	items := a.visibleRuns()
-	if a.cursor >= len(items) {
+	if a.pane.Cursor >= len(items) {
 		return nil
 	}
-	run := items[a.cursor]
+	run := items[a.pane.Cursor]
 	client, ctx := a.client, context.Background()
 	runID := fmt.Sprint(run.DatabaseID)
 	verb := "rerun"
@@ -284,10 +311,10 @@ func (a *App) cancelRun() tea.Cmd {
 		return nil
 	}
 	items := a.visibleRuns()
-	if a.cursor >= len(items) {
+	if a.pane.Cursor >= len(items) {
 		return nil
 	}
-	run := items[a.cursor]
+	run := items[a.pane.Cursor]
 	client, ctx := a.client, context.Background()
 	runID := fmt.Sprint(run.DatabaseID)
 	return func() tea.Msg {
@@ -303,10 +330,11 @@ func (a *App) toggleWorkflow(enable bool) tea.Cmd {
 	if a.active != tabWorkflows {
 		return nil
 	}
-	if a.cursor >= len(a.workflows) {
+	items := a.visibleWorkflows()
+	if a.pane.Cursor >= len(items) {
 		return nil
 	}
-	wf := a.workflows[a.cursor]
+	wf := items[a.pane.Cursor]
 	client, ctx := a.client, context.Background()
 	wfID := fmt.Sprint(wf.ID)
 	verb := "disabled"
@@ -327,16 +355,68 @@ func (a *App) toggleWorkflow(enable bool) tea.Cmd {
 	}
 }
 
-// visibleRuns applies the failed-only filter.
-func (a *App) visibleRuns() []gh.Run {
-	if !a.failedOnly {
-		return a.runs
-	}
-	out := make([]gh.Run, 0, len(a.runs))
-	for _, r := range a.runs {
-		if r.Conclusion == "failure" {
-			out = append(out, r)
+// handleSearchKey edits the query. The filter applies as it is typed so the
+// list narrows under the cursor rather than after a commit.
+func (a *App) handleSearchKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.Type {
+	case tea.KeyEsc:
+		a.searching = false
+		a.query = ""
+		a.pane.Reset()
+	case tea.KeyEnter:
+		a.searching = false
+	case tea.KeyBackspace:
+		if r := []rune(a.query); len(r) > 0 {
+			a.query = string(r[:len(r)-1])
+			a.pane.Reset()
 		}
+	case tea.KeyRunes:
+		a.query += string(msg.Runes)
+		a.pane.Reset()
+	case tea.KeySpace:
+		a.query += " "
+		a.pane.Reset()
+	}
+	return nil
+}
+
+// visibleRuns applies the failed-only filter and the text query, in that order:
+// f narrows to what is broken, / then finds one of them.
+//
+// The cursor indexes this slice, never a.runs — indexing the source would act
+// on whichever run happened to sit at that position before filtering, which for
+// r and c means rerunning or cancelling the wrong one.
+func (a *App) visibleRuns() []gh.Run {
+	base := a.runs
+	if a.failedOnly {
+		base = make([]gh.Run, 0, len(a.runs))
+		for _, r := range a.runs {
+			if r.Conclusion == "failure" {
+				base = append(base, r)
+			}
+		}
+	}
+	idx := tui.FilterRows(a.query, len(base), func(i int) string {
+		r := base[i]
+		return r.WorkflowName + " " + r.Conclusion + " " + r.Status + " " +
+			r.Event + " " + r.HeadBranch
+	})
+	out := make([]gh.Run, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, base[i])
+	}
+	return out
+}
+
+// visibleWorkflows applies the text query.
+func (a *App) visibleWorkflows() []gh.Workflow {
+	idx := tui.FilterRows(a.query, len(a.workflows), func(i int) string {
+		w := a.workflows[i]
+		return w.Name + " " + w.Path + " " + w.State
+	})
+	out := make([]gh.Workflow, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, a.workflows[i])
 	}
 	return out
 }
@@ -346,10 +426,20 @@ func (a *App) itemCount() int {
 	case tabRuns:
 		return len(a.visibleRuns())
 	case tabWorkflows:
-		return len(a.workflows)
+		return len(a.visibleWorkflows())
 	}
 	return 0
 }
+
+// contentRows is how many rows the body may occupy: the terminal minus the
+// title, the tab strip, and the footer. Sizing to a.height instead is what
+// pushed the title and the tab strip off the top of an overflowing frame —
+// bubbletea keeps the LAST height lines, so the rows it drops are the ones the
+// user needs to navigate with.
+func (a *App) contentRows() int { return max(a.height-3, 1) }
+
+// listRows is the height available to list rows themselves.
+func (a *App) listRows() int { return a.contentRows() }
 
 func (a *App) View() string {
 	if a.width == 0 || a.height == 0 {
@@ -365,32 +455,37 @@ func (a *App) View() string {
 	}
 
 	title := tui.TitleStyle.Render(" ghx actions ") + " " + tui.DimStyle.Render(a.repo)
-	tabs := a.renderTabs()
-	content := a.renderContent()
+	header := a.renderHeader()
+	content := tui.FitRows(a.renderContent(), a.contentRows())
 	footer := a.footer()
 
-	return strings.Join([]string{title, tabs, content, footer}, "\n")
+	return strings.Join([]string{title, header, content, footer}, "\n")
 }
 
-func (a *App) renderTabs() string {
+// renderHeader is the tab strip, or the search prompt while one is being typed.
+// The prompt replaces the strip rather than adding a row: an extra row would
+// resize the list mid-search, and the tabs are unreachable while the query owns
+// the keyboard anyway.
+func (a *App) renderHeader() string {
+	if a.searching {
+		return tui.RenderSearchBar(a.query, a.width)
+	}
 	tabs := make([]tui.TabLabel, len(tabNames))
 	for i, name := range tabNames {
 		tabs[i] = tui.TabLabel{Name: name, Active: tab(i) == a.active}
 	}
 	strip := tui.RenderTabStrip(tabs, a.width)
+	// Both markers ride after the strip; they are state toggles, not tabs.
 	if a.failedOnly && a.active == tabRuns {
-		// Append the failed-only filter marker after the strip; it is a state
-		// toggle, not a tab, so it rides along at the end.
 		strip += " " + tui.TabActiveStyle.Render("[failed only]")
+	}
+	if a.query != "" {
+		strip += " " + tui.TabActiveStyle.Render("["+a.query+"]")
 	}
 	return strip
 }
 
 func (a *App) renderContent() string {
-	h := a.height - 4
-	if h < 1 {
-		h = 1
-	}
 	if a.loading {
 		return "  Loading…"
 	}
@@ -403,75 +498,93 @@ func (a *App) renderContent() string {
 
 	switch a.active {
 	case tabRuns:
-		return a.renderRuns(h)
+		return a.renderRuns()
 	case tabWorkflows:
-		return a.renderWorkflows(h)
+		return a.renderWorkflows()
 	}
 	return ""
 }
 
-func (a *App) renderRuns(h int) string {
-	items := a.visibleRuns()
-	if len(items) == 0 {
-		return tui.DimStyle.Render("  No workflow runs.")
-	}
-	var b strings.Builder
-	for i, r := range items {
-		icon, style := runStyle(r.Status, r.Conclusion)
-		line := fmt.Sprintf("  %s %-30s %-10s %-12s %s",
-			style.Render(icon), r.WorkflowName, r.Conclusion, r.Event, r.HeadBranch)
-		if i == a.cursor {
-			line = tui.SelectedRowStyle.Render(padLine(line, a.width))
+// emptyOr renders the list, or a note when the filter or the source left it
+// with nothing. The two are worth distinguishing: an empty source is a fact
+// about the repository, an over-narrow filter is one keystroke from being
+// wrong, and they call for opposite responses.
+func (a *App) emptyOr(rows []string, empty string) string {
+	if len(rows) == 0 {
+		if a.query != "" {
+			return tui.DimStyle.Render(fmt.Sprintf("  Nothing matches %q.", a.query))
 		}
-		b.WriteString(line + "\n")
+		return tui.DimStyle.Render("  " + empty)
 	}
-	return b.String()
+	return a.pane.RenderList(rows, a.width, a.listRows())
 }
 
-func (a *App) renderWorkflows(h int) string {
-	if len(a.workflows) == 0 {
-		return tui.DimStyle.Render("  No workflows.")
+func (a *App) renderRuns() string {
+	items := a.visibleRuns()
+	rows := make([]string, 0, len(items))
+	for _, r := range items {
+		icon, style := runStyle(r.Status, r.Conclusion)
+		rows = append(rows, fmt.Sprintf("  %s %-30s %-10s %-12s %s",
+			style.Render(icon), r.WorkflowName, r.Conclusion, r.Event, r.HeadBranch))
 	}
-	var b strings.Builder
-	for i, wf := range a.workflows {
+	empty := "No workflow runs."
+	if a.failedOnly {
+		empty = "No failed runs."
+	}
+	return a.emptyOr(rows, empty)
+}
+
+func (a *App) renderWorkflows() string {
+	items := a.visibleWorkflows()
+	rows := make([]string, 0, len(items))
+	for _, wf := range items {
 		state := tui.CheckPassStyle.Render("active")
 		if wf.State != "active" {
 			state = tui.DimStyle.Render(wf.State)
 		}
-		line := fmt.Sprintf("  %-30s %s  %s", wf.Name, state, wf.Path)
-		if i == a.cursor {
-			line = tui.SelectedRowStyle.Render(padLine(line, a.width))
-		}
-		b.WriteString(line + "\n")
+		rows = append(rows, fmt.Sprintf("  %-30s %s  %s", wf.Name, state, wf.Path))
 	}
-	return b.String()
+	return a.emptyOr(rows, "No workflows.")
 }
 
 func (a *App) renderLogs() string {
 	lines := strings.Split(strings.TrimRight(a.logView, "\n"), "\n")
-	a.logOff = clamp(a.logOff, 0, max(len(lines)-1, 0))
-	h := a.height - 3
+	h := max(a.height-1, 1)
+	a.logOff = clamp(a.logOff, 0, max(len(lines)-h, 0))
 	end := min(a.logOff+h, len(lines))
 
 	header := tui.TitleStyle.Render(" run logs ") +
 		tui.DimStyle.Render("esc:back j/k:scroll q:quit")
-	body := strings.Join(lines[a.logOff:end], "\n")
-	return header + "\n" + body
+	// Each line is clipped to the terminal width. A log line is routinely wider
+	// than the pane, and a wrapped one costs two rows — enough of them and the
+	// frame overflows, which costs the header at the top rather than the excess
+	// at the bottom.
+	body := make([]string, 0, h)
+	for _, line := range lines[a.logOff:end] {
+		clipped, _ := tui.TruncateExact(line, a.width)
+		body = append(body, clipped)
+	}
+	return header + "\n" + tui.FitRows(strings.Join(body, "\n"), h)
 }
 
 func (a *App) footer() string {
 	if a.toast != "" && time.Since(a.toastAt) < 4*time.Second {
 		return tui.TruncateFooter(a.toast, a.width)
 	}
+	var line string
 	if a.active == tabRuns {
-		return tui.TruncateFooter(
-			tui.FmtHints("j/k", "move", "enter", "logs", "r", "rerun",
-				"R", "rerun failed", "c", "cancel", "f", "filter", "q", "quit"),
-			a.width)
+		line = tui.FmtHints("j/k", "move", "/", "search", "enter", "logs",
+			"r", "rerun", "R", "rerun failed", "c", "cancel", "f", "failed", "q", "quit")
+	} else {
+		line = tui.FmtHints("j/k", "move", "/", "search",
+			"e", "enable", "d", "disable", "q", "quit")
 	}
-	return tui.TruncateFooter(
-		tui.FmtHints("j/k", "move", "e", "enable", "d", "disable", "q", "quit"),
-		a.width)
+	// The position is only worth a footer slot when the list does not fit; a
+	// counter that always reads 1/1 is noise.
+	if pos := a.pane.ScrollHint(a.itemCount(), a.listRows()); pos != "" {
+		line += "  " + tui.DimStyle.Render(pos)
+	}
+	return tui.TruncateFooter(line, a.width)
 }
 
 func runStyle(status, conclusion string) (string, lipgloss.Style) {
@@ -488,14 +601,6 @@ func runStyle(status, conclusion string) (string, lipgloss.Style) {
 		return "●", tui.CheckPendingStyle
 	}
 	return "·", tui.DimStyle
-}
-
-func padLine(s string, w int) string {
-	width := lipgloss.Width(s)
-	if width >= w {
-		return s
-	}
-	return s + strings.Repeat(" ", w-width)
 }
 
 func min(a, b int) int {
