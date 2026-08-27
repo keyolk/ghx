@@ -54,7 +54,7 @@ func helpSections() []helpSection {
 			{"1 Overview", "metadata and description"},
 			{"2 Files", "changed files with +/- counts"},
 			{"3 Diff", "unified diff with inline threads"},
-			{"4 Comments", "review threads"},
+			{"4 Comments", "review threads; ○ open · ✓ resolved · ? unknown"},
 			{"5 Commits", "commit list"},
 			{"6 Checks", "CI results; enter opens the log"},
 		}},

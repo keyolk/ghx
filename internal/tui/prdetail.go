@@ -540,7 +540,15 @@ func (d *prDetailModel) tabCount(t detailTabKind) string {
 			return fmt.Sprint(len(d.detail.Files))
 		}
 	case tabComments:
+		// Show what is still outstanding, the way the Checks tab shows failures:
+		// resolved threads are hidden by default, so a bare total says a number
+		// that does not match what opening the tab shows. Unknown-resolution
+		// threads count as outstanding — they are visible for the same reason.
 		if n := len(d.comments.threads); n > 0 {
+			open, _, unknown := countThreadStates(d.comments.threads)
+			if outstanding := open + unknown; outstanding > 0 && outstanding < n {
+				return fmt.Sprintf("%d/%d", outstanding, n)
+			}
 			return fmt.Sprint(n)
 		}
 	case tabCommits:

@@ -76,6 +76,14 @@ actions.
   `idle_after` 뒤에 `idle_poll_interval`로 물러나고, (2) enrichment 응답에 실려오는
   `rateLimit`으로 남은 예산을 **공짜로** 읽어 더 늘린다. 폴링 비용을 바꾸는 변경은
   이 두 축을 같이 본다.
+- **선택 밴드는 행 안의 스타일을 전부 덮는다.** 색이나 취소선으로만 표현한 상태는 커서가
+  올라간 순간 사라진다 — 그리고 그 행이 지금 읽고 있는 행이다. 상태는 **밴드 밖의 글리프**로
+  낸다(`threadStateGlyph`): 열로 정렬되고, 문자라서 NO_COLOR에서도 읽히고, 밴드가 삼키지
+  못한다. review thread가 이 사례였다 — resolved 여부가 `[resolved]` 태그 + dim + 취소선
+  뿐이었는데 선택 시 셋 다 무력화됐다.
+- **상태는 값으로 들고 다닌다. 렌더된 문자열을 검사하지 않는다.** diff 뷰가
+  `strings.Contains(text, "[resolved]")`로 스타일을 골랐는데, 그 단어를 인용한 코멘트가
+  resolved로 렌더됐다. `diffRow.state`처럼 행에 실어 보낸다.
 - **프레임은 절대 `height`보다 커지면 안 된다.** bubbletea 렌더러는 넘치는 프레임의
   **뒤쪽** `height`줄을 남긴다(standard_renderer.go:186) — 즉 잘려나가는 건 위쪽,
   title과 tab strip이다. 화면이 있는 자리를 알려주는 두 줄이 사라지므로 "탭이 없어졌다"로
