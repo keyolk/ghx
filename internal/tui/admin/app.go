@@ -11,7 +11,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/tui"
@@ -22,6 +21,7 @@ type category int
 
 const (
 	catCollaborators category = iota
+	catTeams
 	catBranchProtection
 	catReleases
 	catBranches
@@ -30,8 +30,8 @@ const (
 )
 
 var categoryNames = []string{
-	"Collaborators", "Branch Protection", "Releases",
-	"Branches", "Tags", "Webhooks",
+	"People", "Teams", "Branch Protection",
+	"Releases", "Branches", "Tags", "Webhooks",
 }
 
 // App is the admin TUI root model.
@@ -45,11 +45,18 @@ type App struct {
 
 	// data caches per category
 	collaborators []gh.Collaborator
+	teams         []gh.Team
 	branches      []gh.Branch
 	tags          []gh.Tag
 	releases      []gh.Release
 	webhooks      []gh.Webhook
 	protection    *gh.BranchProtection
+
+	// teamMembers is the drilled-into team, or "" when showing the team list.
+	// Members are cached per slug so stepping back and forth costs one fetch.
+	teamSlug    string
+	teamMembers map[string][]gh.TeamMember
+	memberBusy  bool
 
 	// loading and error state
 	loading bool
@@ -57,26 +64,35 @@ type App struct {
 	toast   string
 	toastAt time.Time
 
-	// cursor and offset for the active list
-	cursor int
-	offset int
+	// list scrolls inside its own rows; see tui.ListPane.
+	pane tui.ListPane
+
+	// query filters the active list; searching is true while it is being typed.
+	query     string
+	searching bool
 
 	// confirm prompt for destructive actions
 	confirm string
-
-	// log viewer state (for run logs in actions, reused pattern)
-	logView string
-	logOff  int
 }
 
 // NewApp constructs the admin TUI.
 func NewApp(client *gh.Client, repo string) *App {
-	return &App{client: client, repo: repo, active: catCollaborators}
+	return &App{
+		client: client, repo: repo, active: catCollaborators,
+		teamMembers: make(map[string][]gh.TeamMember),
+	}
 }
 
 // Init loads the first category's data.
 func (a *App) Init() tea.Cmd {
 	return a.loadCategory(catCollaborators)
+}
+
+// org is the owner half of the repository slug, which is the organization a
+// team belongs to.
+func (a *App) org() string {
+	owner, _, _ := strings.Cut(a.repo, "/")
+	return owner
 }
 
 // loadCategory fires an async fetch for the given category.
@@ -89,6 +105,11 @@ func (a *App) loadCategory(cat category) tea.Cmd {
 		return func() tea.Msg {
 			v, err := client.ListCollaborators(ctx)
 			return dataMsg{cat: cat, err: err, collaborators: v}
+		}
+	case catTeams:
+		return func() tea.Msg {
+			v, err := client.ListTeams(ctx)
+			return dataMsg{cat: cat, err: err, teams: v}
 		}
 	case catBranchProtection:
 		return func() tea.Msg {
@@ -120,16 +141,41 @@ func (a *App) loadCategory(cat category) tea.Cmd {
 	return nil
 }
 
+// loadTeamMembers drills into one team. Cached results render immediately, so
+// stepping in and out of teams while comparing them costs one fetch each.
+func (a *App) loadTeamMembers(slug string) tea.Cmd {
+	a.teamSlug = slug
+	a.pane.Reset()
+	a.query = ""
+	if _, ok := a.teamMembers[slug]; ok {
+		return nil
+	}
+	a.memberBusy = true
+	client, ctx, org := a.client, context.Background(), a.org()
+	return func() tea.Msg {
+		v, err := client.ListTeamMembers(ctx, org, slug)
+		return membersMsg{slug: slug, members: v, err: err}
+	}
+}
+
 // dataMsg carries the result of an admin data fetch.
 type dataMsg struct {
 	cat           category
 	err           error
 	collaborators []gh.Collaborator
+	teams         []gh.Team
 	branches      []gh.Branch
 	tags          []gh.Tag
 	releases      []gh.Release
 	webhooks      []gh.Webhook
 	protection    *gh.BranchProtection
+}
+
+// membersMsg carries one team's members.
+type membersMsg struct {
+	slug    string
+	members []gh.TeamMember
+	err     error
 }
 
 // toastMsg surfaces a transient message.
@@ -154,6 +200,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.cat {
 		case catCollaborators:
 			a.collaborators = msg.collaborators
+		case catTeams:
+			a.teams = msg.teams
 		case catBranchProtection:
 			a.protection = msg.protection
 		case catReleases:
@@ -165,8 +213,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case catWebhooks:
 			a.webhooks = msg.webhooks
 		}
-		a.cursor = 0
-		a.offset = 0
+		a.pane.Reset()
+		return a, nil
+
+	case membersMsg:
+		a.memberBusy = false
+		if msg.err != nil {
+			a.err = msg.err
+			return a, nil
+		}
+		a.teamMembers[msg.slug] = msg.members
+		a.pane.Reset()
 		return a, nil
 
 	case toastMsg:
@@ -191,34 +248,101 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
+	// The search prompt owns the keyboard while it is open, so a query can
+	// contain j, k, q, and the digits without triggering navigation.
+	if a.searching {
+		return a.handleSearchKey(msg)
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return tea.Quit
+	case "/":
+		a.searching = true
+		return nil
+	case "esc":
+		// One narrowing layer at a time: the filter first, then the drill-down.
+		if a.query != "" {
+			a.query = ""
+			a.pane.Reset()
+			return nil
+		}
+		if a.teamSlug != "" {
+			a.teamSlug = ""
+			a.pane.Reset()
+		}
+		return nil
 	case "j", "down":
-		a.cursor = min(a.cursor+1, a.itemCount()-1)
+		a.pane.Move(1, a.itemCount())
 		return nil
 	case "k", "up":
-		a.cursor = max(a.cursor-1, 0)
+		a.pane.Move(-1, a.itemCount())
 		return nil
-	case "1", "2", "3", "4", "5", "6":
+	case "ctrl+d", "pgdown":
+		a.pane.Move(a.listRows()/2, a.itemCount())
+		return nil
+	case "ctrl+u", "pgup":
+		a.pane.Move(-a.listRows()/2, a.itemCount())
+		return nil
+	case "enter":
+		return a.onEnter()
+	case "1", "2", "3", "4", "5", "6", "7":
 		idx := int(msg.String()[0] - '1')
 		if idx < len(categoryNames) {
 			a.active = category(idx)
-			a.cursor = 0
-			a.offset = 0
+			a.teamSlug = ""
+			a.query = ""
+			a.pane.Reset()
 			return a.loadCategory(a.active)
 		}
 	case "g":
-		a.cursor = 0
+		a.pane.Top()
 		return nil
 	case "G":
-		a.cursor = max(a.itemCount()-1, 0)
+		a.pane.Bottom(a.itemCount())
 		return nil
 	case "?":
 		// TODO: help overlay
 		return nil
 	}
 	return nil
+}
+
+// handleSearchKey edits the query. The filter applies as it is typed so the
+// list narrows under the cursor rather than after a commit.
+func (a *App) handleSearchKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.Type {
+	case tea.KeyEsc:
+		a.searching = false
+		a.query = ""
+		a.pane.Reset()
+	case tea.KeyEnter:
+		a.searching = false
+	case tea.KeyBackspace:
+		if r := []rune(a.query); len(r) > 0 {
+			a.query = string(r[:len(r)-1])
+			a.pane.Reset()
+		}
+	case tea.KeyRunes:
+		a.query += string(msg.Runes)
+		a.pane.Reset()
+	case tea.KeySpace:
+		a.query += " "
+		a.pane.Reset()
+	}
+	return nil
+}
+
+// onEnter drills into a team, which is the only category with a second level.
+func (a *App) onEnter() tea.Cmd {
+	if a.active != catTeams || a.teamSlug != "" {
+		return nil
+	}
+	rows := a.visibleTeams()
+	if a.pane.Cursor >= len(rows) {
+		return nil
+	}
+	return a.loadTeamMembers(rows[a.pane.Cursor].Slug)
 }
 
 // runConfirm executes a confirmed destructive action.
@@ -239,19 +363,115 @@ func (a *App) runConfirm(action string) tea.Cmd {
 	return nil
 }
 
-// itemCount returns how many items the active category has.
+// --- filtered views ---
+//
+// Each returns the rows the query keeps, in display order. The cursor indexes
+// these, never the unfiltered slice: indexing the source would act on whichever
+// row happened to sit at that position before the filter.
+
+func (a *App) visibleCollaborators() []gh.Collaborator {
+	idx := tui.FilterRows(a.query, len(a.collaborators), func(i int) string {
+		c := a.collaborators[i]
+		return c.Login + " " + c.RoleName
+	})
+	out := make([]gh.Collaborator, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, a.collaborators[i])
+	}
+	return out
+}
+
+func (a *App) visibleTeams() []gh.Team {
+	idx := tui.FilterRows(a.query, len(a.teams), func(i int) string {
+		t := a.teams[i]
+		parent := ""
+		if t.Parent != nil {
+			parent = t.Parent.Slug
+		}
+		return t.Slug + " " + t.Name + " " + t.Permission + " " + t.Description + " " + parent
+	})
+	out := make([]gh.Team, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, a.teams[i])
+	}
+	return out
+}
+
+func (a *App) visibleMembers() []gh.TeamMember {
+	members := a.teamMembers[a.teamSlug]
+	idx := tui.FilterRows(a.query, len(members), func(i int) string {
+		return members[i].Login
+	})
+	out := make([]gh.TeamMember, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, members[i])
+	}
+	return out
+}
+
+func (a *App) visibleBranches() []gh.Branch {
+	idx := tui.FilterRows(a.query, len(a.branches), func(i int) string {
+		return a.branches[i].Name
+	})
+	out := make([]gh.Branch, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, a.branches[i])
+	}
+	return out
+}
+
+func (a *App) visibleTags() []gh.Tag {
+	idx := tui.FilterRows(a.query, len(a.tags), func(i int) string {
+		return a.tags[i].Name
+	})
+	out := make([]gh.Tag, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, a.tags[i])
+	}
+	return out
+}
+
+func (a *App) visibleReleases() []gh.Release {
+	idx := tui.FilterRows(a.query, len(a.releases), func(i int) string {
+		return a.releases[i].TagName + " " + a.releases[i].Name
+	})
+	out := make([]gh.Release, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, a.releases[i])
+	}
+	return out
+}
+
+func (a *App) visibleWebhooks() []gh.Webhook {
+	idx := tui.FilterRows(a.query, len(a.webhooks), func(i int) string {
+		w := a.webhooks[i]
+		return w.Config.URL + " " + strings.Join(w.Events, " ")
+	})
+	out := make([]gh.Webhook, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, a.webhooks[i])
+	}
+	return out
+}
+
+// itemCount returns how many rows the active view shows, after filtering.
 func (a *App) itemCount() int {
 	switch a.active {
 	case catCollaborators:
-		return len(a.collaborators)
+		return len(a.visibleCollaborators())
+	case catTeams:
+		if a.teamSlug != "" {
+			return len(a.visibleMembers())
+		}
+		return len(a.visibleTeams())
 	case catBranches:
-		return len(a.branches)
+		return len(a.visibleBranches())
 	case catTags:
-		return len(a.tags)
+		return len(a.visibleTags())
 	case catReleases:
-		return len(a.releases)
+		return len(a.visibleReleases())
 	case catWebhooks:
-		return len(a.webhooks)
+		return len(a.visibleWebhooks())
 	case catBranchProtection:
 		if a.protection != nil {
 			return 1
@@ -260,6 +480,16 @@ func (a *App) itemCount() int {
 	}
 	return 0
 }
+
+// contentRows is how many rows the body may occupy: the terminal minus the
+// title, the tab strip, and the footer. Sizing to a.height instead is what
+// pushed the title and the tab strip off the top of an overflowing frame —
+// bubbletea keeps the LAST height lines, so the rows it drops are the ones the
+// user needs to navigate with.
+func (a *App) contentRows() int { return max(a.height-3, 1) }
+
+// listRows is the height available to list rows themselves.
+func (a *App) listRows() int { return a.contentRows() }
 
 func (a *App) View() string {
 	if a.width == 0 || a.height == 0 {
@@ -270,66 +500,124 @@ func (a *App) View() string {
 	}
 
 	title := tui.TitleStyle.Render(" ghx admin ") + " " + tui.DimStyle.Render(a.repo)
-	cats := a.renderCategories()
-	content := a.renderContent()
+	header := a.renderHeader()
+	content := tui.FitRows(a.renderContent(), a.contentRows())
 	footer := a.footer()
 
-	return strings.Join([]string{title, cats, content, footer}, "\n")
+	return strings.Join([]string{title, header, content, footer}, "\n")
 }
 
-func (a *App) renderCategories() string {
+// renderHeader is the tab strip, or the search prompt while one is being typed.
+// The prompt replaces the strip rather than adding a row: an extra row would
+// resize the list mid-search, and the tabs are unreachable while the query owns
+// the keyboard anyway.
+func (a *App) renderHeader() string {
+	if a.searching {
+		return tui.RenderSearchBar(a.query, a.width)
+	}
 	tabs := make([]tui.TabLabel, len(categoryNames))
 	for i, name := range categoryNames {
 		tabs[i] = tui.TabLabel{Name: name, Active: category(i) == a.active}
 	}
-	return tui.RenderTabStrip(tabs, a.width)
+	strip := tui.RenderTabStrip(tabs, a.width)
+	if a.query != "" {
+		strip += " " + tui.TabActiveStyle.Render("["+a.query+"]")
+	}
+	return strip
 }
 
 func (a *App) renderContent() string {
-	h := a.height - 4 // title, cats, footer, padding
-	if h < 1 {
-		h = 1
-	}
 	if a.loading {
 		return "  Loading…"
 	}
 	if a.err != nil {
-		return tui.ErrorStyle.Render("  error: "+a.err.Error()) + "\n\n  Press 1-6 to retry."
+		return tui.ErrorStyle.Render("  error: "+a.err.Error()) + "\n\n  Press 1-7 to retry."
+	}
+	if a.memberBusy {
+		return "  Loading members…"
 	}
 
 	switch a.active {
 	case catCollaborators:
-		return a.renderCollaborators(h)
+		return a.renderCollaborators()
+	case catTeams:
+		if a.teamSlug != "" {
+			return a.renderMembers()
+		}
+		return a.renderTeams()
 	case catBranchProtection:
-		return a.renderProtection(h)
+		return a.renderProtection()
 	case catReleases:
-		return a.renderReleases(h)
+		return a.renderReleases()
 	case catBranches:
-		return a.renderBranches(h)
+		return a.renderBranches()
 	case catTags:
-		return a.renderTags(h)
+		return a.renderTags()
 	case catWebhooks:
-		return a.renderWebhooks(h)
+		return a.renderWebhooks()
 	}
 	return ""
 }
 
-func (a *App) renderCollaborators(h int) string {
-	if len(a.collaborators) == 0 {
-		return tui.DimStyle.Render("  No collaborators.")
-	}
-	var b strings.Builder
-	for i, c := range a.collaborators {
-		line := fmt.Sprintf("  %-20s %s", c.Login, c.RoleName)
-		if i == a.cursor {
-			line = tui.SelectedRowStyle.Render(padLine(line, a.width))
+// emptyOr renders the list, or a note when the filter or the source left it
+// with nothing. The two are worth distinguishing: an empty source is a fact
+// about the repository, an over-narrow filter is one keystroke from being
+// wrong, and they call for opposite responses.
+func (a *App) emptyOr(rows []string, empty string) string {
+	if len(rows) == 0 {
+		if a.query != "" {
+			return tui.DimStyle.Render(fmt.Sprintf("  Nothing matches %q.", a.query))
 		}
-		b.WriteString(line + "\n")
+		return tui.DimStyle.Render("  " + empty)
 	}
-	return b.String()
+	return a.pane.RenderList(rows, a.width, a.listRows())
 }
 
-func (a *App) renderProtection(h int) string {
+func (a *App) renderCollaborators() string {
+	items := a.visibleCollaborators()
+	rows := make([]string, 0, len(items))
+	for _, c := range items {
+		// Say where the access comes from. Without it a repo whose permissions
+		// are entirely team-based reads as a list of individual grants, and
+		// pressing d on one of those cannot work: there is nothing on the
+		// repository to revoke.
+		via := tui.DimStyle.Render("via team")
+		if c.Direct {
+			via = tui.CheckPassStyle.Render("direct")
+		}
+		rows = append(rows, fmt.Sprintf("  %-24s %-10s %s", c.Login, c.RoleName, via))
+	}
+	return a.emptyOr(rows, "No collaborators.")
+}
+
+func (a *App) renderTeams() string {
+	items := a.visibleTeams()
+	rows := make([]string, 0, len(items))
+	for _, t := range items {
+		nested := ""
+		if t.Parent != nil {
+			nested = tui.DimStyle.Render(" ⤷ " + t.Parent.Slug)
+		}
+		count := ""
+		if members, ok := a.teamMembers[t.Slug]; ok {
+			count = tui.DimStyle.Render(fmt.Sprintf(" %d members", len(members)))
+		}
+		rows = append(rows, fmt.Sprintf("  %-32s %-8s%s%s",
+			t.Slug, t.Permission, count, nested))
+	}
+	return a.emptyOr(rows, "No teams have access to this repository.")
+}
+
+func (a *App) renderMembers() string {
+	items := a.visibleMembers()
+	rows := make([]string, 0, len(items))
+	for _, m := range items {
+		rows = append(rows, "  "+m.Login)
+	}
+	return a.emptyOr(rows, "This team has no members.")
+}
+
+func (a *App) renderProtection() string {
 	if a.protection == nil {
 		return tui.DimStyle.Render("  Branch 'main' is not protected.")
 	}
@@ -345,78 +633,56 @@ func (a *App) renderProtection(h int) string {
 	return b.String()
 }
 
-func (a *App) renderReleases(h int) string {
-	if len(a.releases) == 0 {
-		return tui.DimStyle.Render("  No releases.")
-	}
-	var b strings.Builder
-	for i, r := range a.releases {
+func (a *App) renderReleases() string {
+	items := a.visibleReleases()
+	rows := make([]string, 0, len(items))
+	for _, r := range items {
 		marker := " "
 		if r.IsDraft {
 			marker = "○"
 		} else if r.IsPrerelease {
 			marker = "●"
 		}
-		line := fmt.Sprintf("  %s %-20s %s", marker, r.TagName, r.Name)
-		if i == a.cursor {
-			line = tui.SelectedRowStyle.Render(padLine(line, a.width))
-		}
-		b.WriteString(line + "\n")
+		rows = append(rows, fmt.Sprintf("  %s %-24s %s", marker, r.TagName, r.Name))
 	}
-	return b.String()
+	return a.emptyOr(rows, "No releases.")
 }
 
-func (a *App) renderBranches(h int) string {
-	if len(a.branches) == 0 {
-		return tui.DimStyle.Render("  No branches.")
-	}
-	var b strings.Builder
-	for i, br := range a.branches {
+func (a *App) renderBranches() string {
+	items := a.visibleBranches()
+	rows := make([]string, 0, len(items))
+	for _, br := range items {
 		marker := " "
 		if br.Protected {
 			marker = "🔒"
 		}
-		line := fmt.Sprintf("  %s %s", marker, br.Name)
-		if i == a.cursor {
-			line = tui.SelectedRowStyle.Render(padLine(line, a.width))
-		}
-		b.WriteString(line + "\n")
+		rows = append(rows, fmt.Sprintf("  %s %s", marker, br.Name))
 	}
-	return b.String()
+	return a.emptyOr(rows, "No branches.")
 }
 
-func (a *App) renderTags(h int) string {
-	if len(a.tags) == 0 {
-		return tui.DimStyle.Render("  No tags.")
+func (a *App) renderTags() string {
+	items := a.visibleTags()
+	rows := make([]string, 0, len(items))
+	for _, t := range items {
+		rows = append(rows, fmt.Sprintf("  %-32s %s",
+			t.Name, t.Commit.SHA[:min(len(t.Commit.SHA), 7)]))
 	}
-	var b strings.Builder
-	for i, t := range a.tags {
-		line := fmt.Sprintf("  %-30s %s", t.Name, t.Commit.SHA[:min(len(t.Commit.SHA), 7)])
-		if i == a.cursor {
-			line = tui.SelectedRowStyle.Render(padLine(line, a.width))
-		}
-		b.WriteString(line + "\n")
-	}
-	return b.String()
+	return a.emptyOr(rows, "No tags.")
 }
 
-func (a *App) renderWebhooks(h int) string {
-	if len(a.webhooks) == 0 {
-		return tui.DimStyle.Render("  No webhooks.")
-	}
-	var b strings.Builder
-	for i, w := range a.webhooks {
+func (a *App) renderWebhooks() string {
+	items := a.visibleWebhooks()
+	rows := make([]string, 0, len(items))
+	for _, w := range items {
 		active := ""
 		if !w.Active {
 			active = tui.DimStyle.Render(" (disabled)")
 		}
-		line := fmt.Sprintf("  %-40s %s%s", w.Config.URL, strings.Join(w.Events, ", "), active)
-		if i == a.cursor {
-			line = tui.SelectedRowStyle.Render(padLine(line, a.width))
-		}
-		b.WriteString(line + "\n")
+		rows = append(rows, fmt.Sprintf("  %-40s %s%s",
+			w.Config.URL, strings.Join(w.Events, ", "), active))
 	}
-	return b.String()
+	return a.emptyOr(rows, "No webhooks.")
 }
 
 func (a *App) footer() string {
@@ -427,18 +693,23 @@ func (a *App) footer() string {
 		return tui.TruncateFooter(
 			tui.ErrorStyle.Render(a.confirm+" y/n"), a.width)
 	}
-	return tui.TruncateFooter(
-		tui.FmtHints("1-6", "category", "j/k", "move", "d", "delete", "q", "quit"),
-		a.width)
-}
 
-// padLine pads a string to width using cell-accurate measurement.
-func padLine(s string, w int) string {
-	width := lipgloss.Width(s)
-	if width >= w {
-		return s
+	hints := []string{"1-7", "category", "j/k", "move", "/", "search"}
+	switch {
+	case a.teamSlug != "":
+		hints = append(hints, "esc", "back to teams")
+	case a.active == catTeams:
+		hints = append(hints, "enter", "members")
 	}
-	return s + strings.Repeat(" ", w-width)
+	hints = append(hints, "q", "quit")
+
+	line := tui.FmtHints(hints...)
+	// The position is only worth a footer slot when the list does not fit; a
+	// counter that always reads 1/1 is noise.
+	if pos := a.pane.ScrollHint(a.itemCount(), a.listRows()); pos != "" {
+		line += "  " + tui.DimStyle.Render(pos)
+	}
+	return tui.TruncateFooter(line, a.width)
 }
 
 func min(a, b int) int {
