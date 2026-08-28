@@ -76,7 +76,7 @@ func (c *Client) exec(ctx context.Context, args ...string) ([]byte, error) {
 			return nil, fmt.Errorf("gh %s: %s",
 				strings.Join(subcommandWords(args), " "), strings.TrimSpace(string(ee.Stderr)))
 		}
-		return nil, fmt.Errorf("gh %v: %w", args, err)
+		return nil, fmt.Errorf("gh %s: %w", strings.Join(subcommandWords(args), " "), err)
 	}
 	return out, nil
 }
@@ -126,6 +126,11 @@ func isCredentialAuthFailure(err error) bool {
 
 // subcommandWords returns the leading non-flag words of an argv, for error text
 // that names the operation without echoing every flag back at the user.
+//
+// Echoing it is not merely noisy: `gh api graphql -f query=...` carries a
+// multi-line GraphQL document, and a failure with no stderr (a timeout, say)
+// would otherwise put that whole document into an error the TUI shows in its
+// one-line footer.
 func subcommandWords(args []string) []string {
 	for i, a := range args {
 		if strings.HasPrefix(a, "-") {
@@ -157,7 +162,7 @@ func (c *Client) execRaw(ctx context.Context, args ...string) ([]byte, error) {
 			return nil, fmt.Errorf("gh %s: %s",
 				strings.Join(subcommandWords(args), " "), strings.TrimSpace(string(ee.Stderr)))
 		}
-		return nil, fmt.Errorf("gh %v: %w", args, err)
+		return nil, fmt.Errorf("gh %s: %w", strings.Join(subcommandWords(args), " "), err)
 	}
 	return out, nil
 }

@@ -845,11 +845,41 @@ func joinVertical(parts ...string) string {
 
 // truncateFooter clips a one-line footer to the terminal width, cell-accurately.
 func truncateFooter(s string, w int) string {
+	s = flattenLine(s)
 	if w <= 0 {
 		return s
 	}
 	out, _ := truncateExact(s, w)
 	return out
+}
+
+// flattenLine folds a message onto a single line, collapsing runs of
+// whitespace.
+//
+// The footer is the last line View joins, and truncation cannot save it:
+// ansi.TruncateWc counts a newline as zero cells, so an embedded one survives
+// any width and every following line is drawn below the frame — the body gets
+// shoved off the top of the terminal. A gh failure carrying its whole argv
+// (a multi-line GraphQL query) did exactly that to the PR list.
+func flattenLine(s string) string {
+	if !strings.ContainsAny(s, "\n\r\t\v\f") {
+		return s
+	}
+	var b strings.Builder
+	space := false
+	for _, r := range s {
+		switch r {
+		case '\n', '\r', '\t', '\v', '\f', ' ':
+			if !space {
+				b.WriteByte(' ')
+				space = true
+			}
+		default:
+			b.WriteRune(r)
+			space = false
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // ctx returns a background context; callers attach their own timeouts.
