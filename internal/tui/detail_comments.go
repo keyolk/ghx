@@ -61,6 +61,66 @@ func threadIsResolved(t pr.ReviewThread) bool {
 	return t.ResolutionKnown && t.IsResolved
 }
 
+// threadState names which of the three states a thread is in. Resolved and
+// unresolved are not opposites here: a thread recovered over REST is in neither,
+// and calling it open would be inventing an answer nothing has.
+type threadState int
+
+const (
+	threadOpen threadState = iota
+	threadDone
+	threadUnknown
+)
+
+func stateOf(t pr.ReviewThread) threadState {
+	if !t.ResolutionKnown {
+		return threadUnknown
+	}
+	if t.IsResolved {
+		return threadDone
+	}
+	return threadOpen
+}
+
+// threadStateGlyph is the leading state cell, styled unless the caller is about
+// to paint a selection band over the row.
+//
+// It leads rather than trailing as a tag for two reasons. It lines up in a
+// column, where a tag after a variable-length path and author does not — and it
+// is a character, so it survives the cursor. A selected row is themed as one
+// band (see prlist_render.go on why cell-by-cell backgrounds stripe), which
+// overwrites colour and strikethrough alike; the row under the cursor was the
+// one row with no state signal left, and it is the row being looked at.
+func threadStateGlyph(t pr.ReviewThread, plain bool) string {
+	glyph, style := iconThreadOpen, threadOpenGlyph
+	switch stateOf(t) {
+	case threadDone:
+		glyph, style = iconThreadResolved, threadResolvedGlyph
+	case threadUnknown:
+		glyph, style = iconThreadUnknown, threadUnknownGlyph
+	}
+	if plain {
+		return glyph
+	}
+	return style.Render(glyph)
+}
+
+// countThreadStates tallies the three states for the tab title, so the count of
+// what is still outstanding is visible without turning the filter off.
+func countThreadStates(threads []pr.ReviewThread) (open, done, unknown int) {
+	for _, t := range threads {
+		switch stateOf(t) {
+		case threadDone:
+			done++
+		case threadUnknown:
+			unknown++
+		default:
+			open++
+		}
+	}
+	return open, done, unknown
+}
+
 func (c *commentsView) moveCursor(delta int) {
 	n := len(c.visible())
 	if n == 0 {
@@ -201,42 +261,48 @@ func (c *commentsView) threadHeader(t pr.ReviewThread, selected bool, width int)
 	if n := len(t.Comments); n > 1 {
 		tags = append(tags, fmt.Sprintf("%d replies", n-1))
 	}
-	if threadIsResolved(t) {
-		tags = append(tags, "resolved")
-	} else if !t.ResolutionKnown {
-		tags = append(tags, "resolution unknown")
-	}
+	// The state is no longer a tag — it is the leading glyph, which lines up and
+	// outlives the cursor. A tag here would say the same thing twice, in the spot
+	// where it was least readable.
 	tag := ""
 	if len(tags) > 0 {
 		tag = " [" + strings.Join(tags, "] [") + "]"
 	}
 
+	// The glyph is outside the styled head so the selection band cannot swallow
+	// it: the band is applied to the row as a whole, and anything styled inside
+	// it loses its own colour at the first reset.
 	head := fmt.Sprintf("%s %s  %s%s", fold, loc, author, tag)
 
 	// Build the plain line first so the selected form can be themed as a whole:
 	// a background wrapped around the styled header would stop at its reset code
 	// and leave the row looking half-selected.
-	plain := head
-	if rest := width - lipglossWidth(head) - 3; rest > 20 && preview != "" {
-		p, _ := truncateExact(preview, rest)
-		plain += "  " + p
+	body := head
+	avail := width - lipglossWidth(head) - 5 // 2 for the glyph cell, 3 for spacing
+	if avail > 20 && preview != "" {
+		p, _ := truncateExact(preview, avail)
+		body += "  " + p
 	}
 	if selected {
-		plain, _ = truncateExact(plain, width)
-		if pad := width - lipglossWidth(plain); pad > 0 {
-			plain += strings.Repeat(" ", pad)
+		// The band covers the row minus the glyph cell, which stays outside it and
+		// keeps its colour — under the cursor is exactly where the old rendering
+		// lost the state, and it is the row the reviewer is reading.
+		bandWidth := max(width-2, 1)
+		body, _ = truncateExact(body, bandWidth)
+		if pad := bandWidth - lipglossWidth(body); pad > 0 {
+			body += strings.Repeat(" ", pad)
 		}
-		return selectedRowStyle.Render(plain)
+		return threadStateGlyph(t, false) + " " + selectedRowStyle.Render(body)
 	}
 
 	style := threadStyle
 	if threadIsResolved(t) {
 		style = threadResolved
 	}
-	line := style.Render(head)
+	line := threadStateGlyph(t, false) + " " + style.Render(head)
 	// Show a preview only when the header leaves room for it to be readable.
-	if rest := width - lipglossWidth(head) - 3; rest > 20 && preview != "" {
-		p, _ := truncateExact(preview, rest)
+	if avail > 20 && preview != "" {
+		p, _ := truncateExact(preview, avail)
 		line += dimStyle.Render("  " + p)
 	}
 	line, _ = truncateExact(line, width)
@@ -339,17 +405,68 @@ var (
 
 // helpLine returns the comments-tab footer hints.
 func (c *commentsView) helpLine() string {
-	resolved := "show resolved"
+	resolved := "show all"
 	if !c.hideResolved {
-		resolved = "hide resolved"
+		resolved = "hide done"
 	}
-	return fmtHints(
+	// enter:expand is dropped rather than the legend. Expanding with enter is the
+	// convention every other list in ghx follows, and it is in the ? overlay; the
+	// glyph column is neither conventional nor guessable, and it is on screen in
+	// every row.
+	// The hints are shortened to make room for the glyph legend. A footer past
+	// 100 cells is truncated on a common terminal, and what it drops is whatever
+	// sits at the end — which would be the legend, the one part that is not
+	// guessable from the key it describes. "resolve/unresolve" and "jump to diff"
+	// are each the obvious reading of their key in this tab; the glyphs are not.
+	line := fmtHints(
 		"j/k", "thread",
-		"enter", "expand",
 		"c", "reply",
-		"X", "resolve/unresolve",
-		"d", "jump to diff",
+		"X", "resolve",
+		"d", "diff",
 		"t", resolved,
 		"esc", "back",
 	)
+	// Name the glyphs whenever more than one state is on screen. Keyed to what
+	// is visible rather than to the filter: an unknown-resolution thread survives
+	// the default filter, so `?` appears without `t` ever being pressed, and a
+	// glyph nobody can decode is not a signal. With one state showing there is
+	// nothing to tell apart and the legend is just noise in the footer.
+	// 100 columns is the footer budget this codebase holds itself to; past it a
+	// terminal cuts the end of the line, which is where the legend sits.
+	return fitLegend(line, dimStyle.Render(c.glyphLegend()), 100)
+}
+
+// glyphLegend names the states currently on screen, or "" when there is only
+// one and nothing to distinguish.
+func (c *commentsView) glyphLegend() string {
+	open, done, unknown := countThreadStates(c.visible())
+	var parts []string
+	if open > 0 {
+		parts = append(parts, iconThreadOpen+" open")
+	}
+	if done > 0 {
+		parts = append(parts, iconThreadResolved+" resolved")
+	}
+	if unknown > 0 {
+		parts = append(parts, iconThreadUnknown+" unknown")
+	}
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.Join(parts, " ")
+}
+
+// fitLegend drops the legend rather than let it push the footer past the width
+// a common terminal shows. Truncation would cut the legend anyway — it sits at
+// the end — but silently, and half a legend is worse than none: "✓ res" reads
+// as a label rather than as a key. The glyphs are also in the ? overlay.
+func fitLegend(hints, legend string, width int) string {
+	if legend == "" {
+		return hints
+	}
+	full := hints + "  " + legend
+	if lipglossWidth(full) <= width {
+		return full
+	}
+	return hints
 }

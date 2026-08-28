@@ -254,7 +254,9 @@ func (v *diffView) renderThreadWrapped(rowIdx, width, wrapLine int) string {
 	if selected {
 		return diffCursorStyle.Render(plain)
 	}
-	if strings.Contains(r.text, "[resolved]") {
+	// The row's own state, not a substring of its text — a comment quoting
+	// "[resolved]" used to render as a resolved thread.
+	if r.state == threadDone {
 		return threadResolved.Render(plain)
 	}
 	return threadStyle.Render(plain)

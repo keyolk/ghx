@@ -47,6 +47,10 @@ type diffRow struct {
 	// instead of being dropped — a comment the reviewer cannot see is worse than
 	// one shown out of place.
 	orphan bool
+	// state is the thread's resolution, carried on the row rather than recovered
+	// from its rendered text. The old code asked whether the string contained
+	// "[resolved]", which a comment quoting that word answers by accident.
+	state threadState
 }
 
 // diffView holds the diff viewer's own state so detail_diff.go owns it rather
@@ -155,6 +159,7 @@ func (v *diffView) rebuild() {
 			anchorLine: anchor,
 			commentIdx: 0,
 			orphan:     orphan,
+			state:      stateOf(t),
 		})
 		// Replies are hidden until asked for: a bot thread can run to a dozen
 		// comments and would bury the code it is about.
@@ -173,6 +178,7 @@ func (v *diffView) rebuild() {
 				anchorLine: anchor,
 				commentIdx: ci,
 				orphan:     orphan,
+				state:      stateOf(t),
 			})
 		}
 	}
@@ -276,13 +282,9 @@ func renderThreadSummary(t pr.ReviewThread, expanded bool) string {
 	if n := len(t.Comments); n > 1 {
 		meta = append(meta, fmt.Sprintf("%d replies", n-1))
 	}
-	if threadIsResolved(t) {
-		meta = append(meta, "resolved")
-	} else if !t.ResolutionKnown {
-		// Not the same as unresolved: say so rather than letting the absence of a
-		// tag read as "still open".
-		meta = append(meta, "resolution unknown")
-	}
+	// The resolution is the leading glyph, not a trailing tag. A tag lands after
+	// a variable-length author and body, so it never lines up, and it is the
+	// first thing a truncated row loses.
 	// A multi-line thread names its range so the anchor row isn't misleading.
 	if lo, hi, ok := threadRange(t); ok {
 		meta = append(meta, fmt.Sprintf("lines %d-%d", lo, hi))
@@ -297,7 +299,8 @@ func renderThreadSummary(t pr.ReviewThread, expanded bool) string {
 			marker = iconFoldOpen
 		}
 	}
-	s := fmt.Sprintf("%s %s %s: %s", marker, iconComment, author, body)
+	s := fmt.Sprintf("%s %s %s %s: %s",
+		threadStateGlyph(t, true), marker, iconComment, author, body)
 	if len(meta) > 0 {
 		s += " [" + strings.Join(meta, "] [") + "]"
 	}
@@ -306,7 +309,9 @@ func renderThreadSummary(t pr.ReviewThread, expanded bool) string {
 
 // renderThreadReply formats one reply, indented under its thread.
 func renderThreadReply(c pr.ThreadComment) string {
-	return fmt.Sprintf("    ↳ %s: %s", c.Author.Login, commentPreview(c.Body))
+	// Indented past the state column so replies read as belonging to the thread
+	// above rather than as threads of their own with a missing glyph.
+	return fmt.Sprintf("      ↳ %s: %s", c.Author.Login, commentPreview(c.Body))
 }
 
 // orphanThreadsFor returns this file's threads whose anchor is absent from the
@@ -663,7 +668,9 @@ func (v *diffView) renderRow(i, width int) string {
 		if r.orphan && r.commentIdx == 0 {
 			text = fmt.Sprintf("%s (line %d, not in this diff)", text, r.anchorLine)
 		}
-		if strings.Contains(text, "[resolved]") {
+		// The row's own state, not a substring of what it happens to say: a
+		// comment quoting "[resolved]" used to render as a resolved thread.
+		if r.state == threadDone {
 			s = threadResolved.Render("    " + text)
 		} else {
 			s = threadStyle.Render("    " + text)

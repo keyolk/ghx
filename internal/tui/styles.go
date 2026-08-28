@@ -20,6 +20,15 @@ const (
 	iconComment    = "💬"
 	iconResolved   = "✓"
 	iconDraft      = "○"
+
+	// Review-thread state glyphs. They lead the row rather than trailing it as a
+	// tag, so they line up in a column the eye can scan, and they survive the
+	// cursor: a selected row is themed as one band and any colour or strikethrough
+	// inside it is overwritten, which left the row under the cursor — the one
+	// being looked at — as the only row with no state signal at all.
+	iconThreadOpen     = "○"
+	iconThreadResolved = "✓"
+	iconThreadUnknown  = "?"
 )
 
 var (
@@ -102,6 +111,12 @@ var (
 	// Review threads
 	threadStyle    = lipgloss.NewStyle().Foreground(colorCyan)
 	threadResolved = lipgloss.NewStyle().Foreground(colorDim).Strikethrough(true)
+	// The state glyph carries the meaning on its own, so it is coloured but never
+	// struck through — a strikethrough glyph is harder to tell from its neighbours
+	// at a glance, which is the one job it has.
+	threadOpenGlyph     = lipgloss.NewStyle().Foreground(colorWarn)
+	threadResolvedGlyph = lipgloss.NewStyle().Foreground(colorSuccess)
+	threadUnknownGlyph  = lipgloss.NewStyle().Foreground(colorDim)
 
 	// Spinner
 	spinnerColors = []lipgloss.Color{colorSuccess, colorUser, colorAssistant, colorPrimary, colorPurple}
@@ -159,6 +174,9 @@ func SetNoColor() {
 	strip(&checkSkipStyle)
 	strip(&threadStyle)
 	strip(&threadResolved)
+	strip(&threadOpenGlyph)
+	strip(&threadResolvedGlyph)
+	strip(&threadUnknownGlyph)
 }
 
 // fmtKey renders a "key:desc" token for the help line.
