@@ -83,6 +83,19 @@ type App struct {
 	// nobody watching any of them.
 	lastKeyAt time.Time
 
+	// unfocused is set while the terminal reports that ghx does not have focus:
+	// another tmux window is on screen, or the terminal itself is behind
+	// something else. Nothing is polled in that state.
+	//
+	// This is the signal lastKeyAt cannot supply. A reviewer who reads a row,
+	// switches to another tmux window, and works there for an hour has "pressed
+	// a key recently" the whole time, so the idle backoff never engages and the
+	// window keeps spending an account-wide budget on frames nobody sees.
+	//
+	// Terminals that do not report focus never send the message, so unfocused
+	// stays false and the cadence is exactly what it was before.
+	unfocused bool
+
 	// pollGen invalidates in-flight poll timers. Backing off means arming a new
 	// timer while an old one is still pending; without this the first keypress
 	// after an idle stretch would leave both running.
@@ -216,8 +229,44 @@ func applyBudgetBackoff(interval time.Duration, b gh.GraphQLBudget) time.Duratio
 // armPoll schedules the next poll at whichever cadence currently applies,
 // stamping it with the current generation so a timer armed before a keypress
 // does not also fire.
+//
+// An unfocused window arms nothing at all. Letting the chain lapse is the point:
+// a slower cadence still spends the budget on frames nobody is looking at, and
+// there is no staleness cost, because regaining focus fetches before the user
+// can read the rows.
 func (a *App) armPoll() tea.Cmd {
+	if a.unfocused {
+		return nil
+	}
 	return prListPollCmd(a.pollInterval(), a.pollGen)
+}
+
+// blur suspends polling. Bumping the generation retires the timer already
+// pending — bubbletea cannot cancel a tea.Tick — so nothing fires while away.
+func (a *App) blur() {
+	if a.unfocused {
+		return
+	}
+	a.unfocused = true
+	a.pollGen++
+}
+
+// focus resumes polling and refreshes, because the rows on screen are as old as
+// the time spent away.
+//
+// Like noteActivity it fetches without arming: the settling prListMsg arms the
+// next tick, and arming here too would leave two timers of the same generation
+// running, which is the cadence-doubling bug that shape exists to avoid.
+func (a *App) focus() tea.Cmd {
+	if !a.unfocused {
+		return nil
+	}
+	a.unfocused = false
+	// Returning to the window is attention, so the poll resumes at the active
+	// cadence rather than inheriting an idle stretch that spanned the absence.
+	a.lastKeyAt = a.now()
+	a.pollGen++
+	return a.list.handlePollTick()
 }
 
 // noteActivity records a keypress. When it ends an idle stretch it refreshes
@@ -235,6 +284,12 @@ func (a *App) armPoll() tea.Cmd {
 // Bumping the generation is still required: it retires the pending idle timer,
 // so the slow tick does not fire alongside the newly active chain.
 func (a *App) noteActivity() tea.Cmd {
+	// A keypress proves someone is here even if the terminal never reported
+	// focus coming back — some do not, and without this the poll would stay
+	// suspended for a window actively being used.
+	if a.unfocused {
+		return a.focus()
+	}
 	wasIdle := a.idle()
 	a.lastKeyAt = a.now()
 	if !wasIdle {
@@ -284,6 +339,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.detail.resize(msg.Width, msg.Height)
 		}
 		a.composer.resize(msg.Width, msg.Height)
+		return a, nil
+
+	case tea.FocusMsg:
+		return a, a.focus()
+
+	case tea.BlurMsg:
+		a.blur()
 		return a, nil
 
 	case tea.KeyMsg:
@@ -341,7 +403,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A tick from a superseded generation is a timer armed under the other
 		// cadence. Dropping it rather than re-arming is what makes the switch a
 		// switch instead of two overlapping schedules.
-		if msg.gen != a.pollGen {
+		if msg.gen != a.pollGen || a.unfocused {
 			return a, nil
 		}
 		return a, a.list.handlePollTick()
@@ -356,6 +418,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case listReturnMsg:
 		a.state = viewPRList
 		a.detail = nil
+		// A PR acted on in the detail view leaves the queue behind it stale.
+		// The rows stay on screen while this fetch runs — coming back to a
+		// spinner is the flicker this whole path exists to avoid.
+		if a.list != nil && a.list.currentDirty() {
+			return a, a.list.refreshCurrent()
+		}
 		return a, nil
 
 	case detailDebounceMsg:
@@ -470,6 +538,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.list.invalidateCachesAndRefresh()
 		}
 		if a.detail != nil && len(msg.completed) > 0 {
+			// The list is showing the same PR one screen back. Flagging it here
+			// is what makes returning to the queue reflect the merge; without
+			// it the row stayed until something else happened to refetch.
+			if a.list != nil {
+				a.list.markAllDirty()
+			}
 			return a, a.detail.reload()
 		}
 		return a, nil

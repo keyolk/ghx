@@ -38,11 +38,19 @@ func configureListSearch(l *list.Model) {
 // bubbles' SetItems clears filteredItems and returns the re-filter as a cmd
 // callers drop — re-applying SetFilterText synchronously keeps the visible
 // set correct and restores the cursor.
-func setListItemsPreservingFilter(l *list.Model, items []list.Item) {
+//
+// identity, when non-nil, names each item so the cursor can be restored to the
+// same row rather than the same index. A background poll re-sorts by updatedAt,
+// so a PR that moved — or one that arrived above the cursor — silently changes
+// what the index points at. Passing nil keeps the index-based behaviour.
+func setListItemsPreservingFilter(l *list.Model, items []list.Item, identity func(list.Item) string) {
 	state := l.FilterState()
 	filter := l.FilterInput.Value()
+	focused := currentItemKey(l, identity)
+
 	if state == list.Unfiltered || filter == "" {
 		l.SetItems(items)
+		restoreCursor(l, focused, identity, l.Index())
 		return
 	}
 	savedIndex := l.Index()
@@ -51,15 +59,45 @@ func setListItemsPreservingFilter(l *list.Model, items []list.Item) {
 	if state == list.Filtering {
 		l.SetFilterState(list.Filtering)
 	}
-	if n := len(l.VisibleItems()); n > 0 {
-		if savedIndex < 0 {
-			savedIndex = 0
-		}
-		if savedIndex >= n {
-			savedIndex = n - 1
-		}
-		l.Select(savedIndex)
+	restoreCursor(l, focused, identity, savedIndex)
+}
+
+// currentItemKey names the row under the cursor, or "" when there is none.
+func currentItemKey(l *list.Model, identity func(list.Item) string) string {
+	if identity == nil {
+		return ""
 	}
+	it := l.SelectedItem()
+	if it == nil {
+		return ""
+	}
+	return identity(it)
+}
+
+// restoreCursor puts the cursor back on the row it was on. Falling back to the
+// clamped index covers the row genuinely leaving the list — merged, filtered
+// out — where staying near where the user was reading is the best available
+// answer.
+func restoreCursor(l *list.Model, focused string, identity func(list.Item) string, fallbackIndex int) {
+	vis := l.VisibleItems()
+	if len(vis) == 0 {
+		return
+	}
+	if focused != "" && identity != nil {
+		for i, it := range vis {
+			if identity(it) == focused {
+				l.Select(i)
+				return
+			}
+		}
+	}
+	if fallbackIndex < 0 {
+		fallbackIndex = 0
+	}
+	if fallbackIndex >= len(vis) {
+		fallbackIndex = len(vis) - 1
+	}
+	l.Select(fallbackIndex)
 }
 
 // listFilterTerm returns the active filter term, or "" if not filtering.

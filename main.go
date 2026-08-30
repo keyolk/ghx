@@ -120,7 +120,11 @@ func run() (err error) {
 		}
 	}()
 
-	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// WithReportFocus is what lets the background poll stop while the window is
+	// not on screen. A terminal that does not support it simply never sends the
+	// message, and the poll behaves as it did before.
+	p := tea.NewProgram(app,
+		tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus())
 	if _, runErr := p.Run(); runErr != nil {
 		return fmt.Errorf("run: %w", runErr)
 	}

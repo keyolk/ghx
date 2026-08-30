@@ -130,6 +130,13 @@ func (a *App) titleLine() string {
 
 // pollStatusNote describes the poll cadence when it is not the configured one.
 func (a *App) pollStatusNote() string {
+	// A suspended poll has to say so. Coming back to a window whose rows are an
+	// hour old, with nothing on screen admitting it, is worse than the polling
+	// this avoids — the marker is what makes the rows readable as "as of when I
+	// left" rather than "as of now".
+	if a.unfocused {
+		return dimStyle.Render("paused · unfocused ")
+	}
 	interval := a.pollInterval()
 	if interval <= a.cfg.PollDuration() {
 		return ""

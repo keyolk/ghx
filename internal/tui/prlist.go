@@ -38,6 +38,11 @@ type prListModel struct {
 	caches      [][]pr.Summary
 	loadings    []bool
 	generations []uint64
+	// dirty marks a source whose rows a bulk action may have changed. It says
+	// "refetch on the next visit", which is what emptying caches[i] used to say
+	// — except emptying it also threw away rows that were still the best answer
+	// available, so opening that tab showed a spinner instead of a queue.
+	dirty []bool
 	// errs keeps the last failure per source so an empty pane can say why it is
 	// empty instead of implying the source has no PRs.
 	errs     []error
@@ -103,6 +108,7 @@ func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km *Keymap, d
 		caches:        make([][]pr.Summary, len(sources)),
 		loadings:      make([]bool, len(sources)),
 		generations:   make([]uint64, len(sources)),
+		dirty:         make([]bool, len(sources)),
 		errs:          make([]error, len(sources)),
 		selected:      make(map[string]pr.Summary),
 		statusFilters: make(map[prStatus]bool),
@@ -207,21 +213,60 @@ func (m *prListModel) fetchSource(i int) tea.Cmd {
 // refreshCurrent reloads the visible source.
 func (m *prListModel) refreshCurrent() tea.Cmd {
 	m.loadings[m.curTab] = true
+	m.dirty[m.curTab] = false
 	return m.fetchSource(m.curTab)
 }
 
-// invalidateCachesAndRefresh drops every source after a bulk action because one
-// PR can appear in several queues. Only the visible source reloads immediately;
-// the others reload on their next visit.
+// invalidateCachesAndRefresh marks every source for reload after a bulk action,
+// because one PR can appear in several queues. Only the visible source reloads
+// immediately; the others reload on their next visit.
+//
+// No tab loses its rows. Emptying the cache is what put a "Loading…" line where
+// the queue had been — on the visible tab straight away, and on every other tab
+// the moment it was opened — so a single merge blanked whatever the user was
+// working through and brought it back a round trip later. The rows are seconds
+// stale at worst; the arriving response replaces them in place, and dirty is
+// what makes sure that response is actually asked for.
 func (m *prListModel) invalidateCachesAndRefresh() tea.Cmd {
 	for i := range m.sources {
 		m.generations[i]++
-		m.caches[i] = nil
 		m.loadings[i] = false
 		m.errs[i] = nil
+		if i != m.curTab {
+			m.dirty[i] = true
+		}
 	}
 	m.syncListItems()
 	return m.refreshCurrent()
+}
+
+// markAllDirty flags every source for refetch without touching what is on
+// screen. An action taken in the detail view changes a PR the list is also
+// showing, and returning to a queue that still lists a merged PR is worse than
+// a tab that refetches when it is next opened.
+func (m *prListModel) markAllDirty() {
+	for i := range m.sources {
+		m.generations[i]++
+		m.dirty[i] = true
+	}
+}
+
+// appendSource adds a tab and the per-source state that has to stay the same
+// length as m.sources. Five parallel slices is five chances to forget one, and
+// forgetting one is an index-out-of-range at the next tab switch rather than a
+// compile error.
+func (m *prListModel) appendSource(src config.SourceDef, rows []pr.Summary) {
+	m.sources = append(m.sources, src)
+	m.caches = append(m.caches, rows)
+	m.loadings = append(m.loadings, false)
+	m.generations = append(m.generations, 0)
+	m.errs = append(m.errs, nil)
+	m.dirty = append(m.dirty, false)
+}
+
+// currentDirty reports whether the visible source needs a refetch.
+func (m *prListModel) currentDirty() bool {
+	return m.curTab < len(m.dirty) && m.dirty[m.curTab]
 }
 
 func (m *prListModel) loading() bool {
@@ -322,9 +367,11 @@ func (m *prListModel) selectTab(i int) tea.Cmd {
 	}
 	m.curTab = i
 	m.syncListItems()
-	// Load on first visit; cached sources render immediately.
-	if m.caches[i] == nil && !m.loadings[i] {
+	// Load on first visit, and refetch a source a bulk action may have changed.
+	// A dirty tab still shows the rows it has while that fetch runs.
+	if (m.caches[i] == nil || m.dirty[i]) && !m.loadings[i] {
 		m.loadings[i] = true
+		m.dirty[i] = false
 		return m.fetchSource(i)
 	}
 	return nil
@@ -432,7 +479,16 @@ func (m *prListModel) syncListItems() {
 		}
 		items = append(items, prListItem{pr: p})
 	}
-	setListItemsPreservingFilter(m.list, items)
+	setListItemsPreservingFilter(m.list, items, prListItemKey)
+}
+
+// prListItemKey names a row for cursor restoration across a refresh.
+func prListItemKey(item list.Item) string {
+	row, ok := item.(prListItem)
+	if !ok {
+		return ""
+	}
+	return selectionKey(row.pr)
 }
 
 func (m *prListModel) update(msg tea.KeyMsg) tea.Cmd {
