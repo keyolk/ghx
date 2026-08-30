@@ -159,6 +159,24 @@ type ThreadComment struct {
 	CreatedAt  time.Time `json:"createdAt"`
 }
 
+// Conversation is a PR-level comment: the issue-comment stream and the review
+// bodies, both of which hang off the pull request rather than off a line.
+//
+// These are a different thing from a ReviewThread, not a degenerate case of
+// one. A thread anchors to a path and a line and carries a resolution bit; a
+// conversation has neither, so modelling it as a pathless thread would give
+// every CI report a fake "unresolved" state and a resolve key that cannot work.
+type Conversation struct {
+	ID     string `json:"id"`
+	Body   string `json:"body"`
+	Author User   `json:"author"`
+	// Kind is "comment" for the issue-comment stream, or the review state
+	// (APPROVED, CHANGES_REQUESTED, COMMENTED) when it is a review body.
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"createdAt"`
+	URL       string    `json:"url"`
+}
+
 // DiffFile is one file's parsed unified diff: hunks with LEFT/RIGHT line maps.
 type DiffFile struct {
 	Path      string

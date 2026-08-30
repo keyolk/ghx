@@ -128,6 +128,25 @@ func (a *App) titleLine() string {
 	return out
 }
 
+// pendingNote describes the action in flight, or "" when none is.
+//
+// It counts the PRs rather than naming them: a bulk merge can span a dozen, and
+// a footer that listed them would be truncated into saying nothing useful. The
+// rows carry the which; this carries the what.
+func (a *App) pendingNote() string {
+	if a.pending == nil {
+		return ""
+	}
+	frame := spinnerFrames[a.spinnerFrame%len(spinnerFrames)]
+	verb := a.pending.kind.verb()
+	// The count only appears when it is more than one. "merging 1 pull request"
+	// says the same as "merging" and reads as a report rather than as progress.
+	if n := len(a.pending.keys); n > 1 {
+		return pendingMarkStyle.Render(fmt.Sprintf("%s %s — %d pull requests…", frame, verb, n))
+	}
+	return pendingMarkStyle.Render(fmt.Sprintf("%s %s…", frame, verb))
+}
+
 // pollStatusNote describes the poll cadence when it is not the configured one.
 func (a *App) pollStatusNote() string {
 	// A suspended poll has to say so. Coming back to a window whose rows are an
@@ -164,6 +183,12 @@ func shortDuration(d time.Duration) string {
 }
 
 func (a *App) helpLine() string {
+	// An action in flight outranks even a toast: it is the only thing on screen
+	// that is still happening, and in the detail view — where there is no row to
+	// carry a marker — the footer is the sole place it can be said at all.
+	if note := a.pendingNote(); note != "" {
+		return truncateFooter(note, a.width)
+	}
 	// A recent toast outranks hints: it's the answer to what the user just did.
 	if a.toast != "" && time.Since(a.toastAt) < 4*time.Second {
 		return truncateFooter(a.toast, a.width)

@@ -42,6 +42,10 @@ type cachedDetail struct {
 	Diff      string            `json:"diff"`
 	Checks    []pr.Check        `json:"checks"`
 	Threads   []pr.ReviewThread `json:"threads"`
+	// Conversations is absent from entries written before the Comments tab
+	// listed them. It decodes as nil, which renders as a PR with no PR-level
+	// chatter until the next fetch — the same as any other stale field here.
+	Conversations []pr.Conversation `json:"conversations"`
 }
 
 func newDetailFileCache() *detailFileCache {

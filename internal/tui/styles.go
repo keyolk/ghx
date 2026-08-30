@@ -118,6 +118,10 @@ var (
 	threadResolvedGlyph = lipgloss.NewStyle().Foreground(colorSuccess)
 	threadUnknownGlyph  = lipgloss.NewStyle().Foreground(colorDim)
 
+	// The in-flight action marker. Warn rather than success: the row is mid
+	// action, and green would read as the action having finished.
+	pendingMarkStyle = lipgloss.NewStyle().Foreground(colorWarn)
+
 	// Spinner
 	spinnerColors = []lipgloss.Color{colorSuccess, colorUser, colorAssistant, colorPrimary, colorPurple}
 )

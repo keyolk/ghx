@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/keyolk/ghx/internal/pr"
 )
@@ -12,6 +14,145 @@ import (
 // Review threads carry the line-position data that `gh pr view --json` omits,
 // so they must come from GraphQL. Posting inline comments likewise has no gh
 // subcommand — it goes through `gh api` against the REST endpoints.
+
+// graphQLConversationsQuery fetches the PR-level comment stream: the issue
+// comments and the review bodies.
+//
+// Both are needed and neither substitutes for the other. Atlantis plan output,
+// CI bot reports, and "LGTM" all land here rather than on a line, so a PR can
+// carry a page of conversation while reviewThreads is empty — which is exactly
+// what "this PR has comments but ghx shows none" was.
+//
+// Review bodies are filtered caller-side rather than in the query: an approval
+// with no message is a review with an empty body, and GraphQL has no predicate
+// for that.
+const graphQLConversationsQuery = `query($owner:String!,$repo:String!,$number:Int!,$after:String,$rafter:String){
+  repository(owner:$owner,name:$repo){
+    pullRequest(number:$number){
+      comments(first:100,after:$after){
+        pageInfo{hasNextPage endCursor}
+        nodes{id body author{login} createdAt url}
+      }
+      reviews(first:100,after:$rafter){
+        pageInfo{hasNextPage endCursor}
+        nodes{id body state author{login} submittedAt url}
+      }
+    }
+  }
+}`
+
+type conversationsResponse struct {
+	Data struct {
+		Repository struct {
+			PullRequest struct {
+				Comments struct {
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+					Nodes []struct {
+						ID        string    `json:"id"`
+						Body      string    `json:"body"`
+						Author    pr.User   `json:"author"`
+						CreatedAt time.Time `json:"createdAt"`
+						URL       string    `json:"url"`
+					} `json:"nodes"`
+				} `json:"comments"`
+				Reviews struct {
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+					Nodes []struct {
+						ID          string    `json:"id"`
+						Body        string    `json:"body"`
+						State       string    `json:"state"`
+						Author      pr.User   `json:"author"`
+						SubmittedAt time.Time `json:"submittedAt"`
+						URL         string    `json:"url"`
+					} `json:"nodes"`
+				} `json:"reviews"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	} `json:"data"`
+}
+
+// Conversations fetches the PR-level comments and the review bodies, newest
+// last, so the Comments tab can show the discussion that is not attached to a
+// line.
+//
+// A review with an empty body is dropped: an approval with no message is a
+// state change the Overview tab already reports, and listing it here would put
+// a blank row under every reviewer's name.
+func (c *Client) Conversations(ctx context.Context, owner, repo string, number int) ([]pr.Conversation, error) {
+	var out []pr.Conversation
+	cursor, rcursor := "", ""
+	for {
+		args := []string{
+			"api", "graphql",
+			"-f", "query=" + graphQLConversationsQuery,
+			"-F", "owner=" + owner,
+			"-F", "repo=" + repo,
+			"-F", fmt.Sprintf("number=%d", number),
+		}
+		if cursor != "" {
+			args = append(args, "-F", "after="+cursor)
+		}
+		if rcursor != "" {
+			args = append(args, "-F", "rafter="+rcursor)
+		}
+		raw, err := c.execRaw(ctx, args...)
+		if err != nil {
+			// The discussion is worth less than the diff but more than nothing:
+			// REST answers both halves without the search budget.
+			if isGraphQLUnavailable(err) {
+				return c.ConversationsREST(ctx, owner, repo, number)
+			}
+			return nil, err
+		}
+		var resp conversationsResponse
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return nil, fmt.Errorf("decode conversations: %w", err)
+		}
+		p := resp.Data.Repository.PullRequest
+		for _, n := range p.Comments.Nodes {
+			out = append(out, pr.Conversation{
+				ID: n.ID, Body: n.Body, Author: n.Author,
+				Kind: "comment", CreatedAt: n.CreatedAt, URL: n.URL,
+			})
+		}
+		for _, n := range p.Reviews.Nodes {
+			if strings.TrimSpace(n.Body) == "" {
+				continue
+			}
+			out = append(out, pr.Conversation{
+				ID: n.ID, Body: n.Body, Author: n.Author,
+				Kind: n.State, CreatedAt: n.SubmittedAt, URL: n.URL,
+			})
+		}
+		// Both connections paginate independently; keep going while either has
+		// more, holding the exhausted one's cursor so it returns nothing further.
+		if !p.Comments.PageInfo.HasNextPage && !p.Reviews.PageInfo.HasNextPage {
+			break
+		}
+		if p.Comments.PageInfo.HasNextPage {
+			cursor = p.Comments.PageInfo.EndCursor
+		}
+		if p.Reviews.PageInfo.HasNextPage {
+			rcursor = p.Reviews.PageInfo.EndCursor
+		}
+	}
+	sortConversations(out)
+	return out, nil
+}
+
+// sortConversations puts the discussion in the order it happened, which is how
+// GitHub shows it and the only order in which a reply reads as a reply.
+func sortConversations(cs []pr.Conversation) {
+	sort.SliceStable(cs, func(i, j int) bool {
+		return cs[i].CreatedAt.Before(cs[j].CreatedAt)
+	})
+}
 
 // graphQLThreadsQuery fetches review threads with line positions.
 // Field notes (verified against the schema): the thread exposes `diffSide`,

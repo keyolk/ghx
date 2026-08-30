@@ -67,6 +67,10 @@ type App struct {
 	// diff view that writes a commit to someone's branch.
 	suggestion *suggestionPrompt
 
+	// pending is the confirmed action currently in flight, or nil. See
+	// pendingAction for why the gap it fills was worth closing.
+	pending *pendingAction
+
 	toast   string
 	toastAt time.Time
 
@@ -487,6 +491,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case reviewPostedMsg:
+		a.endPending()
 		if msg.err != nil {
 			return a, errCmd(msg.err)
 		}
@@ -504,6 +509,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case actionDoneMsg:
+		a.endPending()
 		if msg.err != nil {
 			return a, errCmd(msg.err)
 		}
@@ -522,6 +528,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case bulkActionDoneMsg:
+		a.endPending()
 		if a.list != nil {
 			for _, key := range msg.completed {
 				delete(a.list.selected, key)
@@ -873,6 +880,11 @@ func (a *App) openTargetsInBrowser(targets []actionTarget) tea.Cmd {
 }
 
 func (a *App) anyLoading() bool {
+	// An action in flight animates too: its marker is a spinner, and the tick
+	// that advances it only runs while something reports being busy.
+	if a.pending != nil {
+		return true
+	}
 	if a.list != nil && a.list.loading() {
 		return true
 	}

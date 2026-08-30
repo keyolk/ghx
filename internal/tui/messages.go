@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/keyolk/ghx/internal/gh"
+	"github.com/keyolk/ghx/internal/pr"
 )
 
 // tea.Msg types for async gh results. Each corresponds to a gh wrapper call
@@ -68,10 +69,16 @@ type quitMsg struct{}
 // top-level view state, so it reads the selection and constructs the detail model.
 type openDetailMsg struct{}
 
-// prThreadsMsg carries inline review threads fetched via GraphQL.
+// prThreadsMsg carries the Comments tab's data: the inline review threads and
+// the PR-level conversation.
+//
+// One message rather than two because they are fetched together — both need the
+// owner/repo that resolving costs a round trip, and the tab is not usable until
+// both have landed, so splitting them would buy a partial render nobody wants.
 type prThreadsMsg struct {
-	threads []prReviewThread
-	err     error
+	threads       []prReviewThread
+	conversations []pr.Conversation
+	err           error
 }
 
 // postCommentMsg asks app.go to post the composer's body to its target.

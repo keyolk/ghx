@@ -53,6 +53,12 @@ type prListModel struct {
 	query         string
 	statusFilters map[prStatus]bool
 
+	// pending marks the rows an action is currently working on, keyed the same
+	// way as selected. The delegate turns the mark cell into a spinner for
+	// these, which is the only place a per-row "this one is being merged" can
+	// go — the footer can say what is happening but not to which rows.
+	pending map[string]bool
+
 	// selected is keyed by owner/repo#number so cross-repo queues cannot collide.
 	// It spans every tab so a mark survives a detour, but only the marks on
 	// screen are acted on — see selectedSummaries. syncListItems refreshes the
@@ -122,7 +128,11 @@ func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km *Keymap, d
 			m.caches[i] = cached
 		}
 	}
-	l := list.New(nil, prListDelegate{isSelected: m.isSelected}, 80, 20)
+	l := list.New(nil, prListDelegate{
+		isSelected: m.isSelected,
+		isPending:  m.isPending,
+		spinner:    func() int { return m.spinner },
+	}, 80, 20)
 	initListBase(&l)
 	configureListSearch(&l)
 	m.list = &l
@@ -380,6 +390,12 @@ func (m *prListModel) selectTab(i int) tea.Cmd {
 // selectionKey is stable across sources and unique in cross-repo queues.
 func selectionKey(p pr.Summary) string {
 	return fmt.Sprintf("%s#%d", strings.ToLower(p.Repo), p.Number)
+}
+
+func (m *prListModel) setPending(keys map[string]bool) { m.pending = keys }
+
+func (m *prListModel) isPending(p pr.Summary) bool {
+	return m.pending != nil && m.pending[selectionKey(p)]
 }
 
 func (m *prListModel) isSelected(p pr.Summary) bool {
