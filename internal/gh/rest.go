@@ -3,6 +3,7 @@ package gh
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -376,4 +377,96 @@ func restSide(side string) string {
 		return "RIGHT"
 	}
 	return strings.ToUpper(side)
+}
+
+// restIssueComment is one entry from the issue-comment or review listing. The
+// two endpoints differ only in the fields this ignores, so one struct decodes
+// both — `state` is absent on an issue comment and stays empty there.
+type restIssueComment struct {
+	NodeID    string `json:"node_id"`
+	Body      string `json:"body"`
+	State     string `json:"state"`
+	HTMLURL   string `json:"html_url"`
+	CreatedAt string `json:"created_at"`
+	SubmitAt  string `json:"submitted_at"`
+	User      struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	} `json:"user"`
+}
+
+// ConversationsREST answers the PR-level discussion without GraphQL.
+//
+// Two calls rather than one: GitHub keeps the issue-comment stream and the
+// review bodies on separate endpoints, and dropping either loses half the
+// discussion — the bot reports live in the first, "LGTM" in the second.
+//
+// A failure on one endpoint does not discard the other. Half the conversation
+// is the answer here; refusing to show what did arrive would leave the tab
+// saying "no comments" on a PR that has them, which is the bug this path is
+// part of fixing.
+func (c *Client) ConversationsREST(ctx context.Context, owner, repo string, number int) ([]pr.Conversation, error) {
+	var out []pr.Conversation
+	var errs []error
+
+	raw, err := c.execRaw(ctx, "api", "--paginate",
+		fmt.Sprintf("repos/%s/%s/issues/%d/comments?per_page=100", owner, repo, number))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("issue comments: %w", err))
+	} else {
+		var comments []restIssueComment
+		if err := json.Unmarshal(raw, &comments); err != nil {
+			errs = append(errs, fmt.Errorf("decode REST issue comments: %w", err))
+		} else {
+			for _, cm := range comments {
+				out = append(out, restConversation(cm, "comment", cm.CreatedAt))
+			}
+		}
+	}
+
+	raw, err = c.execRaw(ctx, "api", "--paginate",
+		fmt.Sprintf("repos/%s/%s/pulls/%d/reviews?per_page=100", owner, repo, number))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("reviews: %w", err))
+	} else {
+		var reviews []restIssueComment
+		if err := json.Unmarshal(raw, &reviews); err != nil {
+			errs = append(errs, fmt.Errorf("decode REST reviews: %w", err))
+		} else {
+			for _, rv := range reviews {
+				// Same reason as the GraphQL path: a bodiless approval is a state
+				// the Overview tab reports, not a comment.
+				if strings.TrimSpace(rv.Body) == "" {
+					continue
+				}
+				out = append(out, restConversation(rv, rv.State, rv.SubmitAt))
+			}
+		}
+	}
+
+	if len(out) == 0 && len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	sortConversations(out)
+	return out, nil
+}
+
+func restConversation(cm restIssueComment, kind, at string) pr.Conversation {
+	conv := pr.Conversation{
+		ID:   cm.NodeID,
+		Body: cm.Body,
+		// REST answers in upper case for reviews and nothing for comments, so
+		// the caller's kind is normalized rather than trusted verbatim.
+		Kind: strings.ToUpper(kind),
+		URL:  cm.HTMLURL,
+	}
+	if kind == "comment" {
+		conv.Kind = "comment"
+	}
+	conv.Author.Login = cm.User.Login
+	conv.Author.IsBot = cm.User.Type == "Bot"
+	if t, err := parseGitHubTime(at); err == nil {
+		conv.CreatedAt = t
+	}
+	return conv
 }

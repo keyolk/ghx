@@ -15,8 +15,14 @@ import (
 // commentsView owns the thread list cursor and expansion state.
 type commentsView struct {
 	threads []pr.ReviewThread
-	cursor  int
-	offset  int
+	// conversations are the PR-level comments: the issue-comment stream and the
+	// review bodies. They are listed alongside the inline threads because a
+	// reviewer opening this tab is asking "what has been said about this PR",
+	// and a PR can carry an Atlantis plan failure and an approval while having
+	// no inline thread at all — which read as "no comments" before.
+	conversations []pr.Conversation
+	cursor        int
+	offset        int
 
 	// expanded thread ids show every comment rather than just the first
 	expanded map[string]bool
@@ -31,10 +37,42 @@ func newCommentsView() *commentsView {
 
 func (c *commentsView) setThreads(threads []pr.ReviewThread) {
 	c.threads = threads
-	if c.cursor >= len(c.visible()) {
-		c.cursor = max(len(c.visible())-1, 0)
+	c.clampCursor()
+}
+
+func (c *commentsView) setConversations(cs []pr.Conversation) {
+	c.conversations = cs
+	c.clampCursor()
+}
+
+func (c *commentsView) clampCursor() {
+	if c.cursor >= c.rowCount() {
+		c.cursor = max(c.rowCount()-1, 0)
 	}
 }
+
+// rowCount is how many selectable rows the tab has: the visible threads plus
+// the conversations, which are never hidden by the resolved filter — they have
+// no resolution to be filtered on.
+func (c *commentsView) rowCount() int {
+	return len(c.visible()) + len(c.conversations)
+}
+
+// conversationAt maps a cursor position past the threads onto a conversation,
+// which is how one cursor walks two lists without a second index to keep in
+// sync with this one.
+func (c *commentsView) conversationAt(i int) (pr.Conversation, bool) {
+	i -= len(c.visible())
+	if i < 0 || i >= len(c.conversations) {
+		return pr.Conversation{}, false
+	}
+	return c.conversations[i], true
+}
+
+// conversationIdentity keys a conversation for the expansion map. It shares the
+// map with threads, so the prefix is what stops a conversation id from ever
+// colliding with a thread id.
+func conversationIdentity(cv pr.Conversation) string { return "conv:" + cv.ID }
 
 // visible applies the resolved filter.
 //
@@ -122,19 +160,29 @@ func countThreadStates(threads []pr.ReviewThread) (open, done, unknown int) {
 }
 
 func (c *commentsView) moveCursor(delta int) {
-	n := len(c.visible())
+	n := c.rowCount()
 	if n == 0 {
 		return
 	}
 	c.cursor = clamp(c.cursor+delta, 0, n-1)
 }
 
+// selected returns the thread under the cursor. A cursor parked on a
+// conversation answers false, which is what makes the thread-only actions —
+// resolve, jump to diff, reply into a thread — decline rather than act on
+// whichever thread happens to be first.
 func (c *commentsView) selected() (pr.ReviewThread, bool) {
 	v := c.visible()
 	if c.cursor < 0 || c.cursor >= len(v) {
 		return pr.ReviewThread{}, false
 	}
 	return v[c.cursor], true
+}
+
+// selectedConversation returns the conversation under the cursor, if it is on
+// one.
+func (c *commentsView) selectedConversation() (pr.Conversation, bool) {
+	return c.conversationAt(c.cursor)
 }
 
 // toggleExpand shows or hides the replies of the selected thread.
@@ -161,6 +209,11 @@ func threadIdentity(t pr.ReviewThread) string {
 }
 
 func (c *commentsView) toggleExpand() {
+	if cv, ok := c.selectedConversation(); ok {
+		key := conversationIdentity(cv)
+		c.expanded[key] = !c.expanded[key]
+		return
+	}
 	t, ok := c.selected()
 	if !ok {
 		return
@@ -198,24 +251,28 @@ func (c *commentsView) toggleThreadResolved() (thread pr.ReviewThread, resolve b
 	return t, !t.IsResolved, true
 }
 
-// render draws the thread list, expanding the selected thread's replies.
+// render draws the thread list, then the PR-level conversation, expanding
+// whichever row the cursor is on.
 func (c *commentsView) render(width, height int) string {
 	v := c.visible()
-	if len(v) == 0 {
+	if len(v) == 0 && len(c.conversations) == 0 {
+		// Say which of the three empties this is. "No review threads" on a PR
+		// carrying an Atlantis failure and an approval was the report that
+		// started this: the tab was telling the truth about threads and the
+		// wrong thing about the PR.
 		if len(c.threads) > 0 {
 			return dimStyle.Render(fmt.Sprintf(
 				"All %d threads are resolved — press t to show them.", len(c.threads)))
 		}
-
-		return dimStyle.Render("No review threads.")
+		return dimStyle.Render("No comments on this PR.")
 	}
 
-	// Build display lines first, tracking which line each thread starts on so
-	// the cursor can be kept visible even when threads span several lines.
+	// Build display lines first, tracking which line each row starts on so the
+	// cursor can be kept visible even when a row spans several lines.
 	var lines []string
-	starts := make([]int, len(v))
+	starts := make([]int, 0, c.rowCount())
 	for i, t := range v {
-		starts[i] = len(lines)
+		starts = append(starts, len(lines))
 		lines = append(lines, c.threadHeader(t, i == c.cursor, width))
 		if c.expanded[threadIdentity(t)] {
 			for _, cm := range t.Comments {
@@ -224,9 +281,94 @@ func (c *commentsView) render(width, height int) string {
 		}
 	}
 
+	if len(c.conversations) > 0 {
+		// A separator only when both kinds are present: the two are answers to
+		// different questions (this line vs this PR), and running them together
+		// makes a pathless bot report look like a thread that lost its anchor.
+		if len(v) > 0 {
+			lines = append(lines, "", dimStyle.Render("── conversation ──"))
+		}
+		for i, cv := range c.conversations {
+			starts = append(starts, len(lines))
+			lines = append(lines, c.conversationHeader(cv, len(v)+i == c.cursor, width))
+			if c.expanded[conversationIdentity(cv)] {
+				lines = append(lines, c.conversationBody(cv, width)...)
+			}
+		}
+	}
+
 	c.clampOffsetLines(starts, len(lines), height)
 	end := min(c.offset+height, len(lines))
 	return strings.Join(lines[c.offset:end], "\n")
+}
+
+// conversationHeader draws one PR-level comment as a single row, matching the
+// thread rows' shape so one cursor walking both does not appear to change what
+// it is selecting.
+func (c *commentsView) conversationHeader(cv pr.Conversation, selected bool, width int) string {
+	fold := iconFoldClosed
+	if c.expanded[conversationIdentity(cv)] {
+		fold = iconFoldOpen
+	}
+	author := cv.Author.Login
+	if author == "" {
+		author = "unknown"
+	}
+	head := fmt.Sprintf("%s %s  %s", fold, conversationKindLabel(cv.Kind), author)
+
+	body := head
+	// The glyph cell threads occupy is left blank rather than filled: a
+	// conversation has no resolution, and any glyph there would be read as one.
+	avail := width - lipglossWidth(head) - 5
+	if preview := commentPreview(cv.Body); avail > 20 && preview != "" {
+		p, _ := truncateExact(preview, avail)
+		body += "  " + p
+	}
+	if selected {
+		bandWidth := max(width-2, 1)
+		body, _ = truncateExact(body, bandWidth)
+		if pad := bandWidth - lipglossWidth(body); pad > 0 {
+			body += strings.Repeat(" ", pad)
+		}
+		return "  " + selectedRowStyle.Render(body)
+	}
+
+	line := "  " + threadStyle.Render(head)
+	if preview := commentPreview(cv.Body); avail > 20 && preview != "" {
+		p, _ := truncateExact(preview, avail)
+		line += dimStyle.Render("  " + p)
+	}
+	line, _ = truncateExact(line, width)
+	return line
+}
+
+// conversationKindLabel names what kind of remark this is, in the column where
+// a thread shows its path:line. An approval and a bot report read very
+// differently, and the author alone does not say which is which.
+func conversationKindLabel(kind string) string {
+	switch strings.ToUpper(kind) {
+	case "APPROVED":
+		return "approved"
+	case "CHANGES_REQUESTED":
+		return "changes requested"
+	case "COMMENTED":
+		return "review"
+	case "DISMISSED":
+		return "dismissed"
+	case "COMMENT", "":
+		return "comment"
+	}
+	return strings.ToLower(kind)
+}
+
+// conversationBody renders the expanded comment, reusing the thread comment
+// layout so an expanded row looks the same whichever list it came from.
+func (c *commentsView) conversationBody(cv pr.Conversation, width int) []string {
+	return c.commentLines(pr.ThreadComment{
+		Body:      cv.Body,
+		Author:    cv.Author,
+		CreatedAt: cv.CreatedAt,
+	}, width)
 }
 
 func (c *commentsView) clampOffsetLines(starts []int, total, height int) {
@@ -418,8 +560,14 @@ func (c *commentsView) helpLine() string {
 	// sits at the end — which would be the legend, the one part that is not
 	// guessable from the key it describes. "resolve/unresolve" and "jump to diff"
 	// are each the obvious reading of their key in this tab; the glyphs are not.
+	// "thread" becomes "row" once conversations are listed, because j/k then
+	// walks both and naming only one of them misdescribes the key.
+	unit := "thread"
+	if len(c.conversations) > 0 {
+		unit = "row"
+	}
 	line := fmtHints(
-		"j/k", "thread",
+		"j/k", unit,
 		"c", "reply",
 		"X", "resolve",
 		"d", "diff",
@@ -438,6 +586,9 @@ func (c *commentsView) helpLine() string {
 
 // glyphLegend names the states currently on screen, or "" when there is only
 // one and nothing to distinguish.
+//
+// Conversations have no glyph and so contribute nothing here: an unlabelled
+// blank cell is not a state anyone needs told apart from another.
 func (c *commentsView) glyphLegend() string {
 	open, done, unknown := countThreadStates(c.visible())
 	var parts []string

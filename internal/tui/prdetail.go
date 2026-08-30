@@ -164,6 +164,7 @@ func (d *prDetailModel) loadFromCache() bool {
 	d.rawDiff = entry.Diff
 	d.checks.setChecks(entry.Checks)
 	d.comments.setThreads(entry.Threads)
+	d.comments.setConversations(entry.Conversations)
 	if err := d.diff.setContent(entry.Diff, entry.Threads); err != nil {
 		return d.discardCachedEntry(repo)
 	}
@@ -190,6 +191,7 @@ func (d *prDetailModel) discardCachedEntry(repo string) bool {
 	d.detail, d.rawDiff = nil, ""
 	d.checks.setChecks(nil)
 	d.comments.setThreads(nil)
+	d.comments.setConversations(nil)
 	_ = d.diff.setContent("", nil)
 	return false
 }
@@ -225,10 +227,11 @@ func (d *prDetailModel) saveCache() {
 		return
 	}
 	d.cache.save(repo, d.number, d.updatedAt, cachedDetail{
-		Detail:  d.detail,
-		Diff:    d.rawDiff,
-		Checks:  d.checks.checks,
-		Threads: d.comments.threads,
+		Detail:        d.detail,
+		Diff:          d.rawDiff,
+		Checks:        d.checks.checks,
+		Threads:       d.comments.threads,
+		Conversations: d.comments.conversations,
 	})
 }
 
@@ -270,7 +273,11 @@ func (d *prDetailModel) fetch() tea.Cmd {
 				return prThreadsMsg{err: err}
 			}
 			ts, err := client.ReviewThreads(c, owner, repo, n)
-			return prThreadsMsg{threads: ts, err: err}
+			if err != nil {
+				return prThreadsMsg{err: err}
+			}
+			cs, _ := client.Conversations(c, owner, repo, n)
+			return prThreadsMsg{threads: ts, conversations: cs}
 		},
 	}
 	return tea.Batch(cmds...)
@@ -300,7 +307,15 @@ func (d *prDetailModel) refreshThreads() tea.Cmd {
 			}
 		}
 		ts, err := client.ReviewThreads(c, owner, repo, n)
-		return prThreadsMsg{threads: ts, err: err}
+		if err != nil {
+			return prThreadsMsg{err: err}
+		}
+		// The conversation is the softer half: losing it must not empty the
+		// threads that did arrive, so its failure is dropped rather than
+		// returned. A tab with threads and no bot chatter still answers the
+		// question; a tab with neither does not.
+		cs, _ := client.Conversations(c, owner, repo, n)
+		return prThreadsMsg{threads: ts, conversations: cs}
 	}
 }
 
@@ -388,6 +403,7 @@ func (d *prDetailModel) handleThreadsMsg(msg prThreadsMsg) tea.Cmd {
 		return errCmd(msg.err)
 	}
 	d.comments.setThreads(msg.threads)
+	d.comments.setConversations(msg.conversations)
 	d.diff.setThreads(msg.threads)
 	d.fetchedThreads = true
 	d.saveCache()
@@ -544,7 +560,12 @@ func (d *prDetailModel) tabCount(t detailTabKind) string {
 		// resolved threads are hidden by default, so a bare total says a number
 		// that does not match what opening the tab shows. Unknown-resolution
 		// threads count as outstanding — they are visible for the same reason.
-		if n := len(d.comments.threads); n > 0 {
+		//
+		// Conversations join the total but never the outstanding half: they have
+		// no resolution, so counting them as outstanding would put a permanent
+		// backlog on a PR whose only remark is a green CI report.
+		convs := len(d.comments.conversations)
+		if n := len(d.comments.threads) + convs; n > 0 {
 			open, _, unknown := countThreadStates(d.comments.threads)
 			if outstanding := open + unknown; outstanding > 0 && outstanding < n {
 				return fmt.Sprintf("%d/%d", outstanding, n)
@@ -590,7 +611,7 @@ func (d *prDetailModel) renderActiveTab(w, h int) string {
 		}
 		return d.diff.render(w, h)
 	case tabComments:
-		if d.loadingThreads && len(d.comments.threads) == 0 {
+		if d.loadingThreads && len(d.comments.threads) == 0 && len(d.comments.conversations) == 0 {
 			return renderSpinner(d.spinnerFrame(), "Loading review threads…")
 		}
 		return d.comments.render(w, h)

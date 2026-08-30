@@ -354,7 +354,24 @@ func (d *prDetailModel) updateComments(key string) (tea.Cmd, bool) {
 	case "t":
 		d.comments.toggleResolvedFilter()
 		return nil, true
-	case "X":
+	case "X", "d":
+		// The thread-only actions. A cursor on a PR-level comment has no thread
+		// to act on, and staying silent would read as the key being broken —
+		// which is worse than the key not applying, because it is the same
+		// nothing a bug produces.
+		if _, onConv := d.comments.selectedConversation(); onConv {
+			return errCmd(fmt.Errorf(
+				"that is a PR comment, not a review thread — it has no line to " +
+					"jump to and nothing to resolve")), true
+		}
+		if key == "d" {
+			// Jump to this thread's anchor in the diff.
+			if t, ok := d.comments.selected(); ok {
+				d.setTab(tabDiff)
+				d.diff.jumpTo(t.Path, threadLine(t))
+			}
+			return nil, true
+		}
 		// Resolve or unresolve the selected thread. Optimistic on the local
 		// list so the marker flips immediately; the reload reconciles on failure.
 		thread, resolve, ok := d.comments.toggleThreadResolved()
@@ -370,16 +387,17 @@ func (d *prDetailModel) updateComments(key string) (tea.Cmd, bool) {
 			return nil, true
 		}
 		return d.resolveThread(thread, resolve), true
-	case "d":
-		// Jump to this thread's anchor in the diff.
-		if t, ok := d.comments.selected(); ok {
-			d.setTab(tabDiff)
-			d.diff.jumpTo(t.Path, threadLine(t))
-		}
-		return nil, true
 	case "c":
 		if t, ok := d.comments.selected(); ok && len(t.Comments) > 0 {
 			return d.composeReply(t.ID), true
+		}
+		// On a PR-level comment, c opens the PR-level composer. Replying to the
+		// PR is what "reply" means where the cursor is, and it is the only reply
+		// GitHub has for these — an issue comment carries no thread to reply into.
+		if _, onConv := d.comments.selectedConversation(); onConv {
+			return func() tea.Msg {
+				return openComposerMsg{target: composerTarget{issue: true}}
+			}, true
 		}
 		return nil, true
 	case "left":
