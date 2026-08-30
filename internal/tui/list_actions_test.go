@@ -424,6 +424,12 @@ func TestBulkResultClearsOnlyCompletedSelections(t *testing.T) {
 	}
 }
 
+// Every source is invalidated, and none of them loses its rows. What retires
+// stale data is the generation bump (a response landing under an old generation
+// is dropped) plus the dirty flag (the next visit refetches). Blanking a cache
+// bought neither of those and cost the user the queue they were working
+// through — on the visible tab immediately, and on every other tab the moment
+// it was opened.
 func TestBulkResultInvalidatesAllSourceCaches(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Sources = []config.SourceDef{
@@ -444,9 +450,18 @@ func TestBulkResultInvalidatesAllSourceCaches(t *testing.T) {
 		t.Fatal("bulk result should refresh the current source")
 	}
 	for i, cache := range a.list.caches {
-		if cache != nil {
-			t.Errorf("source %d cache was not invalidated", i)
+		if cache == nil {
+			t.Errorf("source %d blanked its rows instead of reloading in place", i)
 		}
+	}
+	if len(a.list.list.VisibleItems()) == 0 {
+		t.Error("the list emptied while the reload was in flight")
+	}
+	if a.list.dirty[0] {
+		t.Error("the visible source is refetching now, so it is not also dirty")
+	}
+	if !a.list.dirty[1] {
+		t.Error("the inactive source was not flagged to refetch on its next visit")
 	}
 	if !a.list.loadings[0] {
 		t.Error("current source should begin reloading")

@@ -36,12 +36,7 @@ func equalInts(a, b []int) bool {
 // addTab appends a second source with its own rows, as selectTab expects.
 func addTab(t *testing.T, a *App, name string, rows []pr.Summary) {
 	t.Helper()
-	l := a.list
-	l.sources = append(l.sources, config.SourceDef{Name: name, Query: "state:open"})
-	l.caches = append(l.caches, rows)
-	l.loadings = append(l.loadings, false)
-	l.generations = append(l.generations, 0)
-	l.errs = append(l.errs, nil)
+	a.list.appendSource(config.SourceDef{Name: name, Query: "state:open"}, rows)
 }
 
 func TestActionTargetsIgnoreSelectionsHiddenByFilter(t *testing.T) {
