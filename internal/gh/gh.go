@@ -7,6 +7,7 @@ package gh
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -197,6 +198,33 @@ func (c *Client) AuthStatus(ctx context.Context) error {
 	// auth status has no --repo flag, but a scoped client still supplies the
 	// credential selected for that repository through GH_TOKEN.
 	_, err := c.execRaw(ctx, "auth", "status")
+	if err != nil {
+		return authStatusReason(err)
+	}
+	return nil
+}
+
+// authStatusReason reduces `gh auth status` output to the line that says what
+// went wrong.
+//
+// The command reports on every logged-in account, so its stderr is a dozen
+// lines listing the ones that are fine alongside the one that is not. Carried
+// whole into an error, that becomes a dozen-line message — and this error is
+// shown in a one-line footer, so what reaches the user is a fragment of an
+// inventory rather than the reason. The failing line is marked with an X.
+func authStatusReason(err error) error {
+	text := err.Error()
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "X ") {
+			return errors.New(strings.TrimSpace(strings.TrimPrefix(line, "X ")))
+		}
+	}
+	// No marked line: keep the first, which is where gh puts a hard failure
+	// ("gh auth status: exit status 1") that has no inventory around it.
+	if first, _, ok := strings.Cut(text, "\n"); ok {
+		return errors.New(strings.TrimSpace(first))
+	}
 	return err
 }
 

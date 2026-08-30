@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -149,5 +150,70 @@ func TestAccountSelectorPrefersGHUser(t *testing.T) {
 	}
 	if got := (config.AccountDef{Name: "empty"}).Selector(); got != "" {
 		t.Errorf("Selector() = %q, want empty", got)
+	}
+}
+
+// Account verification runs after the TUI owns the screen, so nothing it has to
+// say may be written to the terminal: bubbletea does not know about a direct
+// write and never redraws over it. A shared-token warning went to os.Stderr and
+// sat on top of the PR list for the rest of the session.
+func TestVerifyAccountsForTUIReturnsWarningsInsteadOfPrinting(t *testing.T) {
+	client := fakeVerifier{tokens: map[string]string{
+		"ghuser:one": "same-token",
+		"ghuser:two": "same-token",
+	}}
+	accounts := []config.AccountDef{
+		{Name: "one", GHUser: "one"},
+		{Name: "two", GHUser: "two"},
+	}
+
+	err := verifyAccountsForTUI(context.Background(), client, accounts)
+	if err == nil {
+		t.Fatal("the shared-token warning was dropped instead of being returned")
+	}
+	var warning accountWarning
+	if !errors.As(err, &warning) {
+		t.Fatalf("got %T, want an accountWarning the TUI can toast", err)
+	}
+	if !strings.Contains(warning.Error(), "same token") {
+		t.Errorf("warning = %q, want the shared-token explanation", warning)
+	}
+}
+
+// A clean run says nothing at all — a toast on every startup would be noise.
+func TestVerifyAccountsForTUIStaysQuietWhenEverythingWorks(t *testing.T) {
+	client := fakeVerifier{tokens: map[string]string{
+		"ghuser:one": "token-one",
+		"ghuser:two": "token-two",
+	}}
+	accounts := []config.AccountDef{
+		{Name: "one", GHUser: "one"},
+		{Name: "two", GHUser: "two"},
+	}
+
+	if err := verifyAccountsForTUI(context.Background(), client, accounts); err != nil {
+		t.Errorf("a healthy setup produced %q", err)
+	}
+}
+
+// A failing account is still a warning, not a shutdown: the other account's
+// review queue is usable and withholding it helps nobody.
+func TestVerifyAccountsForTUIWarnsAboutOneBrokenAccount(t *testing.T) {
+	client := fakeVerifier{
+		tokens:  map[string]string{"ghuser:one": "token-one", "ghuser:two": "token-two"},
+		failing: map[string]bool{"ghuser:two": true},
+	}
+	accounts := []config.AccountDef{
+		{Name: "one", GHUser: "one"},
+		{Name: "two", GHUser: "two"},
+	}
+
+	err := verifyAccountsForTUI(context.Background(), client, accounts)
+	var warning accountWarning
+	if !errors.As(err, &warning) {
+		t.Fatalf("got %T, want a warning that names the broken account", err)
+	}
+	if !strings.Contains(warning.Error(), "two") {
+		t.Errorf("warning = %q, want it to name the failing account", warning)
 	}
 }

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -101,7 +102,7 @@ func run() (err error) {
 		// status`, and the cached rows are useful long before that returns.
 		accounts := cfg.Accounts
 		app.SetAccountVerifier(func(ctx context.Context) error {
-			return verifyAccounts(ctx, client, accounts, os.Stderr)
+			return verifyAccountsForTUI(ctx, client, accounts)
 		})
 	}
 
@@ -130,6 +131,34 @@ func run() (err error) {
 	}
 	return nil
 }
+
+// verifyAccountsForTUI runs the account check for an app that is already on
+// screen, returning everything it has to say instead of printing any of it.
+//
+// This runs after the TUI has taken the alt screen, so a write to os.Stderr
+// lands on top of the rendered frame and stays there — no redraw touches it,
+// because bubbletea does not know it is there. That is how a broken account
+// painted a whole `gh auth status` dump across the PR list. Everything comes
+// back as an error so it reaches the footer, which is the surface that belongs
+// to the app.
+func verifyAccountsForTUI(ctx context.Context, client accountVerifier, accounts []config.AccountDef) error {
+	var warn bytes.Buffer
+	if err := verifyAccounts(ctx, client, accounts, &warn); err != nil {
+		return err
+	}
+	if warn.Len() > 0 {
+		return accountWarning{text: warn.String()}
+	}
+	return nil
+}
+
+// accountWarning carries a non-fatal verification message back to the TUI so it
+// can be shown as a toast. It is an error only so it can travel the return path
+// the verifier already has; a warning is not a failure, and the app is
+// perfectly usable while one is on screen.
+type accountWarning struct{ text string }
+
+func (w accountWarning) Error() string { return w.text }
 
 // accountVerifier is the slice of the gh client that account verification uses.
 // Taking an interface keeps the check testable without a real gh or credential

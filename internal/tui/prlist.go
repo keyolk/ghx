@@ -34,6 +34,12 @@ type prListModel struct {
 	list *list.Model
 	pane *SplitPane
 
+	// warnings keeps the last partial-failure message per source. A response can
+	// succeed and still be incomplete — a cross-account search reports success
+	// as soon as one account answers — and an empty pane must not call that
+	// "no PRs" when what it means is "an account could not be reached".
+	warnings []error
+
 	// per-source cache so switching tabs is instant after the first load
 	caches      [][]pr.Summary
 	loadings    []bool
@@ -115,6 +121,7 @@ func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km *Keymap, d
 		loadings:      make([]bool, len(sources)),
 		generations:   make([]uint64, len(sources)),
 		dirty:         make([]bool, len(sources)),
+		warnings:      make([]error, len(sources)),
 		errs:          make([]error, len(sources)),
 		selected:      make(map[string]pr.Summary),
 		statusFilters: make(map[prStatus]bool),
@@ -272,6 +279,7 @@ func (m *prListModel) appendSource(src config.SourceDef, rows []pr.Summary) {
 	m.generations = append(m.generations, 0)
 	m.errs = append(m.errs, nil)
 	m.dirty = append(m.dirty, false)
+	m.warnings = append(m.warnings, nil)
 }
 
 // currentDirty reports whether the visible source needs a refetch.
@@ -324,6 +332,22 @@ func (m *prListModel) handlePRListMsg(msg prListMsg) tea.Cmd {
 	m.missStreak = 0
 	m.stale = false
 	m.errs[msg.sourceIdx] = nil
+	m.warnings[msg.sourceIdx] = msg.warning
+	// An empty result that came with a warning is not a verdict on the queue.
+	// A cross-account search reports success as soon as one account answers, so
+	// a broken credential on the only account that has PRs comes back as zero
+	// rows and a warning — and overwriting the cache with that turned a working
+	// queue into "No PRs in this source", which is the one reading that is
+	// certainly wrong. Keeping the rows costs a stale list until the account is
+	// fixed; the toast says why, and any answer with rows replaces them.
+	if len(msg.prs) == 0 && msg.warning != nil && len(m.caches[msg.sourceIdx]) > 0 {
+		if msg.sourceIdx == m.curTab {
+			m.syncListItems()
+		}
+		return func() tea.Msg {
+			return toastMsg{text: "PR list warning: " + flattenLine(msg.warning.Error())}
+		}
+	}
 	m.caches[msg.sourceIdx] = msg.prs
 	// Persist so the next session opens on these rows instead of re-fetching.
 	if m.fileCache != nil {
@@ -657,6 +681,13 @@ func (m *prListModel) view(w, h int) string {
 			body = errorStyle.Render("Could not load this source:") + "\n  " +
 				dimStyle.Render(m.errs[m.curTab].Error()) + "\n\n" +
 				dimStyle.Render("R retries.")
+		case m.warnings[m.curTab] != nil:
+			// Not "no PRs": the search came back incomplete, and the difference
+			// between an empty queue and an unreachable account is the whole
+			// question the person looking at this pane is asking.
+			body = errorStyle.Render("This source could not be searched in full:") + "\n  " +
+				dimStyle.Render(flattenLine(m.warnings[m.curTab].Error())) + "\n\n" +
+				dimStyle.Render("Any PRs it holds are not listed. R retries.")
 		case m.query != "" || len(m.statusFilters) > 0:
 			var filters []string
 			if m.query != "" {
