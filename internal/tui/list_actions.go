@@ -125,7 +125,48 @@ const (
 	confirmToggleState
 	confirmReady
 	confirmMerge
+	// confirmLabels never reaches a confirmation prompt — the picker is its own
+	// gate. It exists so the in-flight marker can name what it is doing.
+	confirmLabels
 )
+
+// verb names the action in the present continuous, for the row and the footer
+// while it is in flight. The past-tense labels the result carries answer a
+// different question — what happened — and reading "merged" on a PR that is
+// still being merged is exactly the wrong thing to say.
+func (k confirmKind) verb() string {
+	switch k {
+	case confirmApprove:
+		return "approving"
+	case confirmClose:
+		return "closing"
+	case confirmReopen:
+		return "reopening"
+	case confirmToggleState:
+		return "updating"
+	case confirmReady:
+		return "updating"
+	case confirmMerge:
+		return "merging"
+	case confirmLabels:
+		return "updating labels"
+	}
+	return "working"
+}
+
+// pendingAction is the action currently in flight, so the UI can say what it is
+// doing instead of going silent between the keypress and the result.
+//
+// Merge is the case that made this necessary: the confirmation closes on `y`,
+// the request takes up to a minute, and until this nothing on screen changed at
+// all. A queue that looks identical before and after a keypress reads as a key
+// that did nothing, which invites pressing it again.
+type pendingAction struct {
+	kind confirmKind
+	// keys are the target keys (owner/repo#number) still being worked on, so a
+	// bulk action can mark the rows it is touching and leave the rest alone.
+	keys map[string]bool
+}
 
 // confirmPrompt gates an action behind a yes/no. target preserves the focused
 // PR for the single-item UI; targets carries the full multi-selection.
@@ -165,8 +206,10 @@ func (a *App) handleConfirmKey(msg tea.KeyMsg) tea.Cmd {
 	case "y", "Y":
 		a.confirm = nil
 		if p.bulk {
+			a.beginPending(p.kind, p.targets)
 			return a.runConfirmedMany(p.kind, p.targets)
 		}
+		a.beginPending(p.kind, []actionTarget{p.target})
 		return a.runConfirmed(p.kind, p.target)
 	case "n", "N", "esc", "q":
 		a.confirm = nil
@@ -174,6 +217,29 @@ func (a *App) handleConfirmKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	// Anything else is ignored rather than treated as consent.
 	return nil
+}
+
+// beginPending records what is in flight and starts the spinner. The tick is
+// gated on something being in progress, so without arming it here the marker
+// would sit frozen on one frame for the whole minute a merge can take.
+func (a *App) beginPending(kind confirmKind, targets []actionTarget) {
+	keys := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		keys[t.key()] = true
+	}
+	a.pending = &pendingAction{kind: kind, keys: keys}
+	if a.list != nil {
+		a.list.setPending(keys)
+	}
+}
+
+// endPending clears the in-flight marker. It runs on failure as well as on
+// success: a row left spinning after an error would claim work that stopped.
+func (a *App) endPending() {
+	a.pending = nil
+	if a.list != nil {
+		a.list.setPending(nil)
+	}
 }
 
 func (a *App) performConfirmed(ctx context.Context, kind confirmKind, t actionTarget) (string, error) {
@@ -540,6 +606,10 @@ func (a *App) submitLabels() tea.Cmd {
 	add, remove := p.diff()
 	targets := append([]actionTarget(nil), p.targets...)
 	a.labels = nil
+	// Labels are two sequential calls per PR at a 45s timeout each, so a
+	// multi-PR edit is the same silence a merge was. confirmNone would say
+	// "working"; the label edit deserves its own word.
+	a.beginPending(confirmLabels, targets)
 	return func() tea.Msg {
 		var completed []string
 		var errs []error

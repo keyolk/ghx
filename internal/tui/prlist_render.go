@@ -17,6 +17,10 @@ import (
 // prListDelegate renders one row per PR straight to the writer.
 type prListDelegate struct {
 	isSelected func(prSummary) bool
+	// isPending and spinner render the in-flight marker. A PR being merged
+	// takes up to a minute, and the row is where "this one" can be said.
+	isPending func(prSummary) bool
+	spinner   func() int
 }
 
 func (d prListDelegate) Height() int                         { return 1 }
@@ -50,9 +54,21 @@ func (d prListDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	fixed := 2 + numW + 1 + statusW + 1 + repoW + 1 + authorW + 1 + ageW
 	titleW := clamp(width-fixed, 10, titleMaxW)
 
+	// The in-flight marker outranks the selection tick: both live in the same
+	// cell, and while a row is being acted on, that it is being acted on is the
+	// more urgent of the two things to know. The mark returns when the action
+	// settles, and the selection itself is untouched underneath.
 	mark := " "
 	if d.isSelected != nil && d.isSelected(p) {
 		mark = iconCheck
+	}
+	pending := d.isPending != nil && d.isPending(p)
+	if pending {
+		frame := 0
+		if d.spinner != nil {
+			frame = d.spinner()
+		}
+		mark = spinnerFrames[frame%len(spinnerFrames)]
 	}
 	numCell := padCell("#"+itoa(p.Number), numW)
 	repoCell := padCell(fitCell(shortRepo(p.Repo), repoW), repoW)
@@ -81,7 +97,9 @@ func (d prListDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	}
 
 	markCell := "  "
-	if mark != " " {
+	if pending {
+		markCell = pendingMarkStyle.Render(mark) + " "
+	} else if mark != " " {
 		markCell = checkPassStyle.Render(mark) + " "
 	}
 	row := markCell + prNumberStyle.Render(numCell) + " " +
