@@ -53,6 +53,14 @@ func (a *App) runPalette(line string) tea.Cmd {
 			}
 		}
 		return func() tea.Msg { return openComposerMsg{target: composerTarget{issue: true}} }
+	case "repo":
+		// With no argument this is the picker, which is the discoverable form:
+		// `:repo` and `e` reach the same place. With one it opens directly, so a
+		// repository can be named without knowing whether ghx has seen it.
+		if arg == "" {
+			return a.openRepoPicker()
+		}
+		return a.openRepo(arg)
 	case "checkout":
 		if a.detail == nil {
 			return a.paletteNeedsPR()

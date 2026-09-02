@@ -60,6 +60,9 @@ func (a *App) View() string {
 	if a.statusFilter != nil {
 		content = overlayBody(content, a.renderStatusFilter(a.width, rows), a.width, rows)
 	}
+	if a.repos != nil {
+		content = overlayBody(content, a.renderRepoPicker(a.width, rows), a.width, rows)
+	}
 	// The confirmation sits above everything else it can coexist with: it is the
 	// last thing between a keypress and an action that cannot be taken back.
 	if a.confirm != nil {
@@ -182,6 +185,10 @@ func (a *App) helpLine() string {
 	if a.statusFilter != nil {
 		return truncateFooter(
 			fmtHints("sp", "toggle", "enter", "apply", "c", "clear", "esc", "cancel"), a.width)
+	}
+	if a.repos != nil {
+		return truncateFooter(
+			fmtHints("↑↓", "move", "enter", "open", "esc", "cancel"), a.width)
 	}
 	if a.mergePrompt != nil {
 		return truncateFooter(fmtHints("y", "merge", "s/m/b", "strategy", "esc", "cancel"), a.width)
