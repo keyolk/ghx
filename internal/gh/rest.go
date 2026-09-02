@@ -81,7 +81,7 @@ func (c *Client) SearchPRsREST(ctx context.Context, query string, limit int) ([]
 	if limit <= 0 {
 		limit = 50
 	}
-	q := strings.TrimSpace(query + " is:pr")
+	q := strings.TrimSpace(withoutArchived(query) + " is:pr")
 	endpoint := fmt.Sprintf("search/issues?q=%s&sort=updated&order=desc&per_page=%d",
 		urlQueryEscape(q), min(limit, 100))
 	// --cache disabled: a review queue that answers from a stale cache is worse

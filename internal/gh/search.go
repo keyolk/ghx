@@ -61,7 +61,7 @@ func (c *Client) SearchPRs(ctx context.Context, query string, limit int) ([]pr.S
 	args := []string{"search", "prs"}
 	// Flags that gh exposes directly must not be smuggled in as query terms,
 	// so split the query into recognized flags plus a free-text remainder.
-	args = append(args, searchQueryArgs(query)...)
+	args = append(args, searchQueryArgs(withoutArchived(query))...)
 	args = append(args,
 		"--limit", strconv.Itoa(limit),
 		"--json", "id,number,title,state,isDraft,url,updatedAt,author,repository,labels",
@@ -146,10 +146,39 @@ func searchQueryArgs(query string) []string {
 			flags = append(flags, "--label", val)
 		case "review":
 			flags = append(flags, "--review", val)
+		case "archived":
+			switch strings.ToLower(val) {
+			case "true", "false":
+				// --archived takes {true|false} and must be joined with =:
+				// a separated value is read as the free-text query instead.
+				flags = append(flags, "--archived="+strings.ToLower(val))
+			default:
+				terms = append(terms, tok)
+			}
 		default:
 			terms = append(terms, tok)
 		}
 	}
 	// Free-text terms must come before flags for gh to treat them as the query.
 	return append(terms, flags...)
+}
+
+// withoutArchived adds archived:false to a cross-repository query so the queues
+// stop carrying PRs from repositories nobody can act on: an archived repository
+// is read-only, so approving, commenting, or merging from those rows fails at
+// the API. They are dead weight in a review queue.
+//
+// A query that already says archived: is left alone — the user asked for
+// something specific — and so is one scoped to a single repo:, which is the
+// REST fallback for a pinned source. That source names its repository outright,
+// and dropping its PRs because the repository was archived would make the tab
+// silently empty while the GraphQL path it stands in for still lists them.
+func withoutArchived(query string) string {
+	for _, tok := range strings.Fields(query) {
+		switch key, _, _ := strings.Cut(tok, ":"); strings.ToLower(key) {
+		case "archived", "repo":
+			return query
+		}
+	}
+	return strings.TrimSpace(query + " archived:false")
 }
