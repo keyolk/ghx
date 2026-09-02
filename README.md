@@ -116,6 +116,17 @@ branch protection, with an explicit confirmation but no additional ghx policy.
 - **Merge** — explicit strategy/confirmation, authorized by the selected repository credential
 - **Copy URLs** — `y` puts the focused PR's URL, or the whole multi-selection's,
   on the clipboard
+- **Open any repository** — `e` (or `:repo`) lists repositories ranked by how
+  much and how recently you use them, so the ones you actually work in are the
+  first rows and typing is optional. Repos seen in the loaded queues are offered
+  too, and a slug typed in full opens even a repository ghx has never seen. The
+  tab is added beside the queue you came from, so the second visit is a number
+  key. The ranking lives in `~/.config/ghx/repos.json`
+- **Freshness** — the title states how old the rows on screen are and whether
+  the refresh is running (`7m ago · poll 30s`, `⠋ fetching`, `paused ·
+  unfocused`, `18m ago · idle · poll 5m`). A polled list looks identical whether
+  the poll is working or died twenty minutes ago; this is what tells them apart.
+  The age is per tab, because only the visible one polls
 - **Command palette** — `:` for vim-style ex commands
 - **NO_COLOR** — reverse-video selection, readable in monochrome
 - **GraphQL / REST fallback** — nearly everything gh reads is GraphQL under the
@@ -150,6 +161,11 @@ sources:
     query: "review-requested:@me state:open"
   - name: "Assigned"
     query: "assignee:@me state:open"
+
+# Cross-repository sources skip archived repositories: those are read-only, so
+# approving or merging from such a row fails at the API. Say archived:true (or
+# archived:false) in a query to decide for yourself; a repo-scoped source always
+# lists its repository regardless.
 
 # Lead with the repos you're working in (cwd, then the tmux window's panes)
 detect_repo: true
@@ -200,6 +216,7 @@ Press `?` inside the TUI for the full list. Highlights:
 | `L` | edit labels on selected PRs; cross-repo selections show common labels |
 | `d` / `:ready` | toggle ready/draft on selected PRs |
 | `f` | choose draft / merged / approved / changes requested / unresolved filters |
+| `e` / `:repo` | open a repository's PRs as a tab, ranked by how much you use it |
 | `R` | reload the current source (the tab shows a spinner while it runs) |
 | `/` | text search (AND with active status filters) |
 | `c` | comment on diff line |

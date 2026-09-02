@@ -32,6 +32,8 @@ actions.
 - `internal/tui/detail_comments.go` — `threadIdentity` (REST 스레드의 안정적 식별자)
 - `internal/gh/budget.go` — 계정 GraphQL 예산 관측 (응답에 실려오는 rateLimit)
 - `internal/tui/listpane.go` — 서브커맨드 TUI 공용 스크롤 리스트·필터 (`ListPane`)
+- `internal/tui/repostore.go` — repo 사용 이력(방문수 × 최근성) 랭킹, `~/.config/ghx/repos.json`
+- `internal/tui/repo_picker.go` — `e` / `:repo`, 임의 repo를 탭으로 여는 피커
 - `internal/tui/admin` — `ghx admin`: People/Teams/보호규칙/릴리스/브랜치/태그/웹훅
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
@@ -105,6 +107,16 @@ actions.
   1명**, 나머지 149명은 19개 팀 경유다. `affiliation=direct`를 한 번 더 불러 대조해야
   구분되고, 구조 자체는 `repos/{repo}/teams`에만 있다. 팀 경유 사용자에게 `d`를 눌러도
   레포에는 해제할 것이 없다 — 그래서 행이 출처를 밝힌다.
+- **폴링되는 리스트는 폴이 죽어도 똑같이 보인다.** 행이 그대로이므로 만료된 credential,
+  중단된 폴, 정말 변한 게 없는 큐가 화면상 구분되지 않는다. 그래서 타이틀 우측이 (1) 지금
+  행의 나이, (2) 폴 cadence를 항상 함께 낸다 — 둘 중 하나만으로는 오해를 부른다. cadence는
+  설정값과 같아도 표시한다: 생략하면 "30초마다 폴링"과 "아예 폴링 안 함"이 같은 화면이 되고,
+  그게 바로 여기서 답해야 할 질문이다. 나이는 **소스별**이다(보이는 탭만 폴링하므로).
+  디스크 캐시로 seed된 행은 파일의 `SavedAt`을 물려받는다 — 재시작을 "방금"으로 찍는 것이
+  이 표시가 막으려는 바로 그 거짓말이다.
+- **`inFlight`는 superseded 응답에서도 해제한다.** 그건 "요청이 떠 있는가"이지 "답이
+  쓸모있었는가"가 아니다. 폐기 경로에서 잡고 있으면 폴 체인이 영구히 막히고, 타이틀이
+  "fetching"으로 굳는다.
 - **타이머를 무장하는 곳은 `Init`과 `prListMsg` 단 두 곳**이다. 다른 데서 `armPoll`을
   부르면 *현재* generation 타이머가 둘이 되고, generation 검사는 둘 다 현행이라
   구분하지 못한다 — cadence가 조용히 2배가 된다. `idle_poll_test.go`의
