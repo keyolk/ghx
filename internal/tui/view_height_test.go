@@ -155,8 +155,25 @@ func overlayCases(a *App) []overlayCase {
 		}, func() { a.labels = nil }},
 		{"statusFilter", func() { a.statusFilter = newStatusFilterPicker(map[prStatus]bool{}) },
 			func() { a.statusFilter = nil }},
+		{"repos", func() {
+			a.openRepoPicker()
+			a.repos.all = manyRepos(40)
+		}, func() { a.repos = nil }},
 		{"composer", func() { a.composer.active = true }, func() { a.composer.active = false }},
 	}
+}
+
+// A repo picker with more rows than the box can hold is the case that overflows:
+// it scrolls inside its own height rather than drawing everything and letting
+// the renderer keep the last screenful — which would drop the title and tabs.
+func manyRepos(n int) []repoCandidate {
+	out := make([]repoCandidate, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, repoCandidate{
+			Slug: fmt.Sprintf("some-organization/repository-%d", i), Visits: i, OpenPRs: i,
+		})
+	}
+	return out
 }
 
 func manyLabels(n int) []gh.RepoLabel {

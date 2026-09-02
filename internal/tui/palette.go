@@ -29,6 +29,7 @@ var paletteCommands = []paletteCommand{
 	{"open", "", "open in browser"},
 	{"copy", "", "copy the PR URL to the clipboard"},
 	{"source", "<name>", "switch PR list source"},
+	{"repo", "<owner/name>", "open a repository's PRs as a tab"},
 	{"filter", "<query>", "filter the PR list"},
 	{"help", "", "show help"},
 	{"quit", "", "exit ghx"},

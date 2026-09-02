@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -26,6 +27,16 @@ func testApp(t *testing.T, rows []pr.Summary) *App {
 	cfg.Sources = []config.SourceDef{{Name: "test", Query: "state:open"}}
 	a := NewApp(cfg, DefaultKeymap(), gh.NewClient(0))
 	a.width, a.height = 160, 40
+	// The constructor seeds every tab from ~/.config/ghx/cache, so a machine
+	// that has actually run ghx hands the test the developer's own rows — and
+	// their save times, which the freshness readout then reports as the age of
+	// these rows. Isolating HOME instead would be wrong here: callers construct
+	// several models per test and expect them to share one cache directory.
+	a.list.fileCache = &prFileCache{dir: t.TempDir()}
+	for i := range a.list.caches {
+		a.list.caches[i] = nil
+		a.list.fetchedAt[i] = time.Time{}
+	}
 	a.list.caches[0] = rows
 	a.list.syncListItems()
 	return a

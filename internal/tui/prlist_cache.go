@@ -50,21 +50,32 @@ func cacheKey(s config.SourceDef) string {
 // load reads a source's cached PRs. Returns nil (cold start) when the file is
 // missing, unreadable, or older than maxAge when maxAge > 0.
 func (c *prFileCache) load(s config.SourceDef, maxAge time.Duration) []pr.Summary {
+	prs, _ := c.loadAt(s, maxAge)
+	return prs
+}
+
+// loadAt is load plus when the entry was written.
+//
+// The age matters as much as the rows: seeded rows are shown as though they
+// were just fetched, and a restart that stamped them "now" would say the queue
+// is current when it is however old the file is. The caller stamps its
+// per-source clock with this, so a resumed session admits what it is showing.
+func (c *prFileCache) loadAt(s config.SourceDef, maxAge time.Duration) ([]pr.Summary, time.Time) {
 	if c.dir == "" {
-		return nil
+		return nil, time.Time{}
 	}
 	data, err := os.ReadFile(filepath.Join(c.dir, cacheKey(s)))
 	if err != nil {
-		return nil
+		return nil, time.Time{}
 	}
 	var entry cachedPRList
 	if err := json.Unmarshal(data, &entry); err != nil {
-		return nil
+		return nil, time.Time{}
 	}
 	if maxAge > 0 && time.Since(entry.SavedAt) > maxAge {
-		return nil
+		return nil, time.Time{}
 	}
-	return entry.PRs
+	return entry.PRs, entry.SavedAt
 }
 
 // save writes a source's PRs. A failure is logged but not surfaced — the cache

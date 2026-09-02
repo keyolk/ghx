@@ -352,3 +352,61 @@ printf '%s\n' '{"data":{"nodes":[{"id":"PR_1","state":"OPEN","isDraft":true,"rev
 		t.Error("a PR converted back to draft was not picked up")
 	}
 }
+
+// The filter has to reach the wire on both paths, not just the string helper:
+// gh and REST search take it in different shapes, and a queue that still shows
+// archived repositories looks correct until an action fails against one.
+func TestSearchPRsFiltersArchivedOnBothPaths(t *testing.T) {
+	argv := filepath.Join(t.TempDir(), "argv")
+	fakeGH(t, fmt.Sprintf(`
+echo "$*" >>%q
+case "$1 $2" in
+  "search prs") echo "GraphQL: API rate limit exceeded (graphql_rate_limit)" >&2; exit 1 ;;
+  "api search/issues"*) printf '%%s\n' '{"items":[]}' ;;
+  *) echo "unexpected: $*" >&2; exit 1 ;;
+esac
+`, argv))
+	if _, err := NewClient(0).SearchPRs(context.Background(), "review-requested:@me state:open", 50); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected the gh call and its REST retry, got %v", lines)
+	}
+	// gh models this one as a flag, and only the joined form parses.
+	if !strings.Contains(lines[0], "--archived=false") {
+		t.Errorf("gh search prs argv lacks the filter: %q", lines[0])
+	}
+	// REST search takes the qualifier verbatim inside q=.
+	if !strings.Contains(lines[1], "archived:false") {
+		t.Errorf("REST search argv lacks the filter: %q", lines[1])
+	}
+}
+
+// A source pinned to one repository names it outright. Dropping its PRs because
+// the repository is archived would empty the tab with no explanation — and the
+// GraphQL path this stands in for still lists them.
+func TestListPRsRESTKeepsArchivedRepoScope(t *testing.T) {
+	argv := filepath.Join(t.TempDir(), "argv")
+	fakeGH(t, fmt.Sprintf(`
+echo "$*" >>%q
+case "$1 $2" in
+  "api search/issues"*) printf '%%s\n' '{"items":[]}' ;;
+  *) echo "unexpected: $*" >&2; exit 1 ;;
+esac
+`, argv))
+	if _, err := NewClient(0).WithRepo("acme/old").ListPRsREST(context.Background(), "state:open", 50); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "archived") {
+		t.Errorf("a repo-scoped listing must not be filtered: %q", strings.TrimSpace(string(raw)))
+	}
+}

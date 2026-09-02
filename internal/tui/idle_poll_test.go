@@ -263,12 +263,19 @@ func TestTitleSaysWhyThePollSlowedDown(t *testing.T) {
 	a, now := idleApp(t)
 	a.width = 120
 
-	if note := a.pollStatusNote(); note != "" {
+	// An app polling normally still states its cadence. Saying nothing would
+	// make "polling every 30s" and "not polling at all" look identical, which
+	// is the one distinction this corner of the title exists to draw.
+	note := stripANSISeqs(a.pollStatusNote())
+	if !strings.Contains(note, shortDuration(a.cfg.PollDuration())) {
+		t.Errorf("an active app does not state its cadence: %q", note)
+	}
+	if strings.Contains(note, "idle") {
 		t.Errorf("an active app advertises a slowdown: %q", note)
 	}
 
 	*now = now.Add(a.cfg.IdleAfterDuration() + time.Second)
-	note := stripANSISeqs(a.pollStatusNote())
+	note = stripANSISeqs(a.pollStatusNote())
 	if !strings.Contains(note, "idle") {
 		t.Errorf("idle note is %q, want it to mention idle", note)
 	}

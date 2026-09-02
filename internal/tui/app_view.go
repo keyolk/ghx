@@ -60,6 +60,9 @@ func (a *App) View() string {
 	if a.statusFilter != nil {
 		content = overlayBody(content, a.renderStatusFilter(a.width, rows), a.width, rows)
 	}
+	if a.repos != nil {
+		content = overlayBody(content, a.renderRepoPicker(a.width, rows), a.width, rows)
+	}
 	// The confirmation sits above everything else it can coexist with: it is the
 	// last thing between a keypress and an action that cannot be taken back.
 	if a.confirm != nil {
@@ -118,7 +121,7 @@ func (a *App) titleLine() string {
 	// and only appears when it has something to say. Slowing the refresh
 	// silently would read as ghx being broken, which is exactly the wrong
 	// conclusion — it is the account's budget that ran low, not ghx.
-	if note := a.pollStatusNote(); note != "" {
+	if note := a.freshnessNote(); note != "" {
 		gap := a.width - lipglossWidth(line) - lipglossWidth(note)
 		if gap >= 2 {
 			line += strings.Repeat(" ", gap) + note
@@ -145,41 +148,6 @@ func (a *App) pendingNote() string {
 		return pendingMarkStyle.Render(fmt.Sprintf("%s %s — %d pull requests…", frame, verb, n))
 	}
 	return pendingMarkStyle.Render(fmt.Sprintf("%s %s…", frame, verb))
-}
-
-// pollStatusNote describes the poll cadence when it is not the configured one.
-func (a *App) pollStatusNote() string {
-	// A suspended poll has to say so. Coming back to a window whose rows are an
-	// hour old, with nothing on screen admitting it, is worse than the polling
-	// this avoids — the marker is what makes the rows readable as "as of when I
-	// left" rather than "as of now".
-	if a.unfocused {
-		return dimStyle.Render("paused · unfocused ")
-	}
-	interval := a.pollInterval()
-	if interval <= a.cfg.PollDuration() {
-		return ""
-	}
-	b := a.client.GraphQLBudget()
-	// The budget is the more urgent of the two reasons and the one the user can
-	// act on (close some windows), so it wins the single slot.
-	if b.Known && b.Fraction() < 0.5 {
-		return dimStyle.Render(fmt.Sprintf("API %d%% · poll %s ",
-			int(b.Fraction()*100), shortDuration(interval)))
-	}
-	return dimStyle.Render(fmt.Sprintf("idle · poll %s ", shortDuration(interval)))
-}
-
-// shortDuration renders a poll interval the way a person would say it.
-func shortDuration(d time.Duration) string {
-	switch {
-	case d >= time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	case d >= time.Minute:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	default:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	}
 }
 
 func (a *App) helpLine() string {
@@ -217,6 +185,10 @@ func (a *App) helpLine() string {
 	if a.statusFilter != nil {
 		return truncateFooter(
 			fmtHints("sp", "toggle", "enter", "apply", "c", "clear", "esc", "cancel"), a.width)
+	}
+	if a.repos != nil {
+		return truncateFooter(
+			fmtHints("↑↓", "move", "enter", "open", "esc", "cancel"), a.width)
 	}
 	if a.mergePrompt != nil {
 		return truncateFooter(fmtHints("y", "merge", "s/m/b", "strategy", "esc", "cancel"), a.width)

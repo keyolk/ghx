@@ -119,3 +119,46 @@ func TestParseGitHubTime(t *testing.T) {
 		t.Error("empty timestamp should error rather than yield the zero time silently")
 	}
 }
+
+// An archived repository is read-only, so its PRs can be listed but not acted
+// on. They belong out of the cross-repo queues entirely.
+func TestWithoutArchived(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{"plain queue", "review-requested:@me state:open", "review-requested:@me state:open archived:false"},
+		{"empty", "", "archived:false"},
+		// An explicit archived: is the user asking for something specific.
+		{"explicit false kept once", "author:@me archived:false", "author:@me archived:false"},
+		{"explicit true honored", "author:@me archived:true", "author:@me archived:true"},
+		{"case insensitive", "author:@me Archived:true", "author:@me Archived:true"},
+		// A repo-scoped query is the REST fallback for a pinned source: the tab
+		// names that repository, so it must list its PRs archived or not.
+		{"repo scoped untouched", "repo:o/r state:open", "repo:o/r state:open"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := withoutArchived(c.query); got != c.want {
+				t.Errorf("got  %q\nwant %q", got, c.want)
+			}
+		})
+	}
+}
+
+// --archived takes {true|false} and only parses when the value is joined with
+// an =; passed as a separate argument gh reads it as the free-text query and
+// silently searches for the word "false".
+func TestSearchQueryArgsArchived(t *testing.T) {
+	got := strings.Join(searchQueryArgs("author:@me archived:false"), " ")
+	if !strings.Contains(got, "--archived=false") {
+		t.Errorf("archived should become a joined flag: %q", got)
+	}
+	// A value gh cannot parse must stay free text rather than become
+	// `--archived=maybe`, which gh rejects and which would empty the tab.
+	got = strings.Join(searchQueryArgs("archived:maybe"), " ")
+	if got != "archived:maybe" {
+		t.Errorf("unparseable value should pass through as text: %q", got)
+	}
+}

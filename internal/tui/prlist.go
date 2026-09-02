@@ -53,6 +53,11 @@ type prListModel struct {
 	// empty instead of implying the source has no PRs.
 	errs     []error
 	inFlight bool
+	// pollTab is the source handlePollTick is currently fetching. inFlight alone
+	// says a poll is running but not for which tab, and switching tabs mid-poll
+	// would otherwise mark the newly opened one as fetching when nothing has
+	// been asked for it.
+	pollTab int
 
 	// query and statusFilters narrow the current source client-side. Statuses
 	// combine with OR, then intersect with the text query.
@@ -74,6 +79,22 @@ type prListModel struct {
 	// fileCache persists each source's PR list to ~/.config/ghx/cache/ so a
 	// restart shows the previous results immediately while a fresh fetch runs.
 	fileCache *prFileCache
+
+	// fetchedAt is when each source's rows were last answered for. It is per
+	// source rather than one clock because the tabs refresh independently: only
+	// the visible one polls, so a tab last opened an hour ago is showing
+	// hour-old rows while the one beside it is seconds fresh, and a single
+	// timestamp would claim both were current.
+	//
+	// A source seeded from the disk cache carries that file's save time, not the
+	// startup time — the rows really are as old as the file says, and a restart
+	// that reset every stamp to "just now" would be the one lie this exists to
+	// prevent.
+	fetchedAt []time.Time
+
+	// nowFunc is time.Now, replaced in tests so the age readout can be asserted
+	// without sleeping.
+	nowFunc func() time.Time
 
 	missStreak int
 	stale      bool
@@ -123,6 +144,7 @@ func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km *Keymap, d
 		dirty:         make([]bool, len(sources)),
 		warnings:      make([]error, len(sources)),
 		errs:          make([]error, len(sources)),
+		fetchedAt:     make([]time.Time, len(sources)),
 		selected:      make(map[string]pr.Summary),
 		statusFilters: make(map[prStatus]bool),
 		fileCache:     newPRFileCache(),
@@ -131,8 +153,9 @@ func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km *Keymap, d
 	// session's results while the fetches run. The data may be stale; the
 	// background reload overwrites it the moment a fresh response arrives.
 	for i, s := range sources {
-		if cached := m.fileCache.load(s, 0); cached != nil {
+		if cached, savedAt := m.fileCache.loadAt(s, 0); cached != nil {
 			m.caches[i] = cached
+			m.fetchedAt[i] = savedAt
 		}
 	}
 	l := list.New(nil, prListDelegate{
@@ -269,9 +292,9 @@ func (m *prListModel) markAllDirty() {
 }
 
 // appendSource adds a tab and the per-source state that has to stay the same
-// length as m.sources. Five parallel slices is five chances to forget one, and
-// forgetting one is an index-out-of-range at the next tab switch rather than a
-// compile error.
+// length as m.sources. Eight parallel slices is eight chances to forget one,
+// and forgetting one is an index-out-of-range at the next tab switch rather
+// than a compile error.
 func (m *prListModel) appendSource(src config.SourceDef, rows []pr.Summary) {
 	m.sources = append(m.sources, src)
 	m.caches = append(m.caches, rows)
@@ -280,6 +303,7 @@ func (m *prListModel) appendSource(src config.SourceDef, rows []pr.Summary) {
 	m.errs = append(m.errs, nil)
 	m.dirty = append(m.dirty, false)
 	m.warnings = append(m.warnings, nil)
+	m.fetchedAt = append(m.fetchedAt, time.Time{})
 }
 
 // currentDirty reports whether the visible source needs a refetch.
@@ -288,6 +312,13 @@ func (m *prListModel) currentDirty() bool {
 }
 
 func (m *prListModel) loading() bool {
+	// A background poll counts. It sets no per-source flag — deliberately, so it
+	// never replaces rows with a spinner — but the title says "fetching" while
+	// it runs, and the frame that animates only advances while something here
+	// reports being busy.
+	if m.inFlight {
+		return true
+	}
 	for _, l := range m.loadings {
 		if l {
 			return true
@@ -308,13 +339,19 @@ func (m *prListModel) handlePRListMsg(msg prListMsg) tea.Cmd {
 	if msg.sourceIdx < 0 || msg.sourceIdx >= len(m.sources) {
 		return nil
 	}
+	// The poll slot is released even for a superseded response: it tracks
+	// whether a request is outstanding, not whether its answer was usable. Only
+	// one poll is ever in flight — handlePollTick refuses to start a second —
+	// so this cannot free a slot another fetch still holds. Leaving it set on
+	// the discarded path would wedge the poll chain permanently, and now that
+	// the title reads it, would also spin "fetching" forever.
+	m.inFlight = false
 	// A bulk action invalidates every source. Responses started before that point
 	// must not restore stale rows after the changed PRs have been refreshed.
 	if msg.generation != m.generations[msg.sourceIdx] {
 		return nil
 	}
 	m.loadings[msg.sourceIdx] = false
-	m.inFlight = false
 	if msg.err != nil {
 		m.missStreak++
 		// Only claim staleness after repeated failures — one blip isn't news.
@@ -341,6 +378,10 @@ func (m *prListModel) handlePRListMsg(msg prListMsg) tea.Cmd {
 	// certainly wrong. Keeping the rows costs a stale list until the account is
 	// fixed; the toast says why, and any answer with rows replaces them.
 	if len(msg.prs) == 0 && msg.warning != nil && len(m.caches[msg.sourceIdx]) > 0 {
+		// The rows are deliberately kept, so the stamp is too: it dates the rows
+		// on screen, not the last time a request came back. Moving it here would
+		// call a queue "just now" precisely when the account that owns its PRs
+		// could not be reached.
 		if msg.sourceIdx == m.curTab {
 			m.syncListItems()
 		}
@@ -349,6 +390,7 @@ func (m *prListModel) handlePRListMsg(msg prListMsg) tea.Cmd {
 		}
 	}
 	m.caches[msg.sourceIdx] = msg.prs
+	m.fetchedAt[msg.sourceIdx] = m.now()
 	// Persist so the next session opens on these rows instead of re-fetching.
 	if m.fileCache != nil {
 		m.fileCache.save(m.sources[msg.sourceIdx], msg.prs)
@@ -370,6 +412,7 @@ func (m *prListModel) handlePollTick() tea.Cmd {
 		return nil
 	}
 	m.inFlight = true
+	m.pollTab = m.curTab
 	return m.fetchSource(m.curTab)
 }
 
@@ -885,6 +928,7 @@ func (m *prListModel) helpLine() string {
 		"r", "request",
 		"o", "browser",
 		"f", "status",
+		"e", "repo",
 		"/", "search",
 		"R", "refresh",
 		":", "palette",

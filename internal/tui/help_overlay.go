@@ -65,6 +65,7 @@ func helpSections() []helpSection {
 			{"esc", "clear text, then status, then selection"},
 		}},
 		{"Other", [][2]string{
+			{"e / :repo", "open a repository's PRs as a tab, ranked by use"},
 			{"1-9", "source tab · * marks the repo you are in"},
 			{":", "command palette"},
 			{"R", "refresh"},

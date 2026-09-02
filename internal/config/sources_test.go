@@ -150,8 +150,8 @@ func TestShortRepoName(t *testing.T) {
 		"":           "",
 	}
 	for in, want := range cases {
-		if got := shortRepoName(in); got != want {
-			t.Errorf("shortRepoName(%q) = %q, want %q", in, got, want)
+		if got := ShortRepoName(in); got != want {
+			t.Errorf("ShortRepoName(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

@@ -302,7 +302,7 @@ func (c *Config) EffectiveSources(detectedRepos ...string) []SourceDef {
 		}
 		if !matched {
 			promoted = append(promoted, SourceDef{
-				Name:  shortRepoName(repo),
+				Name:  ShortRepoName(repo),
 				Query: "state:open",
 				Repo:  repo,
 			})
@@ -322,10 +322,13 @@ func (c *Config) EffectiveSources(detectedRepos ...string) []SourceDef {
 	return out
 }
 
-// shortRepoName labels the detected tab. Within one org the owner repeats on
-// every tab and only costs width, so it is dropped unless the name would be
-// ambiguous on its own.
-func shortRepoName(slug string) string {
+// ShortRepoName labels a repo-scoped tab. Within one org the owner repeats on
+// every tab and only costs width, so it is dropped.
+//
+// It is exported because the repo picker builds tabs too, and a picked tab that
+// named itself differently from a detected one would look like a different kind
+// of thing when it is the same thing.
+func ShortRepoName(slug string) string {
 	_, name, ok := strings.Cut(slug, "/")
 	if !ok || name == "" {
 		return slug

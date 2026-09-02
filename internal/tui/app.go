@@ -63,6 +63,14 @@ type App struct {
 	labels       *labelPicker
 	statusFilter *statusFilterPicker
 
+	// repos is the open-a-repository picker; nil when closed.
+	repos *repoPicker
+
+	// repoStore ranks repositories by use so that picker leads with the handful
+	// someone actually works in. It outlives the process — the ranking is only
+	// useful once it has watched a few sessions.
+	repoStore *repoStore
+
 	// suggestion gates applying a review suggestion — the only action in the
 	// diff view that writes a commit to someone's branch.
 	suggestion *suggestionPrompt
@@ -136,20 +144,29 @@ func NewApp(cfg *config.Config, km *Keymap, client *gh.Client) *App {
 // opens on those repositories' pull requests.
 func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedRepos []string) *App {
 	a := &App{
-		cfg:      cfg,
-		client:   client,
-		km:       km,
-		state:    viewPRList,
-		composer: newComposer(),
-		palette:  &palette{},
-		search:   &search{},
-		nowFunc:  time.Now,
+		cfg:       cfg,
+		client:    client,
+		km:        km,
+		state:     viewPRList,
+		composer:  newComposer(),
+		palette:   &palette{},
+		search:    &search{},
+		repoStore: newRepoStore(),
+		nowFunc:   time.Now,
 	}
 	// Startup counts as activity: opening ghx is the most deliberate keypress
 	// there is, and an app that began life idle would poll at the slow cadence
 	// while being actively read.
 	a.lastKeyAt = a.nowFunc()
 	a.list = newPRListModelWithRepo(cfg, client, km, detectedRepos)
+	// The launch directory is a visit — and only it. Detection also returns the
+	// other tmux panes, which is a good reason to *show* those tabs but not
+	// evidence that anyone opened them: counting a wide window as eight visits
+	// would let whatever happened to be split beside the work outrank the repo
+	// ghx was actually started in.
+	if len(detectedRepos) > 0 {
+		a.repoStore.record(detectedRepos[0], a.lastKeyAt)
+	}
 	return a
 }
 
@@ -638,6 +655,9 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if a.labels != nil {
 		return a.handleLabelKey(msg)
 	}
+	if a.repos != nil {
+		return a.handleRepoPickerKey(msg)
+	}
 	if a.mergePrompt != nil {
 		return a.handleMergePromptKey(msg)
 	}
@@ -673,6 +693,13 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "f":
 		if a.state == viewPRList {
 			return a.openStatusFilter()
+		}
+	case "e":
+		// Only from the list: the detail view is one PR, and switching the tab
+		// underneath it would leave the open PR belonging to a queue nobody is
+		// looking at.
+		if a.state == viewPRList {
+			return a.openRepoPicker()
 		}
 	case "q":
 		return tea.Quit
