@@ -32,6 +32,8 @@ actions.
 - `internal/tui/detail_comments.go` — `threadIdentity` (REST 스레드의 안정적 식별자)
 - `internal/gh/budget.go` — 계정 GraphQL 예산 관측 (응답에 실려오는 rateLimit)
 - `internal/tui/listpane.go` — 서브커맨드 TUI 공용 스크롤 리스트·필터 (`ListPane`)
+- `internal/repowatch` — 로컬 git 이벤트 감지 (commit/checkout/push/fetch), 요청 0건
+- `internal/tui/workspace.go` — tmux window 재탐지 + git 이벤트 기반 갱신
 - `internal/tui/repostore.go` — repo 사용 이력(방문수 × 최근성) 랭킹, `~/.config/ghx/repos.json`
 - `internal/tui/repo_picker.go` — `e` / `:repo`, 임의 repo를 탭으로 여는 피커
 - `internal/tui/admin` — `ghx admin`: People/Teams/보호규칙/릴리스/브랜치/태그/웹훅
@@ -78,6 +80,27 @@ actions.
   `idle_after` 뒤에 `idle_poll_interval`로 물러나고, (2) enrichment 응답에 실려오는
   `rateLimit`으로 남은 예산을 **공짜로** 읽어 더 늘린다. 폴링 비용을 바꾸는 변경은
   이 두 축을 같이 본다.
+- **탐지와 갱신은 startup 고정값이 아니다.** pane이 나중에 다른 checkout으로 `cd`하거나
+  pane이 새로 열려도 따라간다(`workspace.go`, 5초 sweep). sweep은 **요청을 쓰지 않는다** —
+  `tmux list-panes` 한 번과 stat 몇 개뿐이라, unfocused여도 계속 돈다. 실측: 조용한
+  sweep 20회 = gh 호출 **0건**, git 이벤트 1회 = `pr list` **1건**(REST).
+  `workspace_cost_test.go`가 이 두 숫자를 고정한다.
+- **git 이벤트가 트리거하는 것은 그 repo에 pin된 탭뿐이다.** cross-repo 검색 큐는 건드리지
+  않는다 — 그쪽은 희소한 GraphQL search 예산을 쓰고, 애초에 unfocused에서 폴을 세운 이유가
+  그 예산이다. 큐는 다음 일반 폴에서 따라잡는다.
+- **탭은 추가만 하고 제거하지 않는다.** pane이 닫혀도 탭은 남는다 — 지우면 뒤 탭이 전부
+  재번호되어 1-9 점프 키가 읽던 큐가 아닌 곳에 떨어진다. 새 탭은 **선택하지 않는다**:
+  다른 pane이 `cd` 했다고 커서가 움직이는 건 요청의 반대다.
+- **watcher는 slug가 아니라 checkout 경로별로 둔다.** worktree는 같은 slug의 별도 checkout이고
+  자기 HEAD/reflog를 갖는다 — slug로 키를 잡으면 먼저 탐지된 pane만 감시하고 나머지 pane의
+  커밋은 통째로 안 보인다. 이 레포가 실제로 그 레이아웃으로 작업된다. 새로고침 단계에서
+  `touchedSlugs`로 다시 합쳐 한 탭을 두 번 fetch하지 않는다.
+- **baseline은 sweep이 뜬 스냅샷을 그대로 저장한다.** 핸들러에서 다시 뜨면 그 사이에 들어온
+  쓰기가 새 baseline에 흡수되어 **영영 보고되지 않는다** — 한 번 보이고, 관측됐다고 기록되고,
+  그에 대한 fetch는 나가지 않는다.
+- **`loadSource`는 `inFlight`를 건드리지 않는다.** 그건 백그라운드 폴 체인의 것이고, 폴은
+  타이머를 정확히 하나만 무장한다 — git 이벤트 경로가 그 슬롯을 잡으면 폴이 영구히 멈춘다.
+  superseded 응답은 소스별 generation이 버린다.
 - **선택 밴드는 행 안의 스타일을 전부 덮는다.** 색이나 취소선으로만 표현한 상태는 커서가
   올라간 순간 사라진다 — 그리고 그 행이 지금 읽고 있는 행이다. 상태는 **밴드 밖의 글리프**로
   낸다(`threadStateGlyph`): 열로 정렬되고, 문자라서 NO_COLOR에서도 읽히고, 밴드가 삼키지
@@ -113,7 +136,9 @@ actions.
   설정값과 같아도 표시한다: 생략하면 "30초마다 폴링"과 "아예 폴링 안 함"이 같은 화면이 되고,
   그게 바로 여기서 답해야 할 질문이다. 나이는 **소스별**이다(보이는 탭만 폴링하므로).
   디스크 캐시로 seed된 행은 파일의 `SavedAt`을 물려받는다 — 재시작을 "방금"으로 찍는 것이
-  이 표시가 막으려는 바로 그 거짓말이다.
+  이 표시가 막으려는 바로 그 거짓말이다. unfocused에서 `paused`만 내면 이제 반대 방향의
+  거짓말이 된다 — 폴은 멈췄지만 push하는 repo는 갱신되므로, watcher가 있으면
+  `unfocused · on git`으로 구분한다.
 - **`inFlight`는 superseded 응답에서도 해제한다.** 그건 "요청이 떠 있는가"이지 "답이
   쓸모있었는가"가 아니다. 폐기 경로에서 잡고 있으면 폴 체인이 영구히 막히고, 타이틀이
   "fetching"으로 굳는다.
@@ -121,6 +146,9 @@ actions.
   부르면 *현재* generation 타이머가 둘이 되고, generation 검사는 둘 다 현행이라
   구분하지 못한다 — cadence가 조용히 2배가 된다. `idle_poll_test.go`의
   `TestWakingDoesNotDuplicateThePollChain`이 이 불변식을 고정한다.
+  sweep 타이머(`armWorkspace`)는 **별개 체인**이다: 자기 generation을 쓰고, 무장하는
+  곳도 `Init`과 `workspaceScanMsg` 둘뿐이다. 두 체인을 엮지 않는다 — sweep은 예산을
+  쓰지 않아 unfocused에서도 돌아야 하고, 폴은 그 반대다.
 - `App.View` must render at most `height` rows: it always draws a title line and
   a footer, so the body is sized to `contentRows()`, never to `a.height`. An
   overflowing frame loses its TOP rows — bubbletea keeps the last `height` lines

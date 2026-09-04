@@ -306,6 +306,42 @@ func (m *prListModel) appendSource(src config.SourceDef, rows []pr.Summary) {
 	m.fetchedAt = append(m.fetchedAt, time.Time{})
 }
 
+// markDetected records that a repository is one the user is working in, so its
+// tab carries the `*` marker.
+//
+// Detection is no longer a startup-only fact: a pane that cd's into a repo the
+// user already opened by hand should make that tab read as detected, the same
+// as if ghx had been launched there.
+func (m *prListModel) markDetected(slug string) {
+	if slug == "" {
+		return
+	}
+	if m.detectedRepos == nil {
+		m.detectedRepos = make(map[string]bool)
+	}
+	m.detectedRepos[strings.ToLower(slug)] = true
+}
+
+// loadSource fetches one source by index, whether or not it is visible.
+//
+// It is what lets a repository refresh because it was pushed to rather than
+// because its tab is on screen. Sources already loading are skipped: the
+// workspace sweep runs far more often than a fetch takes to return, and without
+// this a slow queue would accumulate one in-flight request per sweep.
+//
+// It does not touch inFlight. That flag belongs to the background poll chain,
+// which arms exactly one timer and would stall permanently if this path held
+// its slot; the per-source generation is what discards a superseded response
+// here.
+func (m *prListModel) loadSource(i int) tea.Cmd {
+	if i < 0 || i >= len(m.sources) || m.loadings[i] {
+		return nil
+	}
+	m.loadings[i] = true
+	m.dirty[i] = false
+	return m.fetchSource(i)
+}
+
 // currentDirty reports whether the visible source needs a refetch.
 func (m *prListModel) currentDirty() bool {
 	return m.curTab < len(m.dirty) && m.dirty[m.curTab]

@@ -19,6 +19,19 @@ task spanning several checkouts — and leads with those repos' PRs, the launch
 directory first. `ghx admin` and `ghx actions` resolve their target repository
 the same way, so they work from a scratch pane beside the code.
 
+Both keep following the work. A pane that later `cd`s into another checkout — or
+a pane opened after ghx — gets its own tab, and committing, pushing or fetching
+in any of those repositories refreshes its tab within a few seconds, without
+waiting for the next poll. This works even while the window is not on screen,
+where the timed poll deliberately stands down: the trigger is git's own on-disk
+state, so it costs no API requests at all and an untouched checkout costs
+nothing. The title corner says `unfocused · on git` when that is what is
+happening, as opposed to `paused · unfocused` when nothing is being watched.
+
+Tabs are only added, never removed — closing a pane leaves its tab where it is,
+so the `1`-`9` jump keys keep pointing at the same queues — and a newly added tab
+never steals the cursor.
+
 ## Install
 
     make install    # → ~/.local/bin/ghx

@@ -108,6 +108,12 @@ type App struct {
 	// stays false and the cadence is exactly what it was before.
 	unfocused bool
 
+	// workspace watches the tmux window: which repositories its panes hold, and
+	// whether any of them has just been committed to, pushed, or fetched. Both
+	// were startup-only facts before — see workspace.go for why neither should
+	// have been.
+	workspace *workspace
+
 	// pollGen invalidates in-flight poll timers. Backing off means arming a new
 	// timer while an old one is still pending; without this the first keypress
 	// after an idle stretch would leave both running.
@@ -152,6 +158,7 @@ func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedR
 		palette:   &palette{},
 		search:    &search{},
 		repoStore: newRepoStore(),
+		workspace: newWorkspace(),
 		nowFunc:   time.Now,
 	}
 	// Startup counts as activity: opening ghx is the most deliberate keypress
@@ -167,6 +174,9 @@ func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedR
 	if len(detectedRepos) > 0 {
 		a.repoStore.record(detectedRepos[0], a.lastKeyAt)
 	}
+	// Startup detection is the baseline: these repos already have tabs, so the
+	// first sweep must not announce them as newly appeared.
+	a.workspace.seed(detectedRepos)
 	return a
 }
 
@@ -264,6 +274,13 @@ func (a *App) armPoll() tea.Cmd {
 
 // blur suspends polling. Bumping the generation retires the timer already
 // pending — bubbletea cannot cancel a tea.Tick — so nothing fires while away.
+//
+// The workspace sweep deliberately keeps running. It spends filesystem stats
+// rather than API budget, and it is the only thing that can notice a push made
+// in the pane beside a window nobody is looking at — which is exactly when the
+// suspended poll would otherwise leave the queue wrong until the user came
+// back. What it triggers is narrow: only tabs pinned to the repository that was
+// actually worked in. See workspace.go.
 func (a *App) blur() {
 	if a.unfocused {
 		return
@@ -334,6 +351,7 @@ func (a *App) Init() tea.Cmd {
 		a.list.init(),
 		spinnerTickCmd(),
 		a.armPoll(),
+		a.armWorkspace(),
 	}
 	// Account verification is a `gh auth status` round trip per account. Running
 	// it here rather than before tea.NewProgram keeps it off the path to the
@@ -419,6 +437,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.list.handlePRListMsg(msg),
 			a.armPoll(),
 		)
+
+	case workspaceTickMsg:
+		return a, a.handleWorkspaceTick(msg)
+
+	case workspaceScanMsg:
+		return a, a.handleWorkspaceScan(msg)
 
 	case prListTickMsg:
 		// A tick from a superseded generation is a timer armed under the other
