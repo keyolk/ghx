@@ -109,7 +109,17 @@ func (a *App) pollStatusNote() string {
 	// with nothing on screen admitting it, is worse than the polling this
 	// avoids — the marker is what makes the rows readable as "as of when I left"
 	// rather than "as of now".
+	//
+	// "paused" alone would now be a lie in the other direction, though: the
+	// timed poll is suspended, but the repositories this window is working in
+	// still refresh when they are committed to or pushed. Naming the git watch
+	// is what separates "these rows are frozen" from "the queues are frozen but
+	// the repo you are pushing to is not" — and those call for different
+	// reactions from the reader.
 	if a.unfocused {
+		if a.watchingRepos() {
+			return "unfocused · on git"
+		}
 		return "paused · unfocused"
 	}
 	interval := a.pollInterval()
