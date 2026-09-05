@@ -32,6 +32,23 @@ Tabs are only added, never removed — closing a pane leaves its tab where it is
 so the `1`-`9` jump keys keep pointing at the same queues — and a newly added tab
 never steals the cursor.
 
+Several windows cost what one does. GitHub's GraphQL allowance is 5,000 points
+an hour per *account*, not per process, so a ghx parked in every tmux window
+used to divide one pool between instances that knew nothing about each other.
+They now share what they fetch, through `~/.config/ghx/cache`: a queue one
+window polled is a queue the others read instead of asking for, a PR's status
+markers are computed once for every window showing that PR, and each window
+throttles on the whole account's remaining budget rather than only on what it
+happened to see itself. Measured on six windows polling one source forty times
+each, that is 240 requests before and 40 after — the same as a single window.
+
+An entry is only used while it is younger than the poll interval, and only for
+the queue's own refresh: pressing `R`, acting on a PR, and committing in a
+watched checkout all fetch, because each of those is asking about something no
+stored answer can contain. The title corner dates the rows to the fetch that
+produced them, so a queue handed over by another window still says how old it
+actually is.
+
 ## Install
 
     make install    # → ~/.local/bin/ghx

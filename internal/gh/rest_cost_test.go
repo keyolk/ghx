@@ -15,6 +15,10 @@ import (
 // trips an operation costs — not just that it produced the right answer.
 func countingGH(t *testing.T, script string) func() []string {
 	t.Helper()
+	// Isolated for the same reason as fakeGH: a cache hit from the developer's
+	// own ghx would make a request count come back lower than the code under
+	// test actually costs, which is the one number these tests exist to fix.
+	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "calls.log")
 	wrapper := fmt.Sprintf(

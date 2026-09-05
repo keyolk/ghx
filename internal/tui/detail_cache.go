@@ -1,13 +1,12 @@
 package tui
 
 import (
-	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
 	"time"
 
+	"github.com/keyolk/ghx/internal/cachefile"
 	"github.com/keyolk/ghx/internal/pr"
 )
 
@@ -24,10 +23,24 @@ import (
 // the same value describes the same PR — no TTL can make that claim, and every
 // TTL is either too short to help or long enough to show a stale diff.
 
+// The entries are shared with the other ghx instances, like every other cache
+// here: a PR opened in one window is a PR the window beside it does not have to
+// fetch four times over. That makes the atomic write in cachefile load-bearing
+// rather than tidy — a detail payload is the largest thing ghx stores, so it is
+// also the one most likely to be caught half-written.
+
 // detailFileCache stores per-PR detail payloads under ~/.config/ghx/cache/pr/.
 type detailFileCache struct {
 	dir string
+	// swept bounds a directory that holds one file per PR ever opened. See
+	// gh/status_cache.go for the same argument at greater volume.
+	swept sync.Once
 }
+
+// detailCacheTTL is how long an unused entry survives. Like the status cache's
+// it is a garbage collector, not a staleness guard: updatedAt already decides
+// whether an entry may be served.
+const detailCacheTTL = 7 * 24 * time.Hour
 
 // cachedDetail is the on-disk shape. Everything d.load() fetches, plus the
 // stamp that decides whether it may still be used.
@@ -49,21 +62,32 @@ type cachedDetail struct {
 }
 
 func newDetailFileCache() *detailFileCache {
-	home, err := os.UserHomeDir()
+	return &detailFileCache{dir: cachefile.Dir("pr")}
+}
+
+// sweep removes entries past the TTL, once per process.
+func (c *detailFileCache) sweep() {
+	entries, err := os.ReadDir(c.dir)
 	if err != nil {
-		return &detailFileCache{dir: ""}
+		return
 	}
-	return &detailFileCache{dir: filepath.Join(home, ".config", "ghx", "cache", "pr")}
+	cutoff := time.Now().Add(-detailCacheTTL)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.Remove(filepath.Join(c.dir, e.Name()))
+	}
 }
 
 // detailCacheKey identifies one PR. The queue spans repositories, so the number
 // alone is not unique.
 func detailCacheKey(repo string, number int) string {
-	// The path separator goes first, which is what keeps a repo name from
-	// climbing out of the cache directory: with no "/" left, ".." is an
-	// ordinary two-character filename component.
-	safe := strings.NewReplacer("/", "_", ":", "_", " ", "_").Replace(repo)
-	return fmt.Sprintf("%s_%d.json", safe, number)
+	return cachefile.PRKey(repo, number)
 }
 
 // load returns the cached payload when it describes the PR as it is now.
@@ -76,12 +100,8 @@ func (c *detailFileCache) load(repo string, number int, updatedAt time.Time) *ca
 	if c.dir == "" || updatedAt.IsZero() {
 		return nil
 	}
-	data, err := os.ReadFile(filepath.Join(c.dir, detailCacheKey(repo, number)))
-	if err != nil {
-		return nil
-	}
 	var entry cachedDetail
-	if err := json.Unmarshal(data, &entry); err != nil {
+	if err := cachefile.ReadJSON(filepath.Join(c.dir, detailCacheKey(repo, number)), &entry); err != nil {
 		return nil
 	}
 	// Equal, not "not older than": a force-push can move updatedAt backwards,
@@ -106,16 +126,12 @@ func (c *detailFileCache) save(repo string, number int, updatedAt time.Time, e c
 	if c.dir == "" || updatedAt.IsZero() || e.Detail == nil {
 		return
 	}
-	if err := os.MkdirAll(c.dir, 0o755); err != nil {
-		return
-	}
 	e.SavedAt = time.Now()
 	e.UpdatedAt = updatedAt
-	data, err := json.Marshal(e)
-	if err != nil {
+	if err := cachefile.WriteJSON(filepath.Join(c.dir, detailCacheKey(repo, number)), e); err != nil {
 		return
 	}
-	_ = os.WriteFile(filepath.Join(c.dir, detailCacheKey(repo, number)), data, 0o644)
+	c.swept.Do(c.sweep)
 }
 
 // evict drops a PR's entry. Used after an action changes the PR, where the

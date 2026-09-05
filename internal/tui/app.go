@@ -166,6 +166,10 @@ func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedR
 	// while being actively read.
 	a.lastKeyAt = a.nowFunc()
 	a.list = newPRListModelWithRepo(cfg, client, km, detectedRepos)
+	// The list decides how old a sibling instance's answer may be from the
+	// cadence this app is actually polling at, which the app owns because both
+	// the idle backoff and the budget throttle live here.
+	a.list.pollIntervalFunc = a.pollInterval
 	// The launch directory is a visit — and only it. Detection also returns the
 	// other tmux panes, which is a good reason to *show* those tabs but not
 	// evidence that anyone opened them: counting a wide window as eight visits

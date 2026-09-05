@@ -27,6 +27,9 @@ actions.
 - `internal/tui/clipboard.go` — `y` / `:copy`, PR URL 복사 (외부 clipboard 명령)
 - `internal/tui/detail_diff_jump.go` — diff의 hunk/file 단위 점프 (`J`/`K`, `{`/`}`)
 - `internal/tui/detail_cache.go` — PR 상세 디스크 캐시 (updatedAt로 유효성 판정)
+- `internal/cachefile` — 디스크 캐시 공용 배관 (원자적 쓰기, 경로 탈출 방지 키)
+- `internal/gh/status_cache.go` — PR별 status enrichment 캐시 (인스턴스 간 공유)
+- `internal/tui/prlist_fetch.go` — 소스 fetch 경로와 인스턴스 간 공유 창 판정
 - `internal/pr/suggestion.go` — 코멘트의 ```suggestion 블록 파싱
 - `internal/gh/suggestion.go` — suggestion 적용 (createCommitOnBranch, expectedHeadOid)
 - `internal/tui/detail_comments.go` — `threadIdentity` (REST 스레드의 안정적 식별자)
@@ -80,6 +83,29 @@ actions.
   `idle_after` 뒤에 `idle_poll_interval`로 물러나고, (2) enrichment 응답에 실려오는
   `rateLimit`으로 남은 예산을 **공짜로** 읽어 더 늘린다. 폴링 비용을 바꾸는 변경은
   이 두 축을 같이 본다.
+- **캐시는 프로세스 간에 공유된다.** `~/.config/ghx/cache` 아래 전부 — PR 리스트, PR 상세,
+  status enrichment, 예산 관측 — 가 여러 ghx 인스턴스의 공용 자원이다. 그래서 (1) 쓰기는
+  반드시 `internal/cachefile`을 거쳐 원자적이어야 한다. 찢어진 파일을 읽은 인스턴스는
+  그것을 버리고 fetch하므로, 공유가 요청을 **늘리는** 방향으로 뒤집힌다. (2) 테스트는
+  `t.Setenv("HOME", t.TempDir())`로 격리한다 — `go test`도 이 캐시를 공유하는
+  프로세스 중 하나라, 격리하지 않으면 개발자의 실제 캐시에서 답을 받아 요청 수 단언이
+  실제보다 낮게 나오고 픽스처가 실 캐시에 쓰인다. `fakeGH`/`countingGH`가 이미 한다.
+- **공유 창은 폴 간격보다 짧되 그에 근접해야 한다** (`shareWindowNumerator`, 9/10).
+  N개 인스턴스가 간격 I로 폴하고 창이 f·I이면 fetch는 f·I마다 한 번 — **N이 소거된다.**
+  창을 절반으로 잡으면 fetch율이 2/I가 되어 설정 cadence의 2배를 태운다(실측: 시간당
+  181회 vs 단일 창 120회). 정확히 I로 잡으면 단일 인스턴스가 스케줄링 지터로 폴을
+  건너뛴다. 실측: 6창 × 40폴 = gh 호출 240건 → 40건.
+- **캐시 유효성은 타이머가 아니라 `updatedAt`이다.** GitHub은 push/comment/review/label
+  전부에서 이를 움직이므로, 같은 값이 찍힌 엔트리는 같은 PR을 서술한다. TTL은 유효성이
+  아니라 **디렉터리 청소용**이다(PR당 파일 하나가 영원히 쌓인다).
+- **ghx 안에서 한 액션은 `updatedAt`을 움직이지 않는다** — 리스트가 아직 재조회하지
+  않았기 때문이다. 그래서 액션 경로는 캐시를 evict해야 하고, 이제 그 대상은 상세 캐시와
+  **status 캐시 둘 다**다. status는 공유되므로, 빼먹으면 이 창의 낡은 마커가 다른 모든
+  창에 퍼진다. 무효화는 개별 성공 핸들러가 아니라 공통 관문(`beginPending`,
+  `evictCache`)에 건다 — 하나 빼먹기 딱 좋은 자리라서다.
+- **캐시를 우회해야 하는 경로는 셋이다**: `R`/팔레트, ghx 안에서 한 액션, git 이벤트.
+  전부 "방금 바뀐 것"을 묻는 중이고, 이미 쓰인 엔트리는 그 변화를 담을 수 없다.
+  `refetchSource`/`reloadSource`가 그 경로고, `fetchSource`/`loadSource`는 공유한다.
 - **탐지와 갱신은 startup 고정값이 아니다.** pane이 나중에 다른 checkout으로 `cd`하거나
   pane이 새로 열려도 따라간다(`workspace.go`, 5초 sweep). sweep은 **요청을 쓰지 않는다** —
   `tmux list-panes` 한 번과 stat 몇 개뿐이라, unfocused여도 계속 돈다. 실측: 조용한

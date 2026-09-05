@@ -17,6 +17,12 @@ import (
 // stands in for it.
 func fakeGH(t *testing.T, script string) {
 	t.Helper()
+	// The caches under ~/.config/ghx/cache are shared between ghx processes on
+	// purpose, and `go test` is one of those processes. Without an isolated HOME
+	// a test both reads the developer's real entries — answering from a cache
+	// instead of from the script on PATH, which is the thing being tested — and
+	// writes its fixtures into the cache the developer's actual ghx will serve.
+	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gh")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755); err != nil {

@@ -200,11 +200,7 @@ func (d *prDetailModel) discardCachedEntry(repo string) bool {
 // changes the PR use this: the row's updatedAt has not caught up yet, so the
 // stored entry still looks valid for a state that just stopped being true.
 func (d *prDetailModel) reload() tea.Cmd {
-	if d.cache != nil {
-		if repo := d.repoSlug(); repo != "" {
-			d.cache.evict(repo, d.number)
-		}
-	}
+	d.evictCache()
 	return d.fetch()
 }
 
@@ -319,15 +315,24 @@ func (d *prDetailModel) refreshThreads() tea.Cmd {
 	}
 }
 
-// evictCache drops this PR's stored entry, for the actions that change the PR
+// evictCache drops this PR's stored entries, for the actions that change the PR
 // without moving the row's updatedAt — which is every action taken from inside
 // ghx, since the list has not re-fetched yet.
+//
+// Both caches, not just the detail one. Resolving a thread or posting a comment
+// changes the U marker the queue shows, and that marker is served from the
+// status cache — which is shared, so leaving it would push this window's stale
+// count out to every other ghx as well.
 func (d *prDetailModel) evictCache() {
-	if d.cache == nil {
+	repo := d.repoSlug()
+	if repo == "" {
 		return
 	}
-	if repo := d.repoSlug(); repo != "" {
+	if d.cache != nil {
 		d.cache.evict(repo, d.number)
+	}
+	if d.client != nil {
+		d.client.EvictStatus(repo, d.number)
 	}
 }
 

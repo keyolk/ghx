@@ -80,6 +80,17 @@ type statusPageResponse struct {
 	} `json:"data"`
 }
 
+// statusRepo is the slug a summary's cache entry is filed under. A row from a
+// repo-scoped list carries no slug of its own, so the client's own repo stands
+// in — the same substitution EnrichPRStatuses makes when it groups the row, so
+// the read and the write agree on the key.
+func statusRepo(c *Client, s pr.Summary) string {
+	if s.Repo != "" {
+		return s.Repo
+	}
+	return c.repo
+}
+
 type statusGroup struct {
 	client  *Client
 	indices map[string][]int
@@ -89,6 +100,13 @@ type statusGroup struct {
 // optional status lookup into a failed base list. PRs are grouped by the token
 // selected through git credential fill, so one cross-repository queue can span
 // accounts without sending a node ID through the wrong GitHub identity.
+//
+// A row whose status is already cached under the same updatedAt is filled from
+// disk and left out of the request entirely. That is where most of the saving
+// is: on a steady queue nearly every row is unchanged between polls, and the
+// batch that would have carried fifty nodes carries the two that moved. The
+// cache is shared across ghx processes, so the six windows in budget.go's
+// measurement now answer each other's polls instead of each paying in full.
 func (c *Client) EnrichPRStatuses(ctx context.Context, summaries []pr.Summary) ([]pr.Summary, error) {
 	out := append([]pr.Summary(nil), summaries...)
 	groups := make(map[string]*statusGroup)
@@ -99,6 +117,12 @@ func (c *Client) EnrichPRStatuses(ctx context.Context, summaries []pr.Summary) (
 		repo := out[i].Repo
 		if repo == "" {
 			repo = c.repo
+		}
+		// The cached entry is checked before the row is grouped, so a hit costs
+		// nothing at all — not a node in the batch, not a credential lookup.
+		if entry, ok := c.status.get(repo, out[i].Number, out[i].UpdatedAt); ok {
+			entry.apply(&out[i])
+			continue
 		}
 		selector := out[i].CredentialRepo
 		scoped := c.WithRepo(repo)
@@ -227,6 +251,13 @@ func enrichPRStatusGroupREST(ctx context.Context, client *Client, out []pr.Summa
 				// unresolved count stays unknown rather than being reported as zero.
 				out[i].ConversationsKnown = false
 				out[i].UnresolvedConversations = 0
+				// Cached with the unknown flag intact. This path costs one round
+				// trip per PR and runs precisely when GraphQL is unavailable, so
+				// it is the one that most needs not to be repeated — and a later
+				// GraphQL enrichment of the same row overwrites the entry with
+				// the resolution bits REST could not supply.
+				client.status.put(statusRepo(client, out[i]), out[i].Number,
+					out[i].UpdatedAt, statusEntryOf(out[i]))
 			}
 		}(j)
 	}
@@ -275,6 +306,8 @@ func enrichPRStatusGroup(ctx context.Context, client *Client, out []pr.Summary, 
 			out[i].ReviewDecision = node.ReviewDecision
 			out[i].UnresolvedConversations = unresolved
 			out[i].ConversationsKnown = true
+			client.status.put(statusRepo(client, out[i]), out[i].Number,
+				out[i].UpdatedAt, statusEntryOf(out[i]))
 		}
 	}
 

@@ -223,6 +223,13 @@ func (a *App) handleConfirmKey(msg tea.KeyMsg) tea.Cmd {
 // gated on something being in progress, so without arming it here the marker
 // would sit frozen on one frame for the whole minute a merge can take.
 func (a *App) beginPending(kind confirmKind, targets []actionTarget) {
+	// Every action goes through here, which is why the eviction does too:
+	// hanging it off the individual success handlers is how one gets forgotten,
+	// and a forgotten one is a stale marker shared with every other window. It
+	// runs before the request rather than after because a failed action can
+	// still have changed something — a merge that reports a timeout may well
+	// have merged — and dropping a cache entry costs a fetch, never a mistake.
+	a.evictStatus(targets...)
 	keys := make(map[string]bool, len(targets))
 	for _, t := range targets {
 		keys[t.key()] = true
@@ -239,6 +246,28 @@ func (a *App) endPending() {
 	a.pending = nil
 	if a.list != nil {
 		a.list.setPending(nil)
+	}
+}
+
+// evictStatus drops the cached status markers for the PRs an action touched.
+//
+// GitHub does move the row's updatedAt for all of these, but not before the
+// refetch this window is about to make: the list request and the status entry
+// are written from the same response, so a refetch that still sees the old
+// updatedAt validates the old entry and puts the pre-action markers back on a
+// row the user just merged. Worse, the entry is shared, so every other ghx
+// window serves it too until the timestamp finally moves.
+//
+// It is not narrowed to the actions that "change status". Approve moves the
+// review decision, close and merge move the state, ready moves the draft flag,
+// and a label edit moves updatedAt itself — that is the whole set, and a
+// removal costs one file at most.
+func (a *App) evictStatus(targets ...actionTarget) {
+	for _, t := range targets {
+		if t.repo == "" || t.number <= 0 {
+			continue
+		}
+		a.client.EvictStatus(t.repo, t.number)
 	}
 }
 

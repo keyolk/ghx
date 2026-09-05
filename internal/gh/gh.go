@@ -26,6 +26,11 @@ type Client struct {
 	// one account-wide pool, so an observation made through any of them has to
 	// be visible through all of them.
 	budget *budgetTracker
+	// status is the per-PR enrichment cache, shared with the derived clients
+	// for the same reason as budget: the pool it is protecting is the account's,
+	// not this client's. It is backed by files, so it is shared with the other
+	// ghx processes too — which is the case that actually empties the budget.
+	status *statusCache
 }
 
 // NewClient returns a gh wrapper with the given per-call timeout (default 30s).
@@ -33,7 +38,12 @@ func NewClient(timeout time.Duration) *Client {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	return &Client{timeout: timeout, credentials: newCredentialCache(), budget: &budgetTracker{}}
+	return &Client{
+		timeout:     timeout,
+		credentials: newCredentialCache(),
+		budget:      newBudgetTracker(),
+		status:      newStatusCache(),
+	}
 }
 
 // WithRepo scopes subsequent calls to a specific "owner/repo". Unless an
