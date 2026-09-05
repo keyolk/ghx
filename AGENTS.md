@@ -106,6 +106,18 @@ actions.
 - **캐시를 우회해야 하는 경로는 셋이다**: `R`/팔레트, ghx 안에서 한 액션, git 이벤트.
   전부 "방금 바뀐 것"을 묻는 중이고, 이미 쓰인 엔트리는 그 변화를 담을 수 없다.
   `refetchSource`/`reloadSource`가 그 경로고, `fetchSource`/`loadSource`는 공유한다.
+- **이 프로세스의 첫 `fork/exec`은 부하 상태에서 ~3.6초다** (이후는 ~10ms). 서브프로세스
+  자체가 느린 게 아니라 spawn 능력 획득이 느리다. repodetect가 보통 프로세스에서 가장 먼저
+  shell out하므로 이 비용을 혼자 낸다 — 그래서 타임아웃은 2초가 아니라 10초다. 짧은 예산의
+  증상은 "느린 startup"이 아니라 **조용히 틀린 startup**이었다: 컨텍스트가 소진되면 모든
+  후보가 빈 값이 되고, 이는 "여기 checkout이 없다"와 구분되지 않는다. `main()`이
+  `detected[0]`으로 인증 대상 계정을 고르므로 잘못된 identity로 pre-flight가 돌 수 있다.
+  재현: repodetect 테스트를 다른 `go test` 8개와 같이 돌리면 탐지 테스트 4개가 2.0s에
+  전부 실패한다. `timeout_test.go`가 이 예산을 고정한다.
+- **best-effort 경로도 "실패"와 "해당 없음"은 구분해야 한다.** 둘 다 빈 값으로 내면
+  호출자를 다른 곳으로 보내는데, 조용한 쪽이 잘못된 곳으로 보낸다. 복구할 수 없으면
+  최소한 로그로 남긴다 — 경로 목록이 아니라 **개수**로(사용자가 버그 리포트에 첨부할
+  파일이다).
 - **탐지와 갱신은 startup 고정값이 아니다.** pane이 나중에 다른 checkout으로 `cd`하거나
   pane이 새로 열려도 따라간다(`workspace.go`, 5초 sweep). sweep은 **요청을 쓰지 않는다** —
   `tmux list-panes` 한 번과 stat 몇 개뿐이라, unfocused여도 계속 돈다. 실측: 조용한
