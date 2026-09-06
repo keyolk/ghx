@@ -137,6 +137,70 @@ func (c *Client) RemoveCollaborator(ctx context.Context, user string) error {
 	return err
 }
 
+// CollaboratorPermissions are the permission levels the collaborators endpoint
+// accepts, weakest first. Ordered so the TUI can offer them as a cycle and a
+// reader can see which direction widens access.
+var CollaboratorPermissions = []string{"pull", "triage", "push", "maintain", "admin"}
+
+// TeamPermissions are the levels a team may be granted on a repository. The
+// team endpoint accepts the same names as the collaborator one, so one list
+// serves both.
+var TeamPermissions = CollaboratorPermissions
+
+// SetTeamRepoPermission grants a team access to the repository, or changes the
+// level it already has. The endpoint is a PUT either way.
+//
+// This is repo-scoped, unlike the membership calls below: it changes what this
+// one repository grants, and nothing about the team itself. On an org repo it
+// is the edit that actually matters — measured on sendbird/ops-k8s, 149 of 150
+// people have access through a team and only one directly, so the team's
+// permission is the real access control and a per-user change reaches almost
+// nobody.
+func (c *Client) SetTeamRepoPermission(ctx context.Context, org, slug, permission string) error {
+	endpoint := fmt.Sprintf("orgs/%s/teams/%s/repos/%s", org, slug, c.repoPath())
+	args := []string{"api", "--method", "PUT", endpoint}
+	if permission != "" {
+		args = append(args, "-f", "permission="+permission)
+	}
+	_, err := c.execRaw(ctx, args...)
+	return err
+}
+
+// RemoveTeamRepo revokes a team's access to this repository. The team keeps
+// existing, and its members keep whatever other access they have.
+func (c *Client) RemoveTeamRepo(ctx context.Context, org, slug string) error {
+	_, err := c.execRaw(ctx, "api", "--method", "DELETE",
+		fmt.Sprintf("orgs/%s/teams/%s/repos/%s", org, slug, c.repoPath()))
+	return err
+}
+
+// SetTeamMembership adds a user to a team, or changes their role in it.
+// role is "member" or "maintainer".
+//
+// This one leaves the repository behind: it is an *organization* change, and it
+// alters the user's access to every repository that team can reach, not just
+// the one ghx was launched in. The caller is responsible for saying so — see
+// the confirmation text in the admin TUI. Adding someone to a team they are not
+// yet in sends an invitation, which is why the response says "pending" until
+// they accept.
+func (c *Client) SetTeamMembership(ctx context.Context, org, slug, user, role string) error {
+	endpoint := fmt.Sprintf("orgs/%s/teams/%s/memberships/%s", org, slug, user)
+	args := []string{"api", "--method", "PUT", endpoint}
+	if role != "" {
+		args = append(args, "-f", "role="+role)
+	}
+	_, err := c.execRaw(ctx, args...)
+	return err
+}
+
+// RemoveTeamMembership removes a user from a team. Also an organization change:
+// it withdraws their access to everything the team reaches.
+func (c *Client) RemoveTeamMembership(ctx context.Context, org, slug, user string) error {
+	_, err := c.execRaw(ctx, "api", "--method", "DELETE",
+		fmt.Sprintf("orgs/%s/teams/%s/memberships/%s", org, slug, user))
+	return err
+}
+
 // BranchProtection holds the rules protecting a branch.
 type BranchProtection struct {
 	RequiredReviews *struct {

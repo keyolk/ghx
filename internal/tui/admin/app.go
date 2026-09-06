@@ -6,7 +6,6 @@ package admin
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -71,9 +70,25 @@ type App struct {
 	query     string
 	searching bool
 
-	// confirm prompt for destructive actions
-	confirm string
+	// prompt is the open input for a write — a login to add, a permission to
+	// grant — or the zero value when none is open. See prompt.go.
+	prompt prompt
+
+	// confirm is the pending write awaiting y/n, or nil. It carries the whole
+	// action rather than a string to parse: the two team-membership writes are
+	// organization-wide and the prompt has to say so, which a prefix-matched
+	// string could not express. See actions.go.
+	confirm *confirmAction
+
+	// busy marks a write in flight. The list stays on screen while it runs —
+	// it is still the truth about who has access — so this only gates the
+	// footer and a second keypress.
+	busy bool
 }
+
+// permissionSet is the levels offered in the permission prompt, weakest first.
+// Aliased from the gh package so the TUI does not restate a set the API owns.
+var permissionSet = gh.CollaboratorPermissions
 
 // NewApp constructs the admin TUI.
 func NewApp(client *gh.Client, repo string) *App {
@@ -181,6 +196,28 @@ type membersMsg struct {
 // toastMsg surfaces a transient message.
 type toastMsg struct{ text string }
 
+// writeDoneMsg reports the outcome of a write.
+//
+// It carries what to re-fetch rather than leaving the caller to guess. A write
+// whose row does not change is indistinguishable from one that silently failed
+// — the toast is four seconds of text over a list that still shows the old
+// state — so the arriving row is the durable confirmation, and reloading is
+// part of the action rather than something the user has to press R for.
+type writeDoneMsg struct {
+	text string
+	err  error
+	// reload is the category to re-fetch, or the zero value (People) only when
+	// reloadTeam is set instead. See needsReload.
+	reload     category
+	reloadTeam string
+}
+
+// needsReload distinguishes "re-fetch People" from "re-fetch nothing", which
+// the zero value of a category cannot do on its own.
+func (m writeDoneMsg) needsReload() bool {
+	return m.err == nil && m.reloadTeam == ""
+}
+
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -230,22 +267,55 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.toast = msg.text
 		a.toastAt = time.Now()
 		return a, nil
+
+	case writeDoneMsg:
+		a.busy = false
+		if msg.err != nil {
+			// A toast, not a.err: the list on screen is still the truth about
+			// who has access, and replacing it with an error page would hide
+			// exactly the state needed to decide what to do next.
+			a.toast = tui.ErrorStyle.Render("error: ") + msg.err.Error()
+			a.toastAt = time.Now()
+			return a, nil
+		}
+		a.toast = msg.text
+		a.toastAt = time.Now()
+		if msg.reloadTeam != "" {
+			// The cached member list is now wrong, and it is what the drill-down
+			// renders from. Dropping it is what makes the re-fetch actually go
+			// out rather than being served from the map.
+			delete(a.teamMembers, msg.reloadTeam)
+			return a, a.loadTeamMembers(msg.reloadTeam)
+		}
+		if msg.needsReload() {
+			return a, a.loadCategory(msg.reload)
+		}
+		return a, nil
 	}
 	return a, nil
 }
 
 func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	// confirmation prompt owns the keyboard
-	if a.confirm != "" {
+	if a.confirm != nil {
 		switch msg.String() {
 		case "y", "Y":
-			action := a.confirm
-			a.confirm = ""
-			return a.runConfirm(action)
+			act := *a.confirm
+			a.confirm = nil
+			a.busy = true
+			return a.run(act)
 		case "n", "N", "esc":
-			a.confirm = ""
+			a.confirm = nil
 		}
+		// Anything else is ignored rather than treated as consent.
 		return nil
+	}
+
+	// The write prompt owns the keyboard for the same reason the search one
+	// does: a login contains letters that are otherwise navigation keys, so
+	// typing "kim" would move the cursor and quit.
+	if a.prompt.open() {
+		return a.handlePromptKey(msg)
 	}
 
 	// The search prompt owns the keyboard while it is open, so a query can
@@ -305,6 +375,13 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		// TODO: help overlay
 		return nil
 	}
+	// The write keys come last so they can never shadow navigation: a and d are
+	// not bound above, but a future navigation binding must win over a write
+	// rather than the reverse — pressing a key that used to move the cursor and
+	// having it revoke someone's access is the failure worth designing out.
+	if cmd, handled := a.handleWriteKey(msg.String()); handled {
+		return cmd
+	}
 	return nil
 }
 
@@ -343,385 +420,4 @@ func (a *App) onEnter() tea.Cmd {
 		return nil
 	}
 	return a.loadTeamMembers(rows[a.pane.Cursor].Slug)
-}
-
-// runConfirm executes a confirmed destructive action.
-func (a *App) runConfirm(action string) tea.Cmd {
-	ctx := context.Background()
-	client := a.client
-	switch {
-	case strings.HasPrefix(action, "remove-collaborator:"):
-		user := strings.TrimPrefix(action, "remove-collaborator:")
-		return func() tea.Msg {
-			err := client.RemoveCollaborator(ctx, user)
-			if err != nil {
-				return toastMsg{text: "error: " + err.Error()}
-			}
-			return toastMsg{text: "removed " + user}
-		}
-	}
-	return nil
-}
-
-// --- filtered views ---
-//
-// Each returns the rows the query keeps, in display order. The cursor indexes
-// these, never the unfiltered slice: indexing the source would act on whichever
-// row happened to sit at that position before the filter.
-
-func (a *App) visibleCollaborators() []gh.Collaborator {
-	idx := tui.FilterRows(a.query, len(a.collaborators), func(i int) string {
-		c := a.collaborators[i]
-		return c.Login + " " + c.RoleName
-	})
-	out := make([]gh.Collaborator, 0, len(idx))
-	for _, i := range idx {
-		out = append(out, a.collaborators[i])
-	}
-	return out
-}
-
-func (a *App) visibleTeams() []gh.Team {
-	idx := tui.FilterRows(a.query, len(a.teams), func(i int) string {
-		t := a.teams[i]
-		parent := ""
-		if t.Parent != nil {
-			parent = t.Parent.Slug
-		}
-		return t.Slug + " " + t.Name + " " + t.Permission + " " + t.Description + " " + parent
-	})
-	out := make([]gh.Team, 0, len(idx))
-	for _, i := range idx {
-		out = append(out, a.teams[i])
-	}
-	return out
-}
-
-func (a *App) visibleMembers() []gh.TeamMember {
-	members := a.teamMembers[a.teamSlug]
-	idx := tui.FilterRows(a.query, len(members), func(i int) string {
-		return members[i].Login
-	})
-	out := make([]gh.TeamMember, 0, len(idx))
-	for _, i := range idx {
-		out = append(out, members[i])
-	}
-	return out
-}
-
-func (a *App) visibleBranches() []gh.Branch {
-	idx := tui.FilterRows(a.query, len(a.branches), func(i int) string {
-		return a.branches[i].Name
-	})
-	out := make([]gh.Branch, 0, len(idx))
-	for _, i := range idx {
-		out = append(out, a.branches[i])
-	}
-	return out
-}
-
-func (a *App) visibleTags() []gh.Tag {
-	idx := tui.FilterRows(a.query, len(a.tags), func(i int) string {
-		return a.tags[i].Name
-	})
-	out := make([]gh.Tag, 0, len(idx))
-	for _, i := range idx {
-		out = append(out, a.tags[i])
-	}
-	return out
-}
-
-func (a *App) visibleReleases() []gh.Release {
-	idx := tui.FilterRows(a.query, len(a.releases), func(i int) string {
-		return a.releases[i].TagName + " " + a.releases[i].Name
-	})
-	out := make([]gh.Release, 0, len(idx))
-	for _, i := range idx {
-		out = append(out, a.releases[i])
-	}
-	return out
-}
-
-func (a *App) visibleWebhooks() []gh.Webhook {
-	idx := tui.FilterRows(a.query, len(a.webhooks), func(i int) string {
-		w := a.webhooks[i]
-		return w.Config.URL + " " + strings.Join(w.Events, " ")
-	})
-	out := make([]gh.Webhook, 0, len(idx))
-	for _, i := range idx {
-		out = append(out, a.webhooks[i])
-	}
-	return out
-}
-
-// itemCount returns how many rows the active view shows, after filtering.
-func (a *App) itemCount() int {
-	switch a.active {
-	case catCollaborators:
-		return len(a.visibleCollaborators())
-	case catTeams:
-		if a.teamSlug != "" {
-			return len(a.visibleMembers())
-		}
-		return len(a.visibleTeams())
-	case catBranches:
-		return len(a.visibleBranches())
-	case catTags:
-		return len(a.visibleTags())
-	case catReleases:
-		return len(a.visibleReleases())
-	case catWebhooks:
-		return len(a.visibleWebhooks())
-	case catBranchProtection:
-		if a.protection != nil {
-			return 1
-		}
-		return 0
-	}
-	return 0
-}
-
-// contentRows is how many rows the body may occupy: the terminal minus the
-// title, the tab strip, and the footer. Sizing to a.height instead is what
-// pushed the title and the tab strip off the top of an overflowing frame —
-// bubbletea keeps the LAST height lines, so the rows it drops are the ones the
-// user needs to navigate with.
-func (a *App) contentRows() int { return max(a.height-3, 1) }
-
-// listRows is the height available to list rows themselves.
-func (a *App) listRows() int { return a.contentRows() }
-
-func (a *App) View() string {
-	if a.width == 0 || a.height == 0 {
-		return "Loading ghx admin…"
-	}
-	if a.width < 40 || a.height < 8 {
-		return fmt.Sprintf("Terminal too small (%dx%d).\nghx admin needs at least 40x8.", a.width, a.height)
-	}
-
-	title := tui.TitleStyle.Render(" ghx admin ") + " " + tui.DimStyle.Render(a.repo)
-	header := a.renderHeader()
-	content := tui.FitRows(a.renderContent(), a.contentRows())
-	footer := a.footer()
-
-	return strings.Join([]string{title, header, content, footer}, "\n")
-}
-
-// renderHeader is the tab strip, or the search prompt while one is being typed.
-// The prompt replaces the strip rather than adding a row: an extra row would
-// resize the list mid-search, and the tabs are unreachable while the query owns
-// the keyboard anyway.
-func (a *App) renderHeader() string {
-	if a.searching {
-		return tui.RenderSearchBar(a.query, a.width)
-	}
-	tabs := make([]tui.TabLabel, len(categoryNames))
-	for i, name := range categoryNames {
-		tabs[i] = tui.TabLabel{Name: name, Active: category(i) == a.active}
-	}
-	strip := tui.RenderTabStrip(tabs, a.width)
-	if a.query != "" {
-		strip += " " + tui.TabActiveStyle.Render("["+a.query+"]")
-	}
-	return strip
-}
-
-func (a *App) renderContent() string {
-	if a.loading {
-		return "  Loading…"
-	}
-	if a.err != nil {
-		return tui.ErrorStyle.Render("  error: "+a.err.Error()) + "\n\n  Press 1-7 to retry."
-	}
-	if a.memberBusy {
-		return "  Loading members…"
-	}
-
-	switch a.active {
-	case catCollaborators:
-		return a.renderCollaborators()
-	case catTeams:
-		if a.teamSlug != "" {
-			return a.renderMembers()
-		}
-		return a.renderTeams()
-	case catBranchProtection:
-		return a.renderProtection()
-	case catReleases:
-		return a.renderReleases()
-	case catBranches:
-		return a.renderBranches()
-	case catTags:
-		return a.renderTags()
-	case catWebhooks:
-		return a.renderWebhooks()
-	}
-	return ""
-}
-
-// emptyOr renders the list, or a note when the filter or the source left it
-// with nothing. The two are worth distinguishing: an empty source is a fact
-// about the repository, an over-narrow filter is one keystroke from being
-// wrong, and they call for opposite responses.
-func (a *App) emptyOr(rows []string, empty string) string {
-	if len(rows) == 0 {
-		if a.query != "" {
-			return tui.DimStyle.Render(fmt.Sprintf("  Nothing matches %q.", a.query))
-		}
-		return tui.DimStyle.Render("  " + empty)
-	}
-	return a.pane.RenderList(rows, a.width, a.listRows())
-}
-
-func (a *App) renderCollaborators() string {
-	items := a.visibleCollaborators()
-	rows := make([]string, 0, len(items))
-	for _, c := range items {
-		// Say where the access comes from. Without it a repo whose permissions
-		// are entirely team-based reads as a list of individual grants, and
-		// pressing d on one of those cannot work: there is nothing on the
-		// repository to revoke.
-		via := tui.DimStyle.Render("via team")
-		if c.Direct {
-			via = tui.CheckPassStyle.Render("direct")
-		}
-		rows = append(rows, fmt.Sprintf("  %-24s %-10s %s", c.Login, c.RoleName, via))
-	}
-	return a.emptyOr(rows, "No collaborators.")
-}
-
-func (a *App) renderTeams() string {
-	items := a.visibleTeams()
-	rows := make([]string, 0, len(items))
-	for _, t := range items {
-		nested := ""
-		if t.Parent != nil {
-			nested = tui.DimStyle.Render(" ⤷ " + t.Parent.Slug)
-		}
-		count := ""
-		if members, ok := a.teamMembers[t.Slug]; ok {
-			count = tui.DimStyle.Render(fmt.Sprintf(" %d members", len(members)))
-		}
-		rows = append(rows, fmt.Sprintf("  %-32s %-8s%s%s",
-			t.Slug, t.Permission, count, nested))
-	}
-	return a.emptyOr(rows, "No teams have access to this repository.")
-}
-
-func (a *App) renderMembers() string {
-	items := a.visibleMembers()
-	rows := make([]string, 0, len(items))
-	for _, m := range items {
-		rows = append(rows, "  "+m.Login)
-	}
-	return a.emptyOr(rows, "This team has no members.")
-}
-
-func (a *App) renderProtection() string {
-	if a.protection == nil {
-		return tui.DimStyle.Render("  Branch 'main' is not protected.")
-	}
-	var b strings.Builder
-	if a.protection.RequiredReviews != nil {
-		b.WriteString(fmt.Sprintf("  Required reviews: %d\n", a.protection.RequiredReviews.RequiredCount))
-		b.WriteString(fmt.Sprintf("  Dismiss stale: %t\n", a.protection.RequiredReviews.DismissStale))
-	}
-	if a.protection.RequiredStatusChecks != nil {
-		b.WriteString(fmt.Sprintf("  Status checks: %v\n", a.protection.RequiredStatusChecks.Contexts))
-	}
-	b.WriteString(fmt.Sprintf("  Enforce admins: %t\n", a.protection.EnforceAdmins.Enabled))
-	return b.String()
-}
-
-func (a *App) renderReleases() string {
-	items := a.visibleReleases()
-	rows := make([]string, 0, len(items))
-	for _, r := range items {
-		marker := " "
-		if r.IsDraft {
-			marker = "○"
-		} else if r.IsPrerelease {
-			marker = "●"
-		}
-		rows = append(rows, fmt.Sprintf("  %s %-24s %s", marker, r.TagName, r.Name))
-	}
-	return a.emptyOr(rows, "No releases.")
-}
-
-func (a *App) renderBranches() string {
-	items := a.visibleBranches()
-	rows := make([]string, 0, len(items))
-	for _, br := range items {
-		marker := " "
-		if br.Protected {
-			marker = "🔒"
-		}
-		rows = append(rows, fmt.Sprintf("  %s %s", marker, br.Name))
-	}
-	return a.emptyOr(rows, "No branches.")
-}
-
-func (a *App) renderTags() string {
-	items := a.visibleTags()
-	rows := make([]string, 0, len(items))
-	for _, t := range items {
-		rows = append(rows, fmt.Sprintf("  %-32s %s",
-			t.Name, t.Commit.SHA[:min(len(t.Commit.SHA), 7)]))
-	}
-	return a.emptyOr(rows, "No tags.")
-}
-
-func (a *App) renderWebhooks() string {
-	items := a.visibleWebhooks()
-	rows := make([]string, 0, len(items))
-	for _, w := range items {
-		active := ""
-		if !w.Active {
-			active = tui.DimStyle.Render(" (disabled)")
-		}
-		rows = append(rows, fmt.Sprintf("  %-40s %s%s",
-			w.Config.URL, strings.Join(w.Events, ", "), active))
-	}
-	return a.emptyOr(rows, "No webhooks.")
-}
-
-func (a *App) footer() string {
-	if a.toast != "" && time.Since(a.toastAt) < 4*time.Second {
-		return tui.TruncateFooter(a.toast, a.width)
-	}
-	if a.confirm != "" {
-		return tui.TruncateFooter(
-			tui.ErrorStyle.Render(a.confirm+" y/n"), a.width)
-	}
-
-	hints := []string{"1-7", "category", "j/k", "move", "/", "search"}
-	switch {
-	case a.teamSlug != "":
-		hints = append(hints, "esc", "back to teams")
-	case a.active == catTeams:
-		hints = append(hints, "enter", "members")
-	}
-	hints = append(hints, "q", "quit")
-
-	line := tui.FmtHints(hints...)
-	// The position is only worth a footer slot when the list does not fit; a
-	// counter that always reads 1/1 is noise.
-	if pos := a.pane.ScrollHint(a.itemCount(), a.listRows()); pos != "" {
-		line += "  " + tui.DimStyle.Render(pos)
-	}
-	return tui.TruncateFooter(line, a.width)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
