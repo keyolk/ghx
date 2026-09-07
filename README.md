@@ -172,6 +172,34 @@ branch protection, with an explicit confirmation but no additional ghx policy.
   it. `R` and `:refresh` always re-read
 - **Responsive** — degrades gracefully on narrow terminals
 
+### `ghx admin`
+
+Repository administration in the same window as the review queue: People,
+Teams, branch protection, releases, branches, tags, and webhooks, with `/` to
+filter any of them and `enter` on a team to see its members.
+
+People and Teams are editable. On People, `a` adds a collaborator (a login,
+then a permission level), `p` changes one, and `d` revokes. On Teams, `p`
+changes what a team is granted on this repository and `d` revokes it; inside a
+team, `a` adds a member and `d` removes one.
+
+Two things the panel is careful about, because an org repository makes both
+easy to get wrong:
+
+- **Most people you see cannot be changed from People.** The collaborators
+  endpoint flattens team members in with direct grants, and on
+  `sendbird/ops-k8s` that is 149 of 150 rows. Each row says which it is, and
+  pressing `d` or `p` on a team-derived one refuses with the reason rather than
+  failing at the API — the team's own permission is the edit that has any effect.
+- **Team membership leaves this repository.** Adding or removing a member is an
+  organization change that alters their access to every repository that team
+  reaches. The confirmation leads with `ORG change —` and names what it
+  reaches, so it cannot be skimmed as another repo-scoped `y/n`.
+
+Everything destructive asks first, and only `y` proceeds. A successful write
+re-fetches the list it changed, because a row that stays as it was is
+indistinguishable from a write that silently failed.
+
 ## Configuration
 
     ghx config init    # write ~/.config/ghx/config.yaml

@@ -80,3 +80,10 @@ func FilterRows(query string, n int, haystack func(int) string) []int {
 // RenderSearchBar draws the one-line query prompt the subcommands show while
 // filtering.
 func RenderSearchBar(query string, w int) string { return renderSearchBar(query, w) }
+
+// RenderPromptBar draws a labelled one-line prompt in the same row the search
+// bar uses, for the subcommand TUIs' own inputs (a login to add, a permission
+// to grant). hints are key/description pairs, as FmtHints takes them.
+func RenderPromptBar(label, value string, w int, hints ...string) string {
+	return renderPromptBar(label, value, w, hints...)
+}
