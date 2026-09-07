@@ -12,10 +12,16 @@ import (
 // switch on these to update App state.
 
 // prListMsg carries the result of fetching a source's PR list.
+//
+// fetchedAt dates the rows rather than the response. It is zero for a real
+// fetch — the handler stamps those with its own clock — and set only when the
+// rows came from another instance's cached answer, which is as old as that
+// instance's fetch and must not be reported as if this window had just made it.
 type prListMsg struct {
 	sourceIdx  int
 	generation uint64
 	prs        []prSummary
+	fetchedAt  time.Time
 	warning    error
 	err        error
 }

@@ -363,7 +363,7 @@ func (a *App) refreshTouchedRepos(touched []string) tea.Cmd {
 		if !ok {
 			continue
 		}
-		if cmd := a.list.loadSource(i); cmd != nil {
+		if cmd := a.list.reloadSource(i); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}

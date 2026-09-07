@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -95,6 +93,17 @@ type prListModel struct {
 	// nowFunc is time.Now, replaced in tests so the age readout can be asserted
 	// without sleeping.
 	nowFunc func() time.Time
+
+	// pollIntervalFunc reports the cadence the app is currently polling at —
+	// idle backoff and budget throttle included. It is a func rather than a
+	// value because both of those move during a session, and the sharing window
+	// has to follow: a window that has backed off to five minutes should accept
+	// a correspondingly older answer from its neighbours, not keep re-fetching
+	// on the assumption of a 30-second cadence it is no longer using.
+	//
+	// Nil disables the cross-instance hand-off, which is what a model built
+	// without an App gets.
+	pollIntervalFunc func() time.Duration
 
 	missStreak int
 	stale      bool
@@ -202,95 +211,6 @@ func (m *prListModel) init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// fetchSource loads one source off the UI goroutine.
-//
-// A source pinned to one repo goes through `gh pr list`, which is REST and has
-// its own generous rate limit. Only an unpinned source needs `gh search prs`,
-// which spans repositories but spends the much scarcer GraphQL search budget.
-func (m *prListModel) fetchSource(i int) tea.Cmd {
-	if i < 0 || i >= len(m.sources) {
-		return nil
-	}
-	src := m.sources[i]
-	client := m.client
-	m.generations[i]++
-	generation := m.generations[i]
-	if src.Repo != "" {
-		scoped := client.WithRepo(src.Repo)
-		query, repo := src.Query, src.Repo
-		return func() tea.Msg {
-			c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			prs, err := scoped.ListPRs(c, query, 50)
-			// ListPRs answers about one repo, so it never echoes the slug back;
-			// fill it in or every later call would have nothing to scope to.
-			for j := range prs {
-				if prs[j].Repo == "" {
-					prs[j].Repo = repo
-				}
-			}
-			var warning error
-			if err == nil {
-				prs, warning = scoped.EnrichPRStatuses(c, prs)
-			}
-			return prListMsg{sourceIdx: i, generation: generation, prs: prs, warning: warning, err: err}
-		}
-	}
-	query := src.Query
-	return func() tea.Msg {
-		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		prs, warning, err := searchPRsAcrossAccounts(c, client, m.cfg.Accounts, query, 50)
-		if err == nil {
-			var statusWarning error
-			prs, statusWarning = client.EnrichPRStatuses(c, prs)
-			warning = errors.Join(warning, statusWarning)
-		}
-		return prListMsg{sourceIdx: i, generation: generation, prs: prs, warning: warning, err: err}
-	}
-}
-
-// refreshCurrent reloads the visible source.
-func (m *prListModel) refreshCurrent() tea.Cmd {
-	m.loadings[m.curTab] = true
-	m.dirty[m.curTab] = false
-	return m.fetchSource(m.curTab)
-}
-
-// invalidateCachesAndRefresh marks every source for reload after a bulk action,
-// because one PR can appear in several queues. Only the visible source reloads
-// immediately; the others reload on their next visit.
-//
-// No tab loses its rows. Emptying the cache is what put a "Loading…" line where
-// the queue had been — on the visible tab straight away, and on every other tab
-// the moment it was opened — so a single merge blanked whatever the user was
-// working through and brought it back a round trip later. The rows are seconds
-// stale at worst; the arriving response replaces them in place, and dirty is
-// what makes sure that response is actually asked for.
-func (m *prListModel) invalidateCachesAndRefresh() tea.Cmd {
-	for i := range m.sources {
-		m.generations[i]++
-		m.loadings[i] = false
-		m.errs[i] = nil
-		if i != m.curTab {
-			m.dirty[i] = true
-		}
-	}
-	m.syncListItems()
-	return m.refreshCurrent()
-}
-
-// markAllDirty flags every source for refetch without touching what is on
-// screen. An action taken in the detail view changes a PR the list is also
-// showing, and returning to a queue that still lists a merged PR is worse than
-// a tab that refetches when it is next opened.
-func (m *prListModel) markAllDirty() {
-	for i := range m.sources {
-		m.generations[i]++
-		m.dirty[i] = true
-	}
-}
-
 // appendSource adds a tab and the per-source state that has to stay the same
 // length as m.sources. Eight parallel slices is eight chances to forget one,
 // and forgetting one is an index-out-of-range at the next tab switch rather
@@ -320,26 +240,6 @@ func (m *prListModel) markDetected(slug string) {
 		m.detectedRepos = make(map[string]bool)
 	}
 	m.detectedRepos[strings.ToLower(slug)] = true
-}
-
-// loadSource fetches one source by index, whether or not it is visible.
-//
-// It is what lets a repository refresh because it was pushed to rather than
-// because its tab is on screen. Sources already loading are skipped: the
-// workspace sweep runs far more often than a fetch takes to return, and without
-// this a slow queue would accumulate one in-flight request per sweep.
-//
-// It does not touch inFlight. That flag belongs to the background poll chain,
-// which arms exactly one timer and would stall permanently if this path held
-// its slot; the per-source generation is what discards a superseded response
-// here.
-func (m *prListModel) loadSource(i int) tea.Cmd {
-	if i < 0 || i >= len(m.sources) || m.loadings[i] {
-		return nil
-	}
-	m.loadings[i] = true
-	m.dirty[i] = false
-	return m.fetchSource(i)
 }
 
 // currentDirty reports whether the visible source needs a refetch.
@@ -427,7 +327,23 @@ func (m *prListModel) handlePRListMsg(msg prListMsg) tea.Cmd {
 	}
 	m.caches[msg.sourceIdx] = msg.prs
 	m.fetchedAt[msg.sourceIdx] = m.now()
-	// Persist so the next session opens on these rows instead of re-fetching.
+	if !msg.fetchedAt.IsZero() {
+		// Rows handed over from another instance's cache. They are as old as
+		// that fetch, and stamping them "now" would be the same lie the disk
+		// seed at startup is careful not to tell.
+		m.fetchedAt[msg.sourceIdx] = msg.fetchedAt
+		// Not re-saved: the entry these came from is the same file, and
+		// rewriting it would push its SavedAt forward without a request having
+		// been made. Every instance reading it would then see a fresher stamp
+		// than any fetch justifies, and the source would go unfetched for as
+		// long as they kept handing it to each other.
+		if msg.sourceIdx == m.curTab {
+			m.syncListItems()
+		}
+		return nil
+	}
+	// Persist so the next session — and the ghx in the next pane — opens on
+	// these rows instead of re-fetching.
 	if m.fileCache != nil {
 		m.fileCache.save(m.sources[msg.sourceIdx], msg.prs)
 	}

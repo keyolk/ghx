@@ -10,6 +10,7 @@ package repodetect
 
 import (
 	"context"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,7 +31,27 @@ func (r Result) Found() bool { return r.Slug != "" }
 
 // timeout bounds the whole detection: it runs at startup, and a slow git call on
 // a network filesystem must not delay the first frame.
-const timeout = 2 * time.Second
+//
+// Ten seconds rather than two, and the reason is not git. Measured on a loaded
+// machine, the *first* fork/exec this process makes takes ~3.6s while every
+// subsequent one takes ~10ms — the cost is acquiring the ability to spawn at
+// all, not the command being spawned. Detection is usually the first thing in
+// the process to shell out, so it paid that alone, and a two-second budget was
+// spent before `tmux list-panes` had returned.
+//
+// What that produced was not a slow startup but a wrong one, silently: every
+// candidate came back empty, which is indistinguishable from "none of these
+// directories is a checkout". ghx then opened on the configured sources with no
+// repo tabs, and main() picked the account to verify from detected[0] — so a
+// loaded machine could have the pre-flight auth check run against the wrong
+// identity. Reproduced by running the repodetect tests alongside eight other
+// `go test` packages, where all four detection tests failed at 2.0s.
+//
+// The bound still exists for the case it was written for — a hung git on a
+// network filesystem must not hold the first frame forever — but it now has to
+// clear the one-off spawn cost first, and a healthy machine never approaches
+// it: the same detection completes in ~30ms.
+const timeout = 10 * time.Second
 
 // Detect returns the single repository to prioritise, or an empty Result. It is
 // the first of DetectAll's results — the working directory when it is a
@@ -103,6 +124,27 @@ func DetectAll(ctx context.Context, startDir string) []Result {
 		}()
 	}
 	wg.Wait()
+
+	// A budget that ran out is not the same fact as "none of these directories
+	// is a checkout", and until now both rendered as an empty slice. The caller
+	// leads the PR list with these and picks the account to pre-flight from the
+	// first one, so the two readings send it to different places — and the
+	// silent one sends it somewhere wrong. Nothing here can recover from it, so
+	// it is logged rather than returned: detection is best-effort by design and
+	// every caller treats a miss as ordinary, but the log is what makes a
+	// startup that detected nothing on a loaded machine explicable.
+	if err := ctx.Err(); err != nil {
+		// A count, not the paths: those are the user's directories and this goes
+		// to a log file they may attach to a bug report.
+		unresolved := 0
+		for i := range found {
+			if found[i].slug == "" {
+				unresolved++
+			}
+		}
+		log.Printf("repodetect: gave up after %s with %d of %d candidate(s) unresolved: %v",
+			timeout, unresolved, len(candidates), err)
+	}
 
 	// Rebuild in candidate order so the working directory still leads and the
 	// tmux ordering is preserved regardless of which git call finished first.

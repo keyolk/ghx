@@ -19,8 +19,16 @@ type Summary struct {
 
 	// Conversation status is enriched in one GraphQL batch after the base list
 	// loads. Known distinguishes a resolved PR from a failed/unavailable lookup.
-	UnresolvedConversations int  `json:"-"`
-	ConversationsKnown      bool `json:"-"`
+	//
+	// These are serialized under names of their own rather than skipped. gh
+	// never emits either key, so decoding a gh response is unaffected — but the
+	// list cache is JSON, and dropping them meant a queue restored from disk
+	// rendered every U marker dark until an enrichment pass had run against the
+	// whole page. Cached rows that cannot show the markers are a queue that has
+	// to be re-enriched before it can be read, which is the cost the cache is
+	// there to avoid.
+	UnresolvedConversations int  `json:"unresolvedConversations,omitempty"`
+	ConversationsKnown      bool `json:"conversationsKnown,omitempty"`
 
 	// Repo is "owner/name". A review queue spans repositories, so every
 	// subsequent call (view, diff, checks, comments) has to be told which one
@@ -33,7 +41,14 @@ type Summary struct {
 	// same GitHub account in a cross-account queue. Two forms exist — a bare
 	// "owner/repo" resolved through the Git credential helper, or
 	// GHUserSelectorPrefix + a gh CLI login.
-	CredentialRepo string `json:"-"`
+	//
+	// It is persisted with the row, under a key gh never emits. No token is
+	// stored — a selector is a repository path or a login name, which is the
+	// whole reason it exists in this form — and without it a row restored from
+	// the list cache loses the identity that found it, so opening it falls back
+	// to whichever account gh happens to have active. In a cross-account queue
+	// that is a 404 on someone else's private PR.
+	CredentialRepo string `json:"credentialRepo,omitempty"`
 }
 
 // GHUserSelectorPrefix marks a credential selector that names a gh CLI login
