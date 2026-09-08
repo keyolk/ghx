@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -451,19 +450,23 @@ func (c *commentsView) threadHeader(t pr.ReviewThread, selected bool, width int)
 	return line
 }
 
-// commentLines renders one comment's author and wrapped body, indented.
+// commentLines renders one comment's author and body, indented.
+//
+// The body goes through the markdown renderer rather than being word-wrapped as
+// prose. A bot's report is a terraform plan inside a fenced block inside
+// <details>, and reflowing that moved the plan's +/-/~ markers — the only part
+// that says what the change does — into the middle of wrapped lines.
 func (c *commentsView) commentLines(cm pr.ThreadComment, width int) []string {
 	out := []string{"    " + prAuthorStyle.Render(cm.Author.Login) +
 		dimStyle.Render("  "+cm.CreatedAt.Format("2006-01-02 15:04"))}
-	avail := max(width-6, 20)
-	for _, para := range strings.Split(cm.Body, "\n") {
-		if strings.TrimSpace(para) == "" {
+	for _, seg := range renderCommentBody(cm.Body, max(width-6, 20)) {
+		if seg == "" {
+			// An empty line stays empty: padding it with the indent leaves
+			// trailing spaces that a selection band later paints over.
 			out = append(out, "")
 			continue
 		}
-		for _, seg := range wrapText(para, avail) {
-			out = append(out, "      "+seg)
-		}
+		out = append(out, "      "+seg)
 	}
 	return out
 }
@@ -522,28 +525,6 @@ func threadRange(t pr.ReviewThread) (lo, hi int, ok bool) {
 	}
 	return start, end, true
 }
-
-// commentPreview flattens a comment body into one scannable line. Review bots
-// lead with markdown badges and HTML, which would otherwise fill the preview
-// with `<sub>` and shields.io URLs instead of the actual finding.
-func commentPreview(body string) string {
-	s := body
-	// Drop markdown images (badges) and collapse links to their text.
-	s = markdownImageRe.ReplaceAllString(s, "")
-	s = markdownLinkRe.ReplaceAllString(s, "$1")
-	s = htmlTagRe.ReplaceAllString(s, "")
-	// Strip emphasis and heading markers that add noise without structure here.
-	s = strings.NewReplacer("**", "", "`", "", "#", "").Replace(s)
-	s = strings.ReplaceAll(s, "\n", " ")
-	return strings.TrimSpace(whitespaceRe.ReplaceAllString(s, " "))
-}
-
-var (
-	markdownImageRe = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
-	markdownLinkRe  = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
-	htmlTagRe       = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
-	whitespaceRe    = regexp.MustCompile(`\s+`)
-)
 
 // helpLine returns the comments-tab footer hints.
 func (c *commentsView) helpLine() string {

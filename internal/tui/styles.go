@@ -113,6 +113,17 @@ var (
 	checkPendingStyle = lipgloss.NewStyle().Foreground(colorAssistant).Bold(true)
 	checkSkipStyle    = lipgloss.NewStyle().Foreground(colorDim)
 
+	// Comment bodies. A review comment is markdown, and the blocks inside it —
+	// a fenced plan, a table, an inline span — carry meaning the surrounding
+	// prose does not. Code is left uncoloured but distinct from prose, so a
+	// terraform plan's own +/-/~ colours are the only signal in the block.
+	mdCodeStyle     = lipgloss.NewStyle().Foreground(colorSelectedFg)
+	mdCodeSpanStyle = lipgloss.NewStyle().Foreground(colorSky)
+	// terraform's in-place update (~) and replace (!) markers. Neither is an
+	// addition or a deletion, and borrowing green or red for them would report
+	// a change the plan is not making.
+	diffChangeStyle = lipgloss.NewStyle().Foreground(colorAssistant)
+
 	// Review threads
 	threadStyle    = lipgloss.NewStyle().Foreground(colorCyan)
 	threadResolved = lipgloss.NewStyle().Foreground(colorDim).Strikethrough(true)
@@ -181,6 +192,9 @@ func SetNoColor() {
 	strip(&checkFailStyle)
 	strip(&checkPendingStyle)
 	strip(&checkSkipStyle)
+	strip(&mdCodeStyle)
+	strip(&mdCodeSpanStyle)
+	strip(&diffChangeStyle)
 	strip(&threadStyle)
 	strip(&threadResolved)
 	strip(&threadOpenGlyph)

@@ -55,10 +55,15 @@ func (d *prDetailModel) renderOverview(w, h int) string {
 	if body == "" {
 		b.WriteString(dimStyle.Render("  (no description)"))
 	} else {
-		for _, para := range strings.Split(body, "\n") {
-			for _, seg := range wrapText(para, max(w-2, 20)) {
-				b.WriteString("  " + seg + "\n")
+		// A PR description is markdown too, and the ones worth reading closely —
+		// a migration plan, a before/after — are exactly the ones a prose wrap
+		// destroys.
+		for _, seg := range renderCommentBody(body, max(w-2, 20)) {
+			if seg == "" {
+				b.WriteString("\n")
+				continue
 			}
+			b.WriteString("  " + seg + "\n")
 		}
 	}
 	return scrollBlock(b.String(), d.overviewOff, h)
