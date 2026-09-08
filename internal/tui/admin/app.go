@@ -295,7 +295,30 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
+// isInTextInput reports whether a text field currently owns the keyboard. Used
+// to gate CJK normalization: there the jamo IS the intended input.
+//
+// The write prompt is split by kind: promptLogin is a text field, while
+// promptPermission is a shortcut menu (tab/j/k/l/h), so the prompt being open
+// does not by itself mean text is being typed.
+func (a *App) isInTextInput() bool {
+	return a.searching || a.prompt.kind == promptLogin
+}
+
 func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
+	// ctrl+c quits from anywhere, ahead of the confirmation, the write prompt,
+	// and the search box. Nothing is written until Enter, so aborting is safe.
+	if msg.Type == tea.KeyCtrlC {
+		return tea.Quit
+	}
+
+	// Under a Korean input source the shortcut keys arrive as jamo (`q` -> `ㅂ`).
+	// Rewrite them to the Latin key at the same physical position so shortcuts
+	// fire without switching the input source back.
+	if !a.isInTextInput() {
+		msg = tui.NormalizeCJKKey(msg)
+	}
+
 	// confirmation prompt owns the keyboard
 	if a.confirm != nil {
 		switch msg.String() {
@@ -325,7 +348,7 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q":
 		return tea.Quit
 	case "/":
 		a.searching = true

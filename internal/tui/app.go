@@ -667,7 +667,31 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey enforces the modal order: composer → merge prompt → search →
 // palette → help → globals → active view. Whoever is on top owns the keyboard.
+// isInTextInput reports whether a text field currently owns the keyboard. Used
+// to gate CJK normalization: there the jamo IS the intended input, so a Korean
+// review comment or a Korean search term must survive verbatim.
+func (a *App) isInTextInput() bool {
+	return (a.composer != nil && a.composer.active) ||
+		(a.search != nil && a.search.active) ||
+		(a.palette != nil && a.palette.active) ||
+		a.labels != nil || a.repos != nil
+}
+
 func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
+	// ctrl+c quits from anywhere, ahead of the composer and every prompt. A
+	// half-written review comment is discarded, which is what ctrl+c means --
+	// nothing has been posted.
+	if msg.Type == tea.KeyCtrlC {
+		return tea.Quit
+	}
+
+	// Under a Korean input source the shortcut keys arrive as jamo (`q` -> `ㅂ`).
+	// Rewrite them to the Latin key at the same physical position so shortcuts
+	// fire without switching the input source back.
+	if !a.isInTextInput() {
+		msg = NormalizeCJKKey(msg)
+	}
+
 	if cmd, handled := a.composer.update(msg); handled {
 		return cmd
 	}
@@ -705,8 +729,6 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 
 	switch msg.String() {
-	case "ctrl+c":
-		return tea.Quit
 	case "?":
 		a.helpOpen = true
 		return nil

@@ -161,6 +161,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
+	// ctrl+c quits from anywhere, ahead of the log viewer and the search prompt.
+	if msg.Type == tea.KeyCtrlC {
+		return tea.Quit
+	}
+
+	// Under a Korean input source the shortcut keys arrive as jamo (`q` -> `ㅂ`).
+	// Rewrite them to the Latin key at the same physical position so shortcuts
+	// fire without switching the input source back. Skipped while the search
+	// prompt owns keys, where the jamo is the intended input.
+	if !a.searching {
+		msg = tui.NormalizeCJKKey(msg)
+	}
+
 	// log viewer mode: j/k scrolls, esc exits
 	if a.logView != "" {
 		switch msg.String() {
@@ -186,7 +199,7 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q":
 		return tea.Quit
 	case "/":
 		a.searching = true
