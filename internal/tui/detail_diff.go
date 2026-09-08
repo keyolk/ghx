@@ -574,11 +574,10 @@ func (v *diffView) render(width, height int) string {
 	if v.sideBySide && width >= 80 {
 		return v.renderSideBySide(width, height)
 	}
-	v.clampOffset(height)
+	v.clampOffset(width, height)
 	var b strings.Builder
-	end := min(v.offset+height, len(v.rows))
 	written := 0
-	for i := v.offset; i < end && written < height; i++ {
+	for i := v.offset; i < len(v.rows) && written < height; i++ {
 		// A comment is prose and rarely fits one line; wrapping it keeps the
 		// finding readable instead of cutting it off at the pane edge.
 		lines := v.rowLines(i, width)
@@ -599,6 +598,20 @@ func (v *diffView) render(width, height int) string {
 // rowLines renders a row as the one or more screen lines it needs.
 func (v *diffView) rowLines(i, width int) []string {
 	r := v.rows[i]
+	if r.kind == rowDiffLine {
+		// A config value carrying a whole document as `\n` escapes is one line
+		// hundreds of cells wide; drawn at its escapes the change is legible
+		// instead of being cut off at the pane edge.
+		segs := v.unfoldUnified(i, width)
+		if segs == nil {
+			return []string{v.renderRow(i, width)}
+		}
+		out := make([]string, 0, len(segs))
+		for n := range segs {
+			out = append(out, v.renderUnfoldedLine(i, width, n, segs))
+		}
+		return out
+	}
 	if r.kind != rowThread {
 		return []string{v.renderRow(i, width)}
 	}
@@ -616,20 +629,25 @@ func (v *diffView) rowLines(i, width int) []string {
 // clampOffset scrolls just enough to keep the cursor visible. A negative offset
 // means the position is stale (the cursor was moved by a jump), so centre on it
 // instead of scrolling it to whichever edge happens to be nearer.
-func (v *diffView) clampOffset(height int) {
+//
+// The offset is a row index but the window is measured in screen rows, and a
+// row can occupy several of those — so the lower bound comes from walking back
+// from the cursor counting the rows it will actually draw.
+func (v *diffView) clampOffset(width, height int) {
 	if height <= 0 {
 		return
 	}
-	maxOffset := max(len(v.rows)-height, 0)
+	minOffset := v.minOffsetFor(width, height)
+	maxOffset := max(len(v.rows)-1, 0)
 	if v.offset < 0 {
-		v.offset = clamp(v.cursor-height/2, 0, maxOffset)
+		v.offset = clamp(v.cursor-height/2, minOffset, maxOffset)
 		return
 	}
 	if v.cursor < v.offset {
 		v.offset = v.cursor
 	}
-	if v.cursor >= v.offset+height {
-		v.offset = v.cursor - height + 1
+	if v.offset < minOffset {
+		v.offset = minOffset
 	}
 	v.offset = clamp(v.offset, 0, maxOffset)
 }
