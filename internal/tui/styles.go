@@ -29,6 +29,11 @@ const (
 	iconThreadOpen     = "○"
 	iconThreadResolved = "✓"
 	iconThreadUnknown  = "?"
+
+	// Marks where a `\n` escape inside a string was drawn as a line break, so an
+	// unfolded value still reads as one scalar rather than as lines the file
+	// actually has.
+	iconEscapedBreak = "↵"
 )
 
 var (

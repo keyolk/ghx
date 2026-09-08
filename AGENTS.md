@@ -26,6 +26,7 @@ actions.
 - `internal/gh/rest.go` — 목록·검색·상태·리뷰 스레드의 REST 대체 경로
 - `internal/tui/clipboard.go` — `y` / `:copy`, PR URL 복사 (외부 clipboard 명령)
 - `internal/tui/detail_diff_jump.go` — diff의 hunk/file 단위 점프 (`J`/`K`, `{`/`}`)
+- `internal/tui/detail_diff_unfold.go` — `\n` escape로 문서를 품은 한 줄을 화면에서 펼침
 - `internal/tui/detail_cache.go` — PR 상세 디스크 캐시 (updatedAt로 유효성 판정)
 - `internal/cachefile` — 디스크 캐시 공용 배관 (원자적 쓰기, 경로 탈출 방지 키)
 - `internal/gh/status_cache.go` — PR별 status enrichment 캐시 (인스턴스 간 공유)
@@ -146,6 +147,17 @@ actions.
   낸다(`threadStateGlyph`): 열로 정렬되고, 문자라서 NO_COLOR에서도 읽히고, 밴드가 삼키지
   못한다. review thread가 이 사례였다 — resolved 여부가 `[resolved]` 태그 + dim + 취소선
   뿐이었는데 선택 시 셋 다 무력화됐다.
+- **한 줄이 문서를 품고 있으면 화면에서만 펼친다.** helm values의 `updatedNodePool:`처럼
+  scalar 하나에 YAML 전체가 `\n` escape으로 들어간 줄은 폭 수백 셀짜리 한 행이고, 잘리면
+  무엇이 바뀌었는지 아무것도 안 보인다. 그래서 escape 자리에서 나눠 그린다 —
+  **그리기만** 바꾼다. 행 모델(커서·visual range·코멘트 앵커)은 한 줄 = 한 행 그대로다:
+  GitHub이 코멘트를 붙일 수 있는 단위가 줄이기 때문이다. 그래서 이어지는 조각에는 줄번호를
+  주지 않는다(파일에 없는 줄을 주장하게 된다). 게이트는 `\n` 2개 이상 **그리고** 안 맞을 때
+  뿐이다 — `fmt.Errorf("...\n")` 하나까지 펼치면 평범한 Go diff의 행 수가 두 배가 된다.
+- **화면 행 수로 세는 창에 행 인덱스 offset을 쓰면 커서가 화면 밖으로 나간다.** 펼쳐진 행
+  하나가 창 전체보다 클 수 있어서, `clampOffset`이 커서에서 거꾸로 걸어 실제 그려질 행을
+  세야 한다(`minOffsetFor`). 인덱스로만 맞추면 `[offset, offset+height)` 안에 있는데 화면
+  아래로는 나가 있어 `j`가 멈춘 것처럼 보인다.
 - **상태는 값으로 들고 다닌다. 렌더된 문자열을 검사하지 않는다.** diff 뷰가
   `strings.Contains(text, "[resolved]")`로 스타일을 골랐는데, 그 단어를 인용한 코멘트가
   resolved로 렌더됐다. `diffRow.state`처럼 행에 실어 보낸다.

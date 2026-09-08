@@ -152,16 +152,30 @@ func (v *diffView) pairHunk(from, to, halfWidth int) []sidePair {
 	return out
 }
 
-// pairWrapCount is how many screen rows a pair needs. Only comments wrap; code
-// lines are truncated, because a wrapped code line would break the alignment
-// the layout exists to provide.
+// pairWrapCount is how many screen rows a pair needs.
+//
+// Two things need more than one row: a comment, which is prose far longer than
+// a column, and a line whose content is an escaped document. Ordinary code is
+// truncated instead, because wrapping it would break the alignment the layout
+// exists to provide. A pair takes the taller of its two halves so the divider
+// stays straight.
 func (v *diffView) pairWrapCount(p sidePair, halfWidth int) int {
 	rowIdx := p.left
 	if rowIdx < 0 || (p.right >= 0 && v.rows[p.right].kind == rowThread) {
 		rowIdx = p.right
 	}
-	if rowIdx < 0 || v.rows[rowIdx].kind != rowThread {
+	if rowIdx < 0 {
 		return 1
+	}
+	if v.rows[rowIdx].kind != rowThread {
+		n := 1
+		if segs := v.unfoldHalf(p.left, halfWidth); segs != nil {
+			n = len(segs)
+		}
+		if segs := v.unfoldHalf(p.right, halfWidth); segs != nil && len(segs) > n {
+			n = len(segs)
+		}
+		return n
 	}
 	// Headers spanning both halves get the full width; a one-sided comment gets
 	// its own column.
@@ -284,8 +298,8 @@ func (v *diffView) renderSideRow(p sidePair, half int, divider string) string {
 		}
 		return blank + dimStyle.Render(divider) + cell
 	}
-	left := v.renderHalf(p.left, half, sideLeft)
-	right := v.renderHalf(p.right, half, sideRight)
+	left := v.renderHalf(p.left, half, sideLeft, p.wrapLine)
+	right := v.renderHalf(p.right, half, sideRight, p.wrapLine)
 	return left + dimStyle.Render(divider) + right
 }
 
@@ -298,7 +312,11 @@ const (
 
 // renderHalf draws one side's cell, padded to exactly width cells. A -1 row
 // index renders as blank space so the opposite half stays aligned.
-func (v *diffView) renderHalf(rowIdx, width int, which halfSide) string {
+//
+// seg is which screen row of an unfolded line this is; a pair is as tall as its
+// taller half, so a segment past the end of this side's content renders blank
+// rather than repeating the last one.
+func (v *diffView) renderHalf(rowIdx, width int, which halfSide, seg int) string {
 	if rowIdx < 0 {
 		return strings.Repeat(" ", width)
 	}
@@ -313,21 +331,38 @@ func (v *diffView) renderHalf(rowIdx, width int, which halfSide) string {
 	if which == sideRight {
 		lineNo = r.line.NewLineNo
 	}
-	marker := " "
-	switch r.line.Kind {
-	case pr.DiffLineAddition:
-		marker = "+"
-	case pr.DiffLineDeletion:
-		marker = "-"
+	content := r.line.Content
+	trailing := ""
+	if segs := v.unfoldHalf(rowIdx, width); segs != nil {
+		if seg >= len(segs) {
+			// This half's value ran out before the other's did. Blank, but still
+			// styled and padded, so the divider and the +/- band stay unbroken.
+			return v.renderHalfCell("", width, selected, inVisual, r.line.Kind)
+		}
+		content = segs[seg]
+		// Only the first segment carries the line number: the rest are more of
+		// that same line, not lines the file has.
+		if seg > 0 {
+			lineNo = 0
+		}
+		if seg < len(segs)-1 {
+			trailing = iconEscapedBreak
+		}
+	} else if seg > 0 {
+		return v.renderHalfCell("", width, selected, inVisual, r.line.Kind)
 	}
 
-	gutter := gutterCell(lineNo) + marker
+	gutter := gutterCell(lineNo) + diffMarker(r.line.Kind)
 	// Tabs must become the spaces the terminal would draw, measured from where
 	// the content actually starts. Counting a tab as one cell makes the padding
 	// below too short, and every column after this one shifts.
-	content := expandTabs(r.line.Content, lipglossWidth(gutter))
-	plain := padCell(fitCell(gutter+content, width), width)
+	plain := gutter + expandTabs(content, lipglossWidth(gutter)) + trailing
+	return v.renderHalfCell(plain, width, selected, inVisual, r.line.Kind)
+}
 
+// renderHalfCell fits and styles one already-composed cell.
+func (v *diffView) renderHalfCell(plain string, width int, selected, inVisual bool, kind pr.DiffLineKind) string {
+	plain = padCell(fitCell(plain, width), width)
 	if selected {
 		return diffCursorStyle.Render(plain)
 	}
@@ -335,7 +370,7 @@ func (v *diffView) renderHalf(rowIdx, width int, which halfSide) string {
 		return selectedRowStyle.Render(plain)
 	}
 	// Unselected cells keep the +/- coloring so the eye can still scan changes.
-	switch r.line.Kind {
+	switch kind {
 	case pr.DiffLineAddition:
 		return diffAddStyle.Render(plain)
 	case pr.DiffLineDeletion:
