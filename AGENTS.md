@@ -158,6 +158,16 @@ actions.
   하나가 창 전체보다 클 수 있어서, `clampOffset`이 커서에서 거꾸로 걸어 실제 그려질 행을
   세야 한다(`minOffsetFor`). 인덱스로만 맞추면 `[offset, offset+height)` 안에 있는데 화면
   아래로는 나가 있어 `j`가 멈춘 것처럼 보인다.
+- **macOS는 새 경로의 실행파일 첫 exec에 ~0.25초를 쓴다** (서명 검사, 이후 캐시됨).
+  테스트가 `t.TempDir()`에 fake 바이너리를 매번 새로 쓰면 그 비용을 테스트마다 낸다.
+  `repodetect`는 감지 전체에 2초 deadline이 걸려 있어서, 이 하니스 비용이 병렬
+  `go test ./...`에서 예산을 넘겨 **빈 결과로 실패**했다 — 감지 버그처럼 보이지만
+  테스트가 스스로에게 세금을 매긴 것이다. fake 실행파일은 패키지당 한 번만 쓰고
+  가변 입력은 환경변수로 넘긴다 (`detectall_test.go`의 `fakeTmux`).
+- **감지 비용은 git이 아니라 프로세스 개수다.** git 자체는 거의 일을 안 하고 spawn이
+  전부다. `remote` → remote별 `remote get-url`은 remote 수만큼 프로세스를 쓴다 —
+  `config --get-regexp '^remote\..*\.url$'` 한 번이 같은 답을 준다. pane이 여러 개면
+  이 차이가 2초 예산을 통째로 먹는다.
 - **상태는 값으로 들고 다닌다. 렌더된 문자열을 검사하지 않는다.** diff 뷰가
   `strings.Contains(text, "[resolved]")`로 스타일을 골랐는데, 그 단어를 인용한 코멘트가
   resolved로 렌더됐다. `diffRow.state`처럼 행에 실어 보낸다.

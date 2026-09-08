@@ -5,20 +5,44 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
 // fakeTmux puts a `tmux` on PATH that prints the given list-panes output, so
 // pane scanning is exercised without a real tmux session — which a test cannot
 // rely on and must not reach into.
+//
+// The script is written once for the whole package and the pane list is passed
+// through the environment, rather than baking it into a fresh script per test.
+// macOS spends a quarter of a second on the first exec of an executable it has
+// not seen at that path — a signature check it then caches — so a per-test
+// script charged every test ~250ms of pure setup. Detection is bounded by a
+// 2s deadline, and under a parallel `go test ./...` that overhead was enough to
+// blow it: the tests failed with an empty result, looking like a detection bug
+// rather than the harness taxing itself.
+var fakeTmuxOnce struct {
+	sync.Once
+	dir string
+}
+
 func fakeTmux(t *testing.T, panes string) {
 	t.Helper()
-	dir := t.TempDir()
-	script := "#!/bin/sh\ncat <<'PANES'\n" + panes + "\nPANES\n"
-	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeTmuxOnce.Do(func() {
+		// os.MkdirTemp, not t.TempDir: the directory outlives the test that
+		// happened to be first, and the OS reclaims it.
+		dir, err := os.MkdirTemp("", "ghx-fake-tmux")
+		if err != nil {
+			t.Fatal(err)
+		}
+		script := "#!/bin/sh\nprintf '%s\\n' \"$GHX_FAKE_PANES\"\n"
+		if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		fakeTmuxOnce.dir = dir
+	})
+	t.Setenv("GHX_FAKE_PANES", panes)
+	t.Setenv("PATH", fakeTmuxOnce.dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
 }
 

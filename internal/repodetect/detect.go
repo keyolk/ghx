@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -108,7 +109,8 @@ func DetectAll(ctx context.Context, startDir string) []Result {
 
 	// Each directory costs two git invocations, so resolve them concurrently.
 	// A wide tmux window otherwise serializes a dozen subprocess round trips
-	// into the startup path, delaying the first frame.
+	// into the startup path, delaying the first frame. slugFromDir overlaps its
+	// own two calls as well, so a directory costs one process round trip.
 	type resolved struct {
 		slug string
 		root string
@@ -170,6 +172,18 @@ func DetectAll(ctx context.Context, startDir string) []Result {
 //
 // A linked worktree resolves to the same slug as its main checkout, which is
 // what makes `.worktree/<branch>` directories behave as the repo they came from.
+//
+// Two git invocations, never more, and they run concurrently.
+//
+// A process is the whole expense here: git itself does almost no work, but
+// spawning it costs tens of milliseconds, and that is paid per invocation. The
+// obvious shape — `remote`, then `remote get-url` per remote — costs one process
+// per remote on top of the root lookup, and a window with several panes
+// multiplied that into most of the detection budget. A loaded machine then
+// pushed it past the deadline, at which point DetectAll returns nothing at all
+// and the PR list silently loses the repositories it should lead with.
+//
+// The two calls answer independent questions, so neither waits on the other.
 func slugFromDir(ctx context.Context, dir string) (slug, root string) {
 	if dir == "" {
 		return "", ""
@@ -177,27 +191,72 @@ func slugFromDir(ctx context.Context, dir string) (slug, root string) {
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return "", ""
 	}
+	var remotes string
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// `remote.<name>.url` is where `remote get-url` reads from, so this is
+		// the same answer for every remote at once.
+		remotes = gitOut(ctx, dir, "config", "--get-regexp", `^remote\..*\.url$`)
+	}()
 	root = strings.TrimSpace(gitOut(ctx, dir, "rev-parse", "--show-toplevel"))
+	wg.Wait()
 	if root == "" {
 		return "", ""
 	}
+	urls := parseRemoteURLs(remotes)
 	// Try the conventional remote names before falling back to whatever exists,
 	// so a fork with both `origin` and `upstream` prefers the one being pushed to.
 	for _, remote := range []string{"origin", "upstream"} {
-		if url := strings.TrimSpace(gitOut(ctx, dir, "remote", "get-url", remote)); url != "" {
-			if s := SlugFromURL(url); s != "" {
-				return s, root
-			}
+		if s := SlugFromURL(urls[remote]); s != "" {
+			return s, root
 		}
 	}
-	for _, remote := range strings.Fields(gitOut(ctx, dir, "remote")) {
-		if url := strings.TrimSpace(gitOut(ctx, dir, "remote", "get-url", remote)); url != "" {
-			if s := SlugFromURL(url); s != "" {
-				return s, root
-			}
+	// Any other remote, in a stable order rather than map iteration order, so
+	// which one wins does not change between runs.
+	for _, name := range sortedKeys(urls) {
+		if s := SlugFromURL(urls[name]); s != "" {
+			return s, root
 		}
 	}
 	return "", ""
+}
+
+// parseRemoteURLs turns `git config --get-regexp` output into remote name → URL.
+//
+// A key is `remote.<name>.url` and a name may contain dots ("origin.old"), so
+// the name is what lies between the first and last dot — splitting on every dot
+// would drop such a remote entirely.
+func parseRemoteURLs(out string) map[string]string {
+	urls := make(map[string]string)
+	for _, line := range strings.Split(out, "\n") {
+		key, url, ok := strings.Cut(strings.TrimRight(line, "\r"), " ")
+		if !ok {
+			continue
+		}
+		name, ok := strings.CutPrefix(key, "remote.")
+		if !ok {
+			continue
+		}
+		name, ok = strings.CutSuffix(name, ".url")
+		if !ok || name == "" {
+			continue
+		}
+		urls[name] = strings.TrimSpace(url)
+	}
+	return urls
+}
+
+// sortedKeys returns a map's keys in a stable order, so which remote wins does
+// not change between runs.
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // SlugFromURL extracts "owner/name" from a git remote URL. It handles the https

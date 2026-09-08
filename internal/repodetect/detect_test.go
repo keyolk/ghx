@@ -219,3 +219,59 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+// Remote lookup went from one git process per remote to one for all of them,
+// because a process is the expense and the detection deadline is what runs out.
+// The parsing that replaced `remote get-url` has to answer identically.
+func TestParseRemoteURLs(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want map[string]string
+	}{
+		{"empty", "", map[string]string{}},
+		{"one", "remote.origin.url https://github.com/o/n.git\n",
+			map[string]string{"origin": "https://github.com/o/n.git"}},
+		{"several", "remote.origin.url git@github.com:o/n.git\nremote.upstream.url https://github.com/u/n.git\n",
+			map[string]string{"origin": "git@github.com:o/n.git", "upstream": "https://github.com/u/n.git"}},
+		// A remote name may contain dots. Splitting the key on every dot would
+		// drop such a remote, and with it the only URL some repos have.
+		{"dotted name", "remote.origin.old.url https://github.com/o/n.git\n",
+			map[string]string{"origin.old": "https://github.com/o/n.git"}},
+		// Other remote.* keys share the prefix and must not be read as URLs.
+		{"non-url keys ignored", "remote.origin.fetch +refs/heads/*:refs/remotes/origin/*\nremote.origin.url https://github.com/o/n.git\n",
+			map[string]string{"origin": "https://github.com/o/n.git"}},
+		{"malformed lines skipped", "garbage\nremote.origin.url https://github.com/o/n.git\n\n",
+			map[string]string{"origin": "https://github.com/o/n.git"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := parseRemoteURLs(c.out)
+			if len(got) != len(c.want) {
+				t.Fatalf("parseRemoteURLs = %v, want %v", got, c.want)
+			}
+			for k, v := range c.want {
+				if got[k] != v {
+					t.Errorf("remote %q = %q, want %q", k, got[k], v)
+				}
+			}
+		})
+	}
+}
+
+// A repository whose only remote is neither origin nor upstream is still
+// resolved, and always to the same one — map iteration order would otherwise
+// make a two-remote repo pick differently between runs.
+func TestSlugFromUnconventionalRemoteIsStable(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+	runGit(t, dir, "remote", "add", "zeta", "https://github.com/z/last.git")
+	runGit(t, dir, "remote", "add", "alpha", "https://github.com/a/first.git")
+
+	for i := 0; i < 3; i++ {
+		got := Detect(context.Background(), dir)
+		if got.Slug != "a/first" {
+			t.Fatalf("run %d: slug = %q, want a/first (the stable first remote)", i, got.Slug)
+		}
+	}
+}
