@@ -71,6 +71,7 @@ func helpSections() []helpSection {
 			{"R", "refresh"},
 			{"?", "toggle this help"},
 			{"q", "quit"},
+			{"ctrl+c", "quit from anywhere, including the composer and prompts"},
 		}},
 	}
 }
