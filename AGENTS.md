@@ -24,6 +24,7 @@ actions.
 - `internal/tui/account_search.go` — 복수 GitHub account 검색 병합과 중복 제거
 - `internal/gh/fallback.go` — GraphQL 거부/rate-limit 판별 (REST 재시도 여부)
 - `internal/gh/rest.go` — 목록·검색·상태·리뷰 스레드의 REST 대체 경로
+- `internal/tui/merge_failure.go` — merge 실패 박스 (gh 거부 사유 분류, 닫을 때까지 유지)
 - `internal/tui/clipboard.go` — `y` / `:copy`, PR URL 복사 (외부 clipboard 명령)
 - `internal/tui/detail_diff_jump.go` — diff의 hunk/file 단위 점프 (`J`/`K`, `{`/`}`)
 - `internal/tui/detail_diff_unfold.go` — `\n` escape로 문서를 품은 한 줄을 화면에서 펼침

@@ -58,6 +58,8 @@ type App struct {
 	// confirm gates the destructive-ish list actions (approve, close, ready) so
 	// a keypress while scrolling cannot act on the wrong row.
 	confirm *confirmPrompt
+	// mergeFailure, when set, is the box explaining a merge that did not happen.
+	mergeFailure *mergeFailure
 
 	// labels and statusFilter are modal list pickers; nil when closed.
 	labels       *labelPicker
@@ -555,6 +557,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case actionDoneMsg:
 		a.endPending()
+		if msg.mergeFailed != nil {
+			a.showMergeFailure(&mergeFailure{items: []mergeFailureItem{*msg.mergeFailed}})
+			return a, nil
+		}
 		if msg.err != nil {
 			return a, errCmd(msg.err)
 		}
@@ -579,7 +585,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				delete(a.list.selected, key)
 			}
 		}
-		if msg.err == nil {
+		if len(msg.mergeFailures) > 0 {
+			a.showMergeFailure(&mergeFailure{items: msg.mergeFailures, merged: len(msg.completed)})
+		} else if msg.err == nil {
 			a.setToast(msg.label)
 		} else if len(msg.completed) > 0 {
 			a.setToast(fmt.Sprintf("%s; some failed: %v", msg.label, msg.err))
@@ -641,7 +649,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mergeResultMsg:
 		a.mergePrompt = nil
 		if msg.err != nil {
-			return a, errCmd(msg.err)
+			target := "this pull request"
+			if a.detail != nil {
+				target = fmt.Sprintf("#%d", a.detail.number)
+			}
+			a.showMergeFailure(&mergeFailure{items: []mergeFailureItem{newMergeFailureItem(target, msg.err)}})
+			return a, nil
 		}
 		a.setToast("merged")
 		return a, nil
@@ -692,6 +705,11 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		msg = NormalizeCJKKey(msg)
 	}
 
+	// The failure box arrives on its own, possibly over a prompt opened while
+	// the merge ran; it is drawn on top, so it takes the keys first.
+	if a.mergeFailure != nil {
+		return a.handleMergeFailureKey(msg)
+	}
 	if cmd, handled := a.composer.update(msg); handled {
 		return cmd
 	}
@@ -969,6 +987,13 @@ func (a *App) anyLoading() bool {
 		return true
 	}
 	return false
+}
+
+// showMergeFailure opens the failure box and leaves a one-line summary in the
+// footer for after it is dismissed.
+func (a *App) showMergeFailure(f *mergeFailure) {
+	a.mergeFailure = f
+	a.setToast(f.toast())
 }
 
 func (a *App) setToast(s string) {

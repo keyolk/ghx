@@ -309,7 +309,12 @@ func (a *App) runConfirmed(kind confirmKind, t actionTarget) tea.Cmd {
 		if kind == confirmApprove {
 			return reviewPostedMsg{action: "approve", err: err}
 		}
-		return actionDoneMsg{label: fmt.Sprintf("%s #%d", verb, t.number), err: err}
+		msg := actionDoneMsg{label: fmt.Sprintf("%s #%d", verb, t.number), err: err}
+		if kind == confirmMerge && err != nil {
+			item := newMergeFailureItem(t.label(), err)
+			msg.mergeFailed = &item
+		}
+		return msg
 	}
 }
 
@@ -319,6 +324,7 @@ func (a *App) runConfirmedMany(kind confirmKind, targets []actionTarget) tea.Cmd
 			mu        sync.Mutex
 			completed []string
 			errs      []error
+			failures  []mergeFailureItem
 			wg        sync.WaitGroup
 		)
 		// Keep enough parallelism for a queue without spawning an unbounded number
@@ -343,6 +349,9 @@ func (a *App) runConfirmedMany(kind confirmKind, targets []actionTarget) tea.Cmd
 				defer mu.Unlock()
 				if err != nil {
 					errs = append(errs, fmt.Errorf("%s: %w", target.label(), err))
+					if kind == confirmMerge {
+						failures = append(failures, newMergeFailureItem(target.label(), err))
+					}
 					return
 				}
 				completed = append(completed, target.key())
@@ -360,7 +369,8 @@ func (a *App) runConfirmedMany(kind confirmKind, targets []actionTarget) tea.Cmd
 		} else if kind == confirmMerge {
 			label = fmt.Sprintf("merged %d %s", len(completed), noun)
 		}
-		return bulkActionDoneMsg{label: label, completed: completed, err: errors.Join(errs...)}
+		return bulkActionDoneMsg{label: label, completed: completed, err: errors.Join(errs...),
+			mergeFailures: failures}
 	}
 }
 

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -160,6 +161,18 @@ func overlayCases(a *App) []overlayCase {
 			a.repos.all = manyRepos(40)
 		}, func() { a.repos = nil }},
 		{"composer", func() { a.composer.active = true }, func() { a.composer.active = false }},
+		{"mergeFailure", func() {
+			// Many long failures is the case that could outgrow the screen.
+			items := make([]mergeFailureItem, 0, 8)
+			for i := 0; i < 8; i++ {
+				items = append(items, newMergeFailureItem(fmt.Sprintf("#%d in o/n", i),
+					errors.New("gh pr merge: X Pull request o/n#1 is not mergeable: "+
+						"the merge commit cannot be cleanly created.\nRun the following "+
+						"to resolve the merge conflicts locally:\n  gh pr checkout 1 && "+
+						"git fetch origin main && git merge origin/main")))
+			}
+			a.mergeFailure = &mergeFailure{items: items}
+		}, func() { a.mergeFailure = nil }},
 	}
 }
 
