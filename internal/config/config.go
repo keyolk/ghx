@@ -38,6 +38,11 @@ type Config struct {
 	// enough that returning to a window shows something recent, because the
 	// first keypress refreshes immediately.
 	IdlePollInterval string `yaml:"idle_poll_interval"`
+	// UnfocusedPollInterval is the cadence while the terminal reports that ghx
+	// does not have focus. Unfocused is not unseen: tmux reports focus per pane,
+	// so a ghx split beside the pane being typed in is on screen and unfocused at
+	// once. Set it to "0" to stop polling entirely while unfocused.
+	UnfocusedPollInterval string `yaml:"unfocused_poll_interval"`
 
 	// DetectRepo leads the PR list with the repositories the launch directory and
 	// the current tmux window belong to. Set it to false to always open on the
@@ -55,6 +60,8 @@ type Config struct {
 	pollDuration     time.Duration
 	idleAfter        time.Duration
 	idlePollDuration time.Duration
+	// unfocusedPoll is -1 when disabled, so zero can still mean "not parsed".
+	unfocusedPoll time.Duration
 }
 
 // SourceDef is one PR list tab: a named gh search query, optionally scoped.
@@ -156,7 +163,11 @@ func DefaultConfig() *Config {
 		// requests.
 		IdleAfter:        "10m",
 		IdlePollInterval: "5m",
-		DiffSplitRatio:   40,
+		// Same as idle: an unfocused window is either parked or on screen beside
+		// the work, and five minutes keeps both roughly current. Windows share
+		// fetches, so a focused sibling usually answers these polls for free.
+		UnfocusedPollInterval: "5m",
+		DiffSplitRatio:        40,
 	}
 }
 
@@ -188,6 +199,9 @@ func merge(dst *Config, file *Config) {
 	}
 	if file.IdlePollInterval != "" {
 		dst.IdlePollInterval = file.IdlePollInterval
+	}
+	if file.UnfocusedPollInterval != "" {
+		dst.UnfocusedPollInterval = file.UnfocusedPollInterval
 	}
 	if file.PollInterval != "" {
 		dst.PollInterval = file.PollInterval
@@ -392,6 +406,28 @@ func (c *Config) IdlePollDuration() time.Duration {
 	return c.idlePollDuration
 }
 
+// UnfocusedPollDuration returns the poll interval while unfocused, or 0 when
+// polling stops entirely in that state. Like the idle cadence it is never
+// shorter than the active one, and an unparseable value falls back to the
+// default rather than to "stop".
+func (c *Config) UnfocusedPollDuration() time.Duration {
+	if c.unfocusedPoll != 0 {
+		return max(c.unfocusedPoll, 0)
+	}
+	d := 5 * time.Minute
+	if c.UnfocusedPollInterval != "" {
+		if parsed, err := time.ParseDuration(c.UnfocusedPollInterval); err == nil {
+			d = parsed
+		}
+	}
+	if d <= 0 {
+		c.unfocusedPoll = -1
+		return 0
+	}
+	c.unfocusedPoll = max(d, c.PollDuration())
+	return c.unfocusedPoll
+}
+
 // ResetDerivedForTest clears the parsed-duration cache so a test can change an
 // interval string on an already-used Config. The accessors memoize, which is
 // what makes them cheap on the poll path and what would otherwise make a test
@@ -400,6 +436,7 @@ func (c *Config) ResetDerivedForTest() {
 	c.pollDuration = 0
 	c.idleAfter = 0
 	c.idlePollDuration = 0
+	c.unfocusedPoll = 0
 }
 
 // EditorCommand resolves the editor command: config > $EDITOR > "vi".

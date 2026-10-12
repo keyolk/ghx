@@ -22,11 +22,13 @@ the same way, so they work from a scratch pane beside the code.
 Both keep following the work. A pane that later `cd`s into another checkout — or
 a pane opened after ghx — gets its own tab, and committing, pushing or fetching
 in any of those repositories refreshes its tab within a few seconds, without
-waiting for the next poll. This works even while the window is not on screen,
-where the timed poll deliberately stands down: the trigger is git's own on-disk
-state, so it costs no API requests at all and an untouched checkout costs
-nothing. The title corner says `unfocused · on git` when that is what is
-happening, as opposed to `paused · unfocused` when nothing is being watched.
+waiting for the next poll. This works even while the window is unfocused, where
+the timed poll slows to `unfocused_poll_interval`: the trigger is git's own
+on-disk state, so it costs no API requests at all and an untouched checkout
+costs nothing. The title corner says `unfocused · poll 5m` in that state. With
+`unfocused_poll_interval: "0"` the poll stops instead, and the corner says
+`unfocused · on git` or `paused · unfocused` depending on whether any checkout
+is still being watched.
 
 Tabs are only added, never removed — closing a pane leaves its tab where it is,
 so the `1`-`9` jump keys keep pointing at the same queues — and a newly added tab
@@ -155,8 +157,8 @@ branch protection, with an explicit confirmation but no additional ghx policy.
   tab is added beside the queue you came from, so the second visit is a number
   key. The ranking lives in `~/.config/ghx/repos.json`
 - **Freshness** — the title states how old the rows on screen are and whether
-  the refresh is running (`7m ago · poll 30s`, `⠋ fetching`, `paused ·
-  unfocused`, `18m ago · idle · poll 5m`). A polled list looks identical whether
+  the refresh is running (`7m ago · poll 30s`, `⠋ fetching`, `unfocused ·
+  poll 5m`, `18m ago · idle · poll 5m`). A polled list looks identical whether
   the poll is working or died twenty minutes ago; this is what tells them apart.
   The age is per tab, because only the visible one polls
 - **Command palette** — `:` for vim-style ex commands
@@ -258,10 +260,18 @@ diff_split_ratio: 40
 # as it drains, up to 20x below 5% left. Whenever the interval is not the
 # configured one, the title bar says so and why.
 #
-# Set idle_after: "0" to poll at the same cadence forever.
+# While the terminal reports ghx unfocused, the refresh slows to
+# unfocused_poll_interval rather than stopping: tmux reports focus per pane, so
+# a ghx split beside the pane you type in is on screen while unfocused. Windows
+# share what they fetch, so an unfocused poll usually reads a focused sibling's
+# answer from disk instead of asking GitHub. Regaining focus refreshes at once.
+#
+# Set idle_after: "0" to poll at the same cadence forever, and
+# unfocused_poll_interval: "0" to stop polling entirely while unfocused.
 poll_interval: "30s"
 idle_after: "10m"
 idle_poll_interval: "5m"
+unfocused_poll_interval: "5m"
 ```
 
 ## Key bindings

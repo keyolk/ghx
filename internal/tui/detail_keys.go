@@ -59,9 +59,7 @@ func (d *prDetailModel) update(msg tea.KeyMsg) (tea.Cmd, bool) {
 func (d *prDetailModel) setTab(t detailTabKind) tea.Cmd {
 	d.activeTab = t
 	if t == tabChecks && d.checks.hasPending() {
-		return tea.Tick(15*time.Second, func(tm time.Time) tea.Msg {
-			return checksPollTickMsg(tm)
-		})
+		return d.checksTick()
 	}
 	return nil
 }

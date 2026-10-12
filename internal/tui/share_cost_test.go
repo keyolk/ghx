@@ -313,3 +313,31 @@ func TestNoCadenceMeansNoSharing(t *testing.T) {
 }
 
 var _ tea.Cmd = (tea.Cmd)(nil)
+
+// An unfocused window still polls, so the saving has to come from sharing: its
+// share window is 9/10 of the slow cadence, so any answer from the last few
+// minutes — its own last focused fetch, or a focused sibling's — serves it.
+func TestUnfocusedPollRidesOnASiblingsAnswer(t *testing.T) {
+	calls := countingGH(t)
+	dir := t.TempDir()
+	cache := &prFileCache{dir: dir}
+	a := sharedCacheApp(t, dir, oneSource)
+	a.Update(tea.BlurMsg{})
+
+	// A sibling fetched two minutes ago: stale at the active 30s cadence,
+	// fresh at the unfocused 5m one.
+	cache.saveStarted(oneSource[0], []pr.Summary{{Number: 4, Repo: "acme/one", State: "OPEN"}},
+		time.Now().Add(-2*time.Minute))
+	drive(a, a.list.handlePollTick())
+	if n := len(calls()); n != 0 {
+		t.Fatalf("an unfocused poll refetched an answer two minutes old (%d requests):\n%s",
+			n, strings.Join(calls(), "\n"))
+	}
+
+	// Older than the unfocused window, it does fetch: slower, not stopped.
+	cache.saveStarted(oneSource[0], nil, time.Now().Add(-10*time.Minute))
+	drive(a, a.list.handlePollTick())
+	if len(calls()) == 0 {
+		t.Error("an unfocused poll with nothing fresh sent no request — it stopped rather than slowed")
+	}
+}

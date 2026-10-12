@@ -57,8 +57,19 @@ func TestTitleAlwaysStatesTheCadence(t *testing.T) {
 		t.Errorf("note %q does not state the running cadence", note)
 	}
 
-	// An unfocused window arms no timer at all, so it must not name an interval
-	// — saying "poll 30s" while nothing is scheduled is the specific lie here.
+	// Unfocused, the cadence is the slow one and must be named as such.
+	a.blur()
+	if note = stripANSISeqs(a.freshnessNote()); !strings.Contains(note, "unfocused · poll 5m") {
+		t.Errorf("a blurred app does not state its slower cadence: %q", note)
+	}
+
+	// Paused, no timer is armed at all, so it must not name an interval —
+	// saying "poll 30s" while nothing is scheduled is the specific lie here.
+	// A separate app: refocusing this one would start a fetch, and "fetching"
+	// would then stand in for the age this half asserts on.
+	a, _ = freshApp(t)
+	a.list.handlePRListMsg(prListMsg{sourceIdx: 0, prs: sampleRows})
+	pauseWhenUnfocused(a)
 	a.blur()
 	note = stripANSISeqs(a.freshnessNote())
 	if !strings.Contains(note, "paused") {

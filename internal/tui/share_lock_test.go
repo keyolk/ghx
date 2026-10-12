@@ -172,11 +172,39 @@ func TestAWaiterGetsTheHoldersRows(t *testing.T) {
 }
 
 // A PR with CI running, left open on the Checks tab in a parked window, sent a
-// request every 15s for as long as CI ran. The tick lapses while unfocused and
-// the poll restarts when focus comes back.
-func TestChecksPollLapsesWhileUnfocused(t *testing.T) {
+// request every 15s for as long as CI ran. Unfocused, the 15s tick keeps
+// running but fetches only once the last answer is an unfocused interval old.
+func TestChecksPollSlowsWhileUnfocused(t *testing.T) {
 	calls := countingGH(t)
 	a := testApp(t, nil)
+	a.detail = newPRDetailModel(a.cfg, a.client, a.km, 7, "acme/one")
+	a.detail.activeTab = tabChecks
+	a.detail.checks.setChecks([]pr.Check{{Name: "build", Bucket: "pending"}})
+	a.detail.checksFetchedAt = a.now()
+
+	a.Update(tea.BlurMsg{})
+	_, cmd := a.Update(checksPollTickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("an unfocused tick ended the checks chain instead of re-arming")
+	}
+	if n := len(calls()); n != 0 {
+		t.Fatalf("an unfocused window polled fresh checks %d times:\n%s", n, strings.Join(calls(), "\n"))
+	}
+
+	a.detail.checksFetchedAt = a.now().Add(-a.cfg.UnfocusedPollDuration())
+	_, cmd = a.Update(checksPollTickMsg(time.Now()))
+	runAll(cmd)
+	if n := len(calls()); n != 1 {
+		t.Errorf("an unfocused window with checks an interval old sent %d requests, want 1:\n%s",
+			n, strings.Join(calls(), "\n"))
+	}
+}
+
+// With the unfocused poll disabled the tick lapses, and focus restarts it.
+func TestChecksPollLapsesWhilePaused(t *testing.T) {
+	calls := countingGH(t)
+	a := testApp(t, nil)
+	pauseWhenUnfocused(a)
 	a.detail = newPRDetailModel(a.cfg, a.client, a.km, 7, "acme/one")
 	a.detail.activeTab = tabChecks
 	a.detail.checks.setChecks([]pr.Check{{Name: "build", Bucket: "pending"}})

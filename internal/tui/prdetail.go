@@ -84,6 +84,9 @@ type prDetailModel struct {
 	// checksPollLapsed records that the checks poll stopped because the window
 	// lost focus, so regaining it knows to start the poll again.
 	checksPollLapsed bool
+	// checksFetchedAt is when the last checks answer arrived, on the app's
+	// clock. An unfocused window fetches only once it is an interval old.
+	checksFetchedAt time.Time
 
 	// spinner frame, pushed in by app.go so every spinner animates in step
 	spinner int
@@ -430,11 +433,16 @@ func (d *prDetailModel) handleChecksMsg(msg prChecksMsg) tea.Cmd {
 	// Keep polling only while something is still running, so a settled PR
 	// costs nothing.
 	if d.activeTab == tabChecks && d.checks.hasPending() {
-		return tea.Tick(15*time.Second, func(t time.Time) tea.Msg {
-			return checksPollTickMsg(t)
-		})
+		return d.checksTick()
 	}
 	return nil
+}
+
+// checksTick arms the next checks poll tick.
+func (d *prDetailModel) checksTick() tea.Cmd {
+	return tea.Tick(15*time.Second, func(t time.Time) tea.Msg {
+		return checksPollTickMsg(t)
+	})
 }
 
 func (d *prDetailModel) handleChecksPoll() tea.Cmd {
