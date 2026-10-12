@@ -29,7 +29,7 @@ actions.
 - `internal/tui/detail_diff_jump.go` — diff의 hunk/file 단위 점프 (`J`/`K`, `{`/`}`)
 - `internal/tui/detail_diff_unfold.go` — `\n` escape로 문서를 품은 한 줄을 화면에서 펼침
 - `internal/tui/detail_cache.go` — PR 상세 디스크 캐시 (updatedAt로 유효성 판정)
-- `internal/cachefile` — 디스크 캐시 공용 배관 (원자적 쓰기, 경로 탈출 방지 키)
+- `internal/cachefile` — 디스크 캐시 공용 배관 (원자적 쓰기, 경로 탈출 방지 키, 프로세스 간 `flock`)
 - `internal/gh/status_cache.go` — PR별 status enrichment 캐시 (인스턴스 간 공유)
 - `internal/tui/prlist_fetch.go` — 소스 fetch 경로와 인스턴스 간 공유 창 판정
 - `internal/pr/suggestion.go` — 코멘트의 ```suggestion 블록 파싱
@@ -64,6 +64,11 @@ actions.
   (`Client.exec`)을 지나므로 PATH에 로깅 shim을 두면 실제 TUI를 몰면서 전수 집계할
   수 있다 — `internal/gh/rest_cost_test.go`의 `countingGH`, `refetch_scope_test.go`의
   `countBatch`가 그 단언을 테스트로 고정한 예다.
+- 공유 캐시를 읽는 새 fetch 경로는 **확인→요청→쓰기를 `cachefile.Lock` 안에서** 한다.
+  잠금 없이 확인만 하면, 동시에 miss한 window가 모두 요청을 보낸다(tmux 세션 복원,
+  push를 여러 window가 같이 감지). 신선도는 `SavedAt`이 아니라 **요청을 보낸 시각**
+  (`started_at`)으로 판정한다. 그래야 "이 변경 이후의 답인가"를 물을 수 있고,
+  `R`·액션·git 이벤트도 다른 window가 그 이후에 받은 답을 쓸 수 있다.
 - 액션 후 재페치는 **그 액션이 바꾼 것만** 받는다. 스레드 resolve에 diff를 다시 받지
   않는다. 다만 좁힌 경로도 캐시는 evict해야 한다 — ghx 안에서 한 액션은 리스트 행의
   `updatedAt`을 움직이지 않으므로, 캐시가 방금 바뀐 상태를 계속 내놓는다.

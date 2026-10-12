@@ -179,9 +179,10 @@ func TestAnEmptyQueueIsSharedToo(t *testing.T) {
 }
 
 // R, the palette, and every action taken in this window are asking about a
-// change no already-written entry can contain. Answering those from a
-// neighbour's cache would show the queue exactly as it was before the thing the
-// user just did.
+// change no entry written before it can contain. Answering those from such an
+// entry would show the queue exactly as it was before the thing the user just
+// did. (An answer fetched after the change is another matter — see
+// share_lock_test.go.)
 func TestAManualRefreshNeverTakesANeighboursAnswer(t *testing.T) {
 	calls := countingGH(t)
 	dir := t.TempDir()
@@ -196,9 +197,9 @@ func TestAManualRefreshNeverTakesANeighboursAnswer(t *testing.T) {
 	}
 }
 
-// The git-event path fires because a commit or push landed seconds ago. Every
-// cached entry for that source predates it, so taking one would reset the age
-// readout while still showing the queue from before the push.
+// The git-event path fires because a commit or push landed seconds ago. An
+// entry written before the push cannot reflect it, so taking one would reset
+// the age readout while still showing the queue from before the push.
 func TestAGitEventNeverTakesANeighboursAnswer(t *testing.T) {
 	calls := countingGH(t)
 	dir := t.TempDir()

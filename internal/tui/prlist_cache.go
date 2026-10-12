@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"path/filepath"
 	"time"
 
@@ -39,8 +40,14 @@ type prFileCache struct {
 // entry from a stale one — both for the age readout in the title and for
 // deciding whether another instance has already answered this poll.
 type cachedPRList struct {
-	SavedAt time.Time    `json:"saved_at"`
-	PRs     []pr.Summary `json:"prs"`
+	SavedAt time.Time `json:"saved_at"`
+	// StartedAt is when the request that produced PRs was sent. It is what a
+	// reader compares against, not SavedAt: a fetch that was already in flight
+	// when a branch was pushed finished after the push and still describes the
+	// queue from before it. Entries written before this field existed decode it
+	// as zero and are never taken as fresh — one refetch per source, once.
+	StartedAt time.Time    `json:"started_at"`
+	PRs       []pr.Summary `json:"prs"`
 }
 
 func newPRFileCache() *prFileCache {
@@ -89,17 +96,42 @@ func (c *prFileCache) loadAt(s config.SourceDef, maxAge time.Duration) ([]pr.Sum
 // re-fetched by every instance on every poll precisely because there was
 // nothing to remember.
 func (c *prFileCache) fresh(s config.SourceDef, maxAge time.Duration) ([]pr.Summary, time.Time, bool) {
-	if c == nil || c.dir == "" || maxAge <= 0 {
+	if maxAge <= 0 {
+		return nil, time.Time{}, false
+	}
+	return c.freshSince(s, time.Now().Add(-maxAge))
+}
+
+// freshSince returns the rows of a fetch that was sent at or after notBefore.
+//
+// This is the one question every caller is really asking. A poll asks "has
+// anyone fetched within my window" — notBefore is now minus the window. A
+// refresh caused by a push asks "has anyone fetched since the push landed" —
+// notBefore is the push. The second used to be answered "never trust a file",
+// so every window watching a repository paid for the same push separately,
+// even when a sibling had fetched after it a second earlier.
+func (c *prFileCache) freshSince(s config.SourceDef, notBefore time.Time) ([]pr.Summary, time.Time, bool) {
+	if c == nil || c.dir == "" || notBefore.IsZero() {
 		return nil, time.Time{}, false
 	}
 	var entry cachedPRList
 	if err := cachefile.ReadJSON(filepath.Join(c.dir, cacheKey(s)), &entry); err != nil {
 		return nil, time.Time{}, false
 	}
-	if entry.SavedAt.IsZero() || time.Since(entry.SavedAt) > maxAge {
+	if entry.StartedAt.IsZero() || entry.StartedAt.Before(notBefore) {
 		return nil, time.Time{}, false
 	}
 	return entry.PRs, entry.SavedAt, true
+}
+
+// lock serializes fetches of one source across every ghx process, so the
+// windows that miss at the same moment make one request between them rather
+// than one each. See cachefile.Lock.
+func (c *prFileCache) lock(ctx context.Context, s config.SourceDef) func() {
+	if c == nil || c.dir == "" {
+		return func() {}
+	}
+	return cachefile.Lock(ctx, filepath.Join(c.dir, "locks", cacheKey(s)+".lock"))
 }
 
 // save writes a source's PRs. A failure is not surfaced — the cache is an
@@ -110,9 +142,14 @@ func (c *prFileCache) fresh(s config.SourceDef, maxAge time.Duration) ([]pr.Summ
 // reader that caught a half-written one would discard it and fetch, turning
 // the sharing into extra requests rather than fewer.
 func (c *prFileCache) save(s config.SourceDef, prs []pr.Summary) {
+	c.saveStarted(s, prs, time.Now())
+}
+
+// saveStarted is save for a fetch that was sent at startedAt.
+func (c *prFileCache) saveStarted(s config.SourceDef, prs []pr.Summary, startedAt time.Time) {
 	if c == nil || c.dir == "" {
 		return
 	}
 	_ = cachefile.WriteJSON(filepath.Join(c.dir, cacheKey(s)),
-		cachedPRList{SavedAt: time.Now(), PRs: prs})
+		cachedPRList{SavedAt: time.Now(), StartedAt: startedAt, PRs: prs})
 }

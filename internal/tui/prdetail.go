@@ -81,6 +81,10 @@ type prDetailModel struct {
 
 	gen int
 
+	// checksPollLapsed records that the checks poll stopped because the window
+	// lost focus, so regaining it knows to start the poll again.
+	checksPollLapsed bool
+
 	// spinner frame, pushed in by app.go so every spinner animates in step
 	spinner int
 
