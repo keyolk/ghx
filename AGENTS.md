@@ -92,6 +92,13 @@ actions.
   `idle_after` 뒤에 `idle_poll_interval`로 물러나고, (2) enrichment 응답에 실려오는
   `rateLimit`으로 남은 예산을 **공짜로** 읽어 더 늘린다. 폴링 비용을 바꾸는 변경은
   이 두 축을 같이 본다.
+- **unfocused는 "안 보인다"가 아니다.** tmux는 focus를 pane 단위로 보고하므로, 작업 중인
+  pane 옆에 띄운 ghx는 화면에 보이면서 unfocused다. 그래서 blur는 폴을 멈추지 않고
+  `unfocused_poll_interval`(기본 5m)로 늦춘다. 비용은 공유가 막는다 — share window가
+  그 cadence의 9/10이라, focus된 형제나 자기 직전 fetch의 답을 디스크에서 읽는다.
+  blur는 generation을 올리지 않는다: 대기 중인 타이머가 그대로 발화해 캐시 적중으로
+  끝나고 느린 cadence로 다시 arm한다. 여기서 새 타이머를 arm하면 같은 generation의
+  체인이 둘이 된다. `"0"`이면 예전처럼 완전히 멈춘다.
 - **캐시는 프로세스 간에 공유된다.** `~/.config/ghx/cache` 아래 전부 — PR 리스트, PR 상세,
   status enrichment, 예산 관측 — 가 여러 ghx 인스턴스의 공용 자원이다. 그래서 (1) 쓰기는
   반드시 `internal/cachefile`을 거쳐 원자적이어야 한다. 찢어진 파일을 읽은 인스턴스는
@@ -133,7 +140,7 @@ actions.
   sweep 20회 = gh 호출 **0건**, git 이벤트 1회 = `pr list` **1건**(REST).
   `workspace_cost_test.go`가 이 두 숫자를 고정한다.
 - **git 이벤트가 트리거하는 것은 그 repo에 pin된 탭뿐이다.** cross-repo 검색 큐는 건드리지
-  않는다 — 그쪽은 희소한 GraphQL search 예산을 쓰고, 애초에 unfocused에서 폴을 세운 이유가
+  않는다 — 그쪽은 희소한 GraphQL search 예산을 쓰고, 애초에 unfocused에서 폴을 늦춘 이유가
   그 예산이다. 큐는 다음 일반 폴에서 따라잡는다.
 - **탭은 추가만 하고 제거하지 않는다.** pane이 닫혀도 탭은 남는다 — 지우면 뒤 탭이 전부
   재번호되어 1-9 점프 키가 읽던 큐가 아닌 곳에 떨어진다. 새 탭은 **선택하지 않는다**:
@@ -223,7 +230,8 @@ actions.
   설정값과 같아도 표시한다: 생략하면 "30초마다 폴링"과 "아예 폴링 안 함"이 같은 화면이 되고,
   그게 바로 여기서 답해야 할 질문이다. 나이는 **소스별**이다(보이는 탭만 폴링하므로).
   디스크 캐시로 seed된 행은 파일의 `SavedAt`을 물려받는다 — 재시작을 "방금"으로 찍는 것이
-  이 표시가 막으려는 바로 그 거짓말이다. unfocused에서 `paused`만 내면 이제 반대 방향의
+  이 표시가 막으려는 바로 그 거짓말이다. unfocused에서는 늦춘 cadence를
+  `unfocused · poll 5m`으로 낸다. 폴을 끈 설정(`"0"`)에서 `paused`만 내면 반대 방향의
   거짓말이 된다 — 폴은 멈췄지만 push하는 repo는 갱신되므로, watcher가 있으면
   `unfocused · on git`으로 구분한다.
 - **`inFlight`는 superseded 응답에서도 해제한다.** 그건 "요청이 떠 있는가"이지 "답이

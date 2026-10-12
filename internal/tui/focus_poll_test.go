@@ -13,8 +13,40 @@ import (
 // can, and the cost of not having it is an account-wide budget spent on frames
 // nobody sees.
 
-func TestBlurSuspendsThePoll(t *testing.T) {
+// pauseWhenUnfocused configures unfocused_poll_interval: "0", the opt-out that
+// stops the poll entirely while unfocused.
+func pauseWhenUnfocused(a *App) {
+	a.cfg.UnfocusedPollInterval = "0"
+	a.cfg.ResetDerivedForTest()
+}
+
+// Unfocused is not unseen — tmux reports focus per pane, so a ghx split beside
+// the pane being typed in is on screen while unfocused. It slows down rather
+// than stopping.
+func TestBlurSlowsThePoll(t *testing.T) {
 	a, _ := idleApp(t)
+	gen := a.pollGen
+
+	_, cmd := a.Update(tea.BlurMsg{})
+	if cmd != nil {
+		t.Error("blurring scheduled work of its own; the pending tick carries the chain")
+	}
+	if got, want := a.pollInterval(), a.cfg.UnfocusedPollDuration(); got != want {
+		t.Errorf("unfocused poll interval is %s, want %s", got, want)
+	}
+	if a.armPoll() == nil {
+		t.Error("an unfocused app armed no poll at all")
+	}
+	// The tick pending at blur still fires and polls; its fetch re-arms at the
+	// slow cadence. Dropping it would end the chain.
+	if _, cmd := a.Update(prListTickMsg{at: time.Now(), gen: gen}); cmd == nil {
+		t.Error("the tick pending at blur was dropped, which ends the slow chain")
+	}
+}
+
+func TestBlurSuspendsThePollWhenConfiguredTo(t *testing.T) {
+	a, _ := idleApp(t)
+	pauseWhenUnfocused(a)
 
 	if a.armPoll() == nil {
 		t.Fatal("setup: a focused app should arm a poll")
@@ -31,8 +63,9 @@ func TestBlurSuspendsThePoll(t *testing.T) {
 
 // The timer already pending when focus is lost cannot be cancelled — bubbletea
 // has no way to. Retiring it by generation is what actually stops the fetch.
-func TestPendingTickIsDroppedWhileUnfocused(t *testing.T) {
+func TestPendingTickIsDroppedWhilePaused(t *testing.T) {
 	a, _ := idleApp(t)
+	pauseWhenUnfocused(a)
 	armedGen := a.pollGen
 
 	a.Update(tea.BlurMsg{})
@@ -69,6 +102,7 @@ func TestFocusResumesAndRefreshes(t *testing.T) {
 // here, and without this the poll would stay suspended for a window in use.
 func TestKeypressResumesAPollSuspendedByBlur(t *testing.T) {
 	a, _ := idleApp(t)
+	pauseWhenUnfocused(a)
 	a.Update(tea.BlurMsg{})
 
 	if cmd := a.noteActivity(); cmd == nil {
@@ -93,11 +127,18 @@ func TestPollUnchangedWithoutFocusReporting(t *testing.T) {
 	}
 }
 
-// Stopping silently reads as ghx being broken. The title line says why.
+// Slowing or stopping silently reads as ghx being broken. The title says which.
 func TestUnfocusedPollIsVisibleInTheTitle(t *testing.T) {
 	a := listApp(t, rowsFor(1, 2, 3))
 	a.Update(tea.BlurMsg{})
 
+	if got := a.titleLine(); !strings.Contains(got, "unfocused · poll 5m") {
+		t.Errorf("title line does not state the unfocused cadence: %q", got)
+	}
+
+	a.Update(tea.FocusMsg{})
+	pauseWhenUnfocused(a)
+	a.Update(tea.BlurMsg{})
 	if got := a.titleLine(); !strings.Contains(got, "paused") {
 		t.Errorf("title line does not say the poll is paused: %q", got)
 	}

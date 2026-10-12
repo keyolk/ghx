@@ -98,8 +98,10 @@ type App struct {
 	lastKeyAt time.Time
 
 	// unfocused is set while the terminal reports that ghx does not have focus:
-	// another tmux window is on screen, or the terminal itself is behind
-	// something else. Nothing is polled in that state.
+	// another tmux window or pane has it, or the terminal itself is behind
+	// something else. The poll slows to unfocused_poll_interval in that state
+	// rather than stopping: tmux reports focus per pane, so a ghx split beside
+	// the pane being typed in is unfocused and on screen at the same time.
 	//
 	// This is the signal lastKeyAt cannot supply. A reviewer who reads a row,
 	// switches to another tmux window, and works there for an hour has "pressed
@@ -218,7 +220,16 @@ func (a *App) pollInterval() time.Duration {
 	if a.idle() {
 		base = a.cfg.IdlePollDuration()
 	}
+	if a.unfocused {
+		base = max(base, a.cfg.UnfocusedPollDuration())
+	}
 	return applyBudgetBackoff(base, a.budget())
+}
+
+// pollPaused reports that nothing polls on a timer: unfocused, with the
+// unfocused cadence configured to "0".
+func (a *App) pollPaused() bool {
+	return a.unfocused && a.cfg.UnfocusedPollDuration() == 0
 }
 
 // budget is the last observed allowance, discarded once its window has closed.
@@ -267,19 +278,28 @@ func applyBudgetBackoff(interval time.Duration, b gh.GraphQLBudget) time.Duratio
 // stamping it with the current generation so a timer armed before a keypress
 // does not also fire.
 //
-// An unfocused window arms nothing at all. Letting the chain lapse is the point:
-// a slower cadence still spends the budget on frames nobody is looking at, and
-// there is no staleness cost, because regaining focus fetches before the user
-// can read the rows.
+// An unfocused window arms at the unfocused cadence, through pollInterval.
+// Only unfocused_poll_interval: "0" lets the chain lapse.
 func (a *App) armPoll() tea.Cmd {
-	if a.unfocused {
+	if a.pollPaused() {
 		return nil
 	}
 	return prListPollCmd(a.pollInterval(), a.pollGen)
 }
 
-// blur suspends polling. Bumping the generation retires the timer already
-// pending — bubbletea cannot cancel a tea.Tick — so nothing fires while away.
+// blur slows polling to the unfocused cadence.
+//
+// The generation is left alone, so the timer already pending still fires. That
+// costs nothing: its poll accepts any answer younger than the now much wider
+// share window, and this window fetched within the last active interval, so it
+// reads its own entry from disk and re-arms at the slow cadence. Retiring the
+// timer instead would need a new one armed here, and arming anywhere but Init
+// and the settling prListMsg is how two timers of one generation end up
+// running — see noteActivity.
+//
+// With unfocused_poll_interval: "0" the poll stops instead. Bumping the
+// generation retires the pending timer — bubbletea cannot cancel a tea.Tick —
+// so nothing fires while away.
 //
 // The workspace sweep deliberately keeps running. It spends filesystem stats
 // rather than API budget, and it is the only thing that can notice a push made
@@ -292,11 +312,13 @@ func (a *App) blur() {
 		return
 	}
 	a.unfocused = true
-	a.pollGen++
+	if a.pollPaused() {
+		a.pollGen++
+	}
 }
 
-// focus resumes polling and refreshes, because the rows on screen are as old as
-// the time spent away.
+// focus restores the active cadence and refreshes, because the rows on screen
+// are up to an unfocused interval old.
 //
 // Like noteActivity it fetches without arming: the settling prListMsg arms the
 // next tick, and arming here too would leave two timers of the same generation
@@ -459,7 +481,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A tick from a superseded generation is a timer armed under the other
 		// cadence. Dropping it rather than re-arming is what makes the switch a
 		// switch instead of two overlapping schedules.
-		if msg.gen != a.pollGen || a.unfocused {
+		if msg.gen != a.pollGen || a.pollPaused() {
 			return a, nil
 		}
 		return a, a.list.handlePollTick()
@@ -510,19 +532,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.detail == nil {
 			return a, nil
 		}
+		a.detail.checksFetchedAt = a.now()
 		return a, a.detail.handleChecksMsg(msg)
 
 	case checksPollTickMsg:
 		if a.detail == nil {
 			return a, nil
 		}
-		// The checks poll lapses while the window is unfocused, like the list
-		// poll: nobody is reading the tab, and every pending-CI PR left open in
-		// a parked window was a request every 15s for as long as CI ran. focus
+		// Unfocused, the checks poll slows to the list's cadence: a pending-CI
+		// PR left open in a parked window was a request every 15s for as long
+		// as CI ran. The 15s tick keeps running — it is local and free — and
+		// only fetches once the last answer is a full interval old, so focus
+		// coming back is picked up within one tick without arming a second
+		// chain. With the unfocused poll disabled it lapses, and focus
 		// restarts it.
-		if a.unfocused {
+		if a.pollPaused() {
 			a.detail.checksPollLapsed = true
 			return a, nil
+		}
+		if a.unfocused && a.now().Sub(a.detail.checksFetchedAt) < a.pollInterval() {
+			return a, a.detail.checksTick()
 		}
 		return a, a.detail.handleChecksPoll()
 

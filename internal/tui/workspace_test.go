@@ -181,9 +181,10 @@ func TestTouchedRepoIsRefetchedWhileUnfocused(t *testing.T) {
 	i, _ := a.list.sourceForRepo("keyolk/ghx")
 	path := watchRepo(t, a, "keyolk/ghx")
 
+	pauseWhenUnfocused(a)
 	a.Update(tea.BlurMsg{})
 	if a.armPoll() != nil {
-		t.Fatal("setup: an unfocused app should not arm a poll")
+		t.Fatal("setup: a paused unfocused app should not arm a poll")
 	}
 
 	if cmd := scan(a, nil, path); cmd == nil {
@@ -392,6 +393,7 @@ func TestSweepRejectsInvalidSlugs(t *testing.T) {
 func TestUnfocusedTitleSaysGitIsStillWatched(t *testing.T) {
 	a := workspaceApp(t)
 	a.workspace.observe(repodetect.Result{Slug: "keyolk/ghx", Path: repoOnDisk(t)})
+	pauseWhenUnfocused(a)
 	a.Update(tea.BlurMsg{})
 
 	note := stripANSISeqs(a.pollStatusNote())
@@ -410,6 +412,7 @@ func TestUnfocusedTitleSaysGitIsStillWatched(t *testing.T) {
 // is frozen, and must still say so.
 func TestUnfocusedWithoutWatchersStillSaysPaused(t *testing.T) {
 	a := workspaceApp(t)
+	pauseWhenUnfocused(a)
 	a.Update(tea.BlurMsg{})
 
 	if note := stripANSISeqs(a.pollStatusNote()); !strings.Contains(note, "paused") {
