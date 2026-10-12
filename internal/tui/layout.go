@@ -36,12 +36,18 @@ func paneBox(s string, w, h int) string {
 
 // decoratedPane draws a bordered box with a label, bright border when focused.
 func decoratedPane(label, body string, w, h int, focused bool) string {
-	if w < 6 || h < 3 {
-		return paneBox(body, w, h)
-	}
 	border := colorBorderDim
 	if focused {
 		border = colorBorderFocused
+	}
+	return borderedPane(label, body, w, h, border)
+}
+
+// borderedPane is decoratedPane with the border color chosen by the caller, for
+// a box whose frame has to say something before its text is read (a failure).
+func borderedPane(label, body string, w, h int, border lipgloss.Color) string {
+	if w < 6 || h < 3 {
+		return paneBox(body, w, h)
 	}
 	// Top border with label: ╭─ label ─╮
 	labelStr := " " + label + " "

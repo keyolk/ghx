@@ -454,6 +454,18 @@ func (c *Client) Merge(ctx context.Context, number int, strategy string) error {
 	return err
 }
 
+// UpdateBranch brings the PR branch up to date with its base on GitHub's side,
+// by rebasing when rebase is set and with a merge commit otherwise. A conflict
+// fails the call and leaves the branch as it was.
+func (c *Client) UpdateBranch(ctx context.Context, number int, rebase bool) error {
+	args := []string{"pr", "update-branch", fmt.Sprintf("%d", number)}
+	if rebase {
+		args = append(args, "--rebase")
+	}
+	_, err := c.exec(ctx, args...)
+	return err
+}
+
 // RepoSlug resolves the "owner/repo" for the current context, needed by the
 // REST/GraphQL calls above. Falls back to the client's configured repo.
 func (c *Client) RepoSlug(ctx context.Context) (owner, repo string, err error) {

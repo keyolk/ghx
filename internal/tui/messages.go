@@ -128,6 +128,12 @@ type mergeResultMsg struct{ err error }
 type actionDoneMsg struct {
 	label string
 	err   error
+	// failure marks err as a refused merge or rebase, which opens the failure
+	// box rather than a toast.
+	failure *mergeFailure
+	// branchMoved marks an action that put new commits on the PR branch (a
+	// rebase), so the detail view reloads the diff rather than the metadata.
+	branchMoved bool
 }
 
 // bulkActionDoneMsg reports a confirmed action across multiple selected PRs.
@@ -137,6 +143,8 @@ type bulkActionDoneMsg struct {
 	label     string
 	completed []string
 	err       error
+	// failure lists the PRs a bulk merge or rebase could not complete.
+	failure *mergeFailure
 }
 
 // paletteRunMsg carries a submitted command line for app.go to dispatch.

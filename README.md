@@ -143,7 +143,9 @@ branch protection, with an explicit confirmation but no additional ghx policy.
   (`C`), all from the list without opening the PR
 - **Checks** — CI status with bucket colors, workflow run log viewer
 - **Label picker** — `L` to toggle labels with live filtering
-- **Merge** — explicit strategy/confirmation, authorized by the selected repository credential
+- **Merge** — explicit strategy/confirmation, authorized by the selected repository credential. A refused merge opens a box naming the reason (conflict, behind base,
+  approval, checks); a branch that is only behind can be rebased onto its base
+  from that box with `r`, or any time with `:rebase`
 - **Copy URLs** — `y` puts the focused PR's URL, or the whole multi-selection's,
   on the clipboard
 - **Open any repository** — `e` (or `:repo`) lists repositories ranked by how

@@ -74,6 +74,9 @@ func (a *App) View() string {
 	if a.composer.active {
 		content = overlayBody(content, a.composer.render(a.width, rows), a.width, rows)
 	}
+	if a.mergeFailure != nil {
+		content = overlayBody(content, a.renderMergeFailure(a.width, rows), a.width, rows)
+	}
 
 	return joinVertical(a.titleLine(), content, a.helpLine())
 }
@@ -156,6 +159,11 @@ func (a *App) helpLine() string {
 	// carry a marker — the footer is the sole place it can be said at all.
 	if note := a.pendingNote(); note != "" {
 		return truncateFooter(note, a.width)
+	}
+	// The box owns the keyboard, so it owns the footer too: the toast it set
+	// would only repeat the box's headline.
+	if a.mergeFailure != nil {
+		return truncateFooter(a.mergeFailure.hints(), a.width)
 	}
 	// A recent toast outranks hints: it's the answer to what the user just did.
 	if a.toast != "" && time.Since(a.toastAt) < 4*time.Second {

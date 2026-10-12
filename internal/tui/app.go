@@ -58,6 +58,8 @@ type App struct {
 	// confirm gates the destructive-ish list actions (approve, close, ready) so
 	// a keypress while scrolling cannot act on the wrong row.
 	confirm *confirmPrompt
+	// mergeFailure, when set, is the box explaining a merge that did not happen.
+	mergeFailure *mergeFailure
 
 	// labels and statusFilter are modal list pickers; nil when closed.
 	labels       *labelPicker
@@ -555,6 +557,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case actionDoneMsg:
 		a.endPending()
+		if msg.failure != nil {
+			a.showMergeFailure(msg.failure)
+			return a, nil
+		}
 		if msg.err != nil {
 			return a, errCmd(msg.err)
 		}
@@ -563,6 +569,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the source again rather than leaving stale state on screen.
 		if a.state == viewPRList && a.list != nil {
 			return a, a.list.refreshCurrent()
+		}
+		if a.detail != nil && msg.branchMoved {
+			// The commits behind every diff line are new; the metadata-only
+			// refresh below would leave the old diff on screen.
+			if a.list != nil {
+				a.list.markAllDirty()
+			}
+			return a, a.detail.reload()
 		}
 		if a.detail != nil {
 			// ready/draft, close/reopen, labels — all PR metadata. A checkout
@@ -579,7 +593,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				delete(a.list.selected, key)
 			}
 		}
-		if msg.err == nil {
+		if msg.failure != nil {
+			a.showMergeFailure(msg.failure)
+		} else if msg.err == nil {
 			a.setToast(msg.label)
 		} else if len(msg.completed) > 0 {
 			a.setToast(fmt.Sprintf("%s; some failed: %v", msg.label, msg.err))
@@ -641,7 +657,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mergeResultMsg:
 		a.mergePrompt = nil
 		if msg.err != nil {
-			return a, errCmd(msg.err)
+			target, _ := a.currentTarget()
+			a.showMergeFailure(&mergeFailure{kind: confirmMerge,
+				items: []mergeFailureItem{newMergeFailureItem(confirmMerge, target, msg.err)}})
+			return a, nil
 		}
 		a.setToast("merged")
 		return a, nil
@@ -692,6 +711,11 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		msg = NormalizeCJKKey(msg)
 	}
 
+	// The failure box arrives on its own, possibly over a prompt opened while
+	// the merge ran; it is drawn on top, so it takes the keys first.
+	if a.mergeFailure != nil {
+		return a.handleMergeFailureKey(msg)
+	}
 	if cmd, handled := a.composer.update(msg); handled {
 		return cmd
 	}
@@ -969,6 +993,13 @@ func (a *App) anyLoading() bool {
 		return true
 	}
 	return false
+}
+
+// showMergeFailure opens the failure box and leaves a one-line summary in the
+// footer for after it is dismissed.
+func (a *App) showMergeFailure(f *mergeFailure) {
+	a.mergeFailure = f
+	a.setToast(f.toast())
 }
 
 func (a *App) setToast(s string) {

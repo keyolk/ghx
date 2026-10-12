@@ -82,6 +82,12 @@ func (a *App) runPalette(line string) tea.Cmd {
 			return a.paletteNeedsPR()
 		}
 		return a.startMerge()
+	case "rebase":
+		targets, ok := a.actionTargets()
+		if !ok {
+			return a.paletteNeedsPR()
+		}
+		return a.askConfirmTargets(confirmRebase, targets)
 	case "open":
 		// Shares the `o` key's path so the palette opens the same PRs — and so a
 		// list row's real URL is used. Building one from the number alone dropped
