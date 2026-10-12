@@ -165,13 +165,13 @@ func overlayCases(a *App) []overlayCase {
 			// Many long failures is the case that could outgrow the screen.
 			items := make([]mergeFailureItem, 0, 8)
 			for i := 0; i < 8; i++ {
-				items = append(items, newMergeFailureItem(fmt.Sprintf("#%d in o/n", i),
+				items = append(items, newMergeFailureItem(confirmMerge, actionTarget{number: i + 1, repo: "o/n"},
 					errors.New("gh pr merge: X Pull request o/n#1 is not mergeable: "+
 						"the merge commit cannot be cleanly created.\nRun the following "+
 						"to resolve the merge conflicts locally:\n  gh pr checkout 1 && "+
 						"git fetch origin main && git merge origin/main")))
 			}
-			a.mergeFailure = &mergeFailure{items: items}
+			a.mergeFailure = &mergeFailure{kind: confirmMerge, items: items}
 		}, func() { a.mergeFailure = nil }},
 	}
 }

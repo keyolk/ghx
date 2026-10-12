@@ -557,8 +557,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case actionDoneMsg:
 		a.endPending()
-		if msg.mergeFailed != nil {
-			a.showMergeFailure(&mergeFailure{items: []mergeFailureItem{*msg.mergeFailed}})
+		if msg.failure != nil {
+			a.showMergeFailure(msg.failure)
 			return a, nil
 		}
 		if msg.err != nil {
@@ -569,6 +569,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the source again rather than leaving stale state on screen.
 		if a.state == viewPRList && a.list != nil {
 			return a, a.list.refreshCurrent()
+		}
+		if a.detail != nil && msg.branchMoved {
+			// The commits behind every diff line are new; the metadata-only
+			// refresh below would leave the old diff on screen.
+			if a.list != nil {
+				a.list.markAllDirty()
+			}
+			return a, a.detail.reload()
 		}
 		if a.detail != nil {
 			// ready/draft, close/reopen, labels — all PR metadata. A checkout
@@ -585,8 +593,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				delete(a.list.selected, key)
 			}
 		}
-		if len(msg.mergeFailures) > 0 {
-			a.showMergeFailure(&mergeFailure{items: msg.mergeFailures, merged: len(msg.completed)})
+		if msg.failure != nil {
+			a.showMergeFailure(msg.failure)
 		} else if msg.err == nil {
 			a.setToast(msg.label)
 		} else if len(msg.completed) > 0 {
@@ -649,11 +657,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mergeResultMsg:
 		a.mergePrompt = nil
 		if msg.err != nil {
-			target := "this pull request"
-			if a.detail != nil {
-				target = fmt.Sprintf("#%d", a.detail.number)
-			}
-			a.showMergeFailure(&mergeFailure{items: []mergeFailureItem{newMergeFailureItem(target, msg.err)}})
+			target, _ := a.currentTarget()
+			a.showMergeFailure(&mergeFailure{kind: confirmMerge,
+				items: []mergeFailureItem{newMergeFailureItem(confirmMerge, target, msg.err)}})
 			return a, nil
 		}
 		a.setToast("merged")

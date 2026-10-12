@@ -163,7 +163,7 @@ func (a *App) helpLine() string {
 	// The box owns the keyboard, so it owns the footer too: the toast it set
 	// would only repeat the box's headline.
 	if a.mergeFailure != nil {
-		return truncateFooter(fmtHints("enter", "dismiss"), a.width)
+		return truncateFooter(a.mergeFailure.hints(), a.width)
 	}
 	// A recent toast outranks hints: it's the answer to what the user just did.
 	if a.toast != "" && time.Since(a.toastAt) < 4*time.Second {

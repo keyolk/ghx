@@ -125,6 +125,8 @@ const (
 	confirmToggleState
 	confirmReady
 	confirmMerge
+	// confirmRebase rebases the PR branch onto its base on GitHub's side.
+	confirmRebase
 	// confirmLabels never reaches a confirmation prompt — the picker is its own
 	// gate. It exists so the in-flight marker can name what it is doing.
 	confirmLabels
@@ -148,6 +150,8 @@ func (k confirmKind) verb() string {
 		return "updating"
 	case confirmMerge:
 		return "merging"
+	case confirmRebase:
+		return "rebasing"
 	case confirmLabels:
 		return "updating labels"
 	}
@@ -293,14 +297,23 @@ func (a *App) performConfirmed(ctx context.Context, kind confirmKind, t actionTa
 		return "converted to draft", client.Ready(ctx, n, true)
 	case confirmMerge:
 		return "merged", client.Merge(ctx, n, "squash")
+	case confirmRebase:
+		return "rebased", client.UpdateBranch(ctx, n, true)
 	}
 	return "", fmt.Errorf("unsupported confirmation action")
 }
 
+// slow marks the actions GitHub may take most of a minute to finish.
+func (k confirmKind) slow() bool { return k == confirmMerge || k == confirmRebase }
+
+// boxesFailure marks the actions whose failure opens the failure box: a merge
+// or rebase that did not happen has to be unmistakable, not a passing toast.
+func (k confirmKind) boxesFailure() bool { return k == confirmMerge || k == confirmRebase }
+
 func (a *App) runConfirmed(kind confirmKind, t actionTarget) tea.Cmd {
 	return func() tea.Msg {
 		timeout := 30 * time.Second
-		if kind == confirmMerge {
+		if kind.slow() {
 			timeout = 60 * time.Second
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -309,10 +322,11 @@ func (a *App) runConfirmed(kind confirmKind, t actionTarget) tea.Cmd {
 		if kind == confirmApprove {
 			return reviewPostedMsg{action: "approve", err: err}
 		}
-		msg := actionDoneMsg{label: fmt.Sprintf("%s #%d", verb, t.number), err: err}
-		if kind == confirmMerge && err != nil {
-			item := newMergeFailureItem(t.label(), err)
-			msg.mergeFailed = &item
+		msg := actionDoneMsg{label: fmt.Sprintf("%s #%d", verb, t.number), err: err,
+			branchMoved: kind == confirmRebase}
+		if kind.boxesFailure() && err != nil {
+			msg.failure = &mergeFailure{kind: kind,
+				items: []mergeFailureItem{newMergeFailureItem(kind, t, err)}}
 		}
 		return msg
 	}
@@ -339,7 +353,7 @@ func (a *App) runConfirmedMany(kind confirmKind, targets []actionTarget) tea.Cmd
 				defer func() { <-sem }()
 
 				timeout := 30 * time.Second
-				if kind == confirmMerge {
+				if kind.slow() {
 					timeout = 60 * time.Second
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -349,8 +363,8 @@ func (a *App) runConfirmedMany(kind confirmKind, targets []actionTarget) tea.Cmd
 				defer mu.Unlock()
 				if err != nil {
 					errs = append(errs, fmt.Errorf("%s: %w", target.label(), err))
-					if kind == confirmMerge {
-						failures = append(failures, newMergeFailureItem(target.label(), err))
+					if kind.boxesFailure() {
+						failures = append(failures, newMergeFailureItem(kind, target, err))
 					}
 					return
 				}
@@ -368,9 +382,14 @@ func (a *App) runConfirmedMany(kind confirmKind, targets []actionTarget) tea.Cmd
 			label = fmt.Sprintf("approved %d %s", len(completed), noun)
 		} else if kind == confirmMerge {
 			label = fmt.Sprintf("merged %d %s", len(completed), noun)
+		} else if kind == confirmRebase {
+			label = fmt.Sprintf("rebased %d %s", len(completed), noun)
 		}
-		return bulkActionDoneMsg{label: label, completed: completed, err: errors.Join(errs...),
-			mergeFailures: failures}
+		msg := bulkActionDoneMsg{label: label, completed: completed, err: errors.Join(errs...)}
+		if len(failures) > 0 {
+			msg.failure = &mergeFailure{kind: kind, items: failures, done: len(completed)}
+		}
+		return msg
 	}
 }
 
@@ -390,6 +409,9 @@ func (a *App) renderConfirm(width, height int) string {
 		case confirmMerge:
 			question = fmt.Sprintf("Squash-merge %d selected PRs?", count)
 			note = "Each PR is merged independently using its repository credential."
+		case confirmRebase:
+			question = fmt.Sprintf("Rebase %d selected PRs onto their base?", count)
+			note = rebaseNote
 		case confirmReady:
 			question = fmt.Sprintf("Toggle ready/draft on %d selected PRs?", count)
 			note = "Draft PRs become ready; ready PRs return to draft."
@@ -412,6 +434,9 @@ func (a *App) renderConfirm(width, height int) string {
 		case confirmMerge:
 			question = "Squash-merge " + p.target.label() + "?"
 			note = "This cannot be undone."
+		case confirmRebase:
+			question = "Rebase " + p.target.label() + " onto its base?"
+			note = rebaseNote
 		}
 	}
 
@@ -758,3 +783,7 @@ func (a *App) renderLabelPicker(width, height int) string {
 	}
 	return decoratedPane("labels · "+title, b.String(), boxW, boxH, true)
 }
+
+// rebaseNote says what a server-side rebase does to the branch: GitHub rewrites
+// and force-pushes it, so a local checkout of it diverges.
+const rebaseNote = "GitHub rewrites the PR branch; a conflict leaves it untouched."

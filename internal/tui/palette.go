@@ -25,6 +25,7 @@ var paletteCommands = []paletteCommand{
 	{"checkout", "", "gh pr checkout"},
 	{"ready", "", "toggle ready for review"},
 	{"merge", "", "merge with confirmation"},
+	{"rebase", "", "rebase the PR branch onto its base (on GitHub)"},
 	{"refresh", "", "reload the current view"},
 	{"open", "", "open in browser"},
 	{"copy", "", "copy the PR URL to the clipboard"},

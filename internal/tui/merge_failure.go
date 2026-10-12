@@ -16,49 +16,63 @@ import (
 // not happen looked much like one that did. A failure now opens a box that
 // stays until it is dismissed and names the reason in words the user can act on.
 
-// mergeFailure is the modal listing every PR a merge attempt could not merge.
+// mergeFailure is the modal listing every PR a merge — or the rebase offered
+// to fix one — could not complete. A rebase failure uses the same box: it is
+// the next step of the same attempt, and a toast would hide it the same way.
 type mergeFailure struct {
+	kind  confirmKind // confirmMerge or confirmRebase
 	items []mergeFailureItem
-	// merged counts the PRs of a bulk merge that did go through, so a partial
+	// done counts the PRs of a bulk action that did go through, so a partial
 	// result is not read as nothing having happened.
-	merged int
+	done int
 }
 
 type mergeFailureItem struct {
-	target string // "#12 in owner/name"
+	pr     actionTarget
 	reason string // short classification, e.g. "merge conflict"
 	hint   string // what to do about it; may be empty
 	detail string // gh's own message, prefix stripped
+	// rebasable marks a failure a server-side rebase fixes: the branch is only
+	// behind its base. A conflict is not offered — GitHub cannot resolve it
+	// either, and the attempt would only fail a second time.
+	rebasable bool
 }
 
-// newMergeFailureItem classifies err for the PR named by target.
-func newMergeFailureItem(target string, err error) mergeFailureItem {
-	reason, hint := classifyMergeError(err)
+// newMergeFailureItem classifies err for the PR it came from.
+func newMergeFailureItem(kind confirmKind, t actionTarget, err error) mergeFailureItem {
+	reason, hint := classifyMergeError(kind, err)
 	return mergeFailureItem{
-		target: target,
-		reason: reason,
-		hint:   hint,
-		detail: mergeErrorDetail(err),
+		pr:        t,
+		reason:    reason,
+		hint:      hint,
+		detail:    mergeErrorDetail(err),
+		rebasable: kind == confirmMerge && reason == reasonBehind,
 	}
 }
+
+const reasonBehind = "branch is behind its base"
 
 // classifyMergeError turns gh's refusal into a headline. The strings come from
 // gh's own blockedReason (DIRTY/BLOCKED/BEHIND) and from GitHub's GraphQL
 // mergePullRequest errors; anything unrecognized still opens the box, just
 // under a generic headline with gh's text below it.
-func classifyMergeError(err error) (reason, hint string) {
+func classifyMergeError(kind confirmKind, err error) (reason, hint string) {
+	noun := "merge"
+	if kind == confirmRebase {
+		noun = "rebase"
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		// The request may have reached GitHub before the deadline, so this is
 		// the one failure that does not mean "not merged".
-		return "timed out", "the merge may still have gone through — refresh before retrying"
+		return "timed out", "the " + noun + " may still have gone through — refresh before retrying"
 	}
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "cannot be cleanly created"),
 		strings.Contains(msg, "merge conflict"):
-		return "merge conflict", "check out the branch (co), merge the base into it, and push"
+		return "merge conflict", "check out the branch (co), resolve the conflict against the base, and push"
 	case strings.Contains(msg, "not up to date with the base"):
-		return "branch is behind its base", "update the branch with the base, then merge again"
+		return reasonBehind, "press r to rebase it onto the base, then merge again once checks pass"
 	case strings.Contains(msg, "approving review"),
 		strings.Contains(msg, "review is required"),
 		strings.Contains(msg, "changes requested"):
@@ -76,7 +90,7 @@ func classifyMergeError(err error) (reason, hint string) {
 	case strings.Contains(msg, "not mergeable"):
 		return "not mergeable", ""
 	}
-	return "merge failed", ""
+	return noun + " failed", ""
 }
 
 // mergeErrorDetail is gh's message without the "gh pr merge:" prefix the
@@ -84,8 +98,10 @@ func classifyMergeError(err error) (reason, hint string) {
 // `--admin`: those are flags of a command line ghx does not expose.
 func mergeErrorDetail(err error) string {
 	s := strings.TrimSpace(err.Error())
-	if rest, ok := strings.CutPrefix(s, "gh pr merge:"); ok {
-		s = strings.TrimSpace(rest)
+	for _, prefix := range []string{"gh pr merge:", "gh pr update-branch:"} {
+		if rest, ok := strings.CutPrefix(s, prefix); ok {
+			s = strings.TrimSpace(rest)
+		}
 	}
 	var keep []string
 	for _, line := range strings.Split(s, "\n") {
@@ -104,19 +120,50 @@ func (a *App) handleMergeFailureKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "enter", "esc", "q", " ":
 		a.mergeFailure = nil
+	case "r":
+		// The box names the PRs and says what r does, so the key is the
+		// consent; a second y/n prompt would only ask the same question again.
+		targets := a.mergeFailure.rebaseTargets()
+		if len(targets) == 0 {
+			return nil
+		}
+		a.mergeFailure = nil
+		a.beginPending(confirmRebase, targets)
+		if len(targets) == 1 {
+			return a.runConfirmed(confirmRebase, targets[0])
+		}
+		return a.runConfirmedMany(confirmRebase, targets)
 	}
 	// Everything else is swallowed: a stray key landing on the view behind
 	// would act on a queue the user cannot see.
 	return nil
 }
 
-// mergeFailureToast is the footer line left after the box is dismissed.
+// rebaseTargets are the failed PRs a server-side rebase can unblock.
+func (f *mergeFailure) rebaseTargets() []actionTarget {
+	var out []actionTarget
+	for _, it := range f.items {
+		if it.rebasable && it.pr.valid() {
+			out = append(out, it.pr)
+		}
+	}
+	return out
+}
+
+func (f *mergeFailure) noun() string {
+	if f.kind == confirmRebase {
+		return "rebase"
+	}
+	return "merge"
+}
+
+// toast is the footer line left after the box is dismissed.
 func (f *mergeFailure) toast() string {
 	if len(f.items) == 1 {
 		it := f.items[0]
-		return errorStyle.Render("merge failed: ") + it.target + " — " + it.reason
+		return errorStyle.Render(f.noun()+" failed: ") + it.pr.label() + " — " + it.reason
 	}
-	return errorStyle.Render(fmt.Sprintf("merge failed for %d pull requests", len(f.items)))
+	return errorStyle.Render(fmt.Sprintf("%s failed for %d pull requests", f.noun(), len(f.items)))
 }
 
 func (a *App) renderMergeFailure(width, height int) string {
@@ -124,20 +171,24 @@ func (a *App) renderMergeFailure(width, height int) string {
 	w := min(width-4, 90)
 	inner := max(w-4, 10)
 
+	past := "merged"
+	if f.kind == confirmRebase {
+		past = "rebased"
+	}
 	var b strings.Builder
 	if len(f.items) == 1 {
-		b.WriteString(checkFailStyle.Render("Not merged: "+f.items[0].target) + "\n")
+		b.WriteString(checkFailStyle.Render("Not "+past+": "+f.items[0].pr.label()) + "\n")
 	} else {
-		head := fmt.Sprintf("%d pull requests were not merged", len(f.items))
-		if f.merged > 0 {
-			head += fmt.Sprintf(" (%d merged)", f.merged)
+		head := fmt.Sprintf("%d pull requests were not %s", len(f.items), past)
+		if f.done > 0 {
+			head += fmt.Sprintf(" (%d %s)", f.done, past)
 		}
 		b.WriteString(checkFailStyle.Render(head) + "\n")
 	}
 	for i, it := range f.items {
 		b.WriteString("\n")
 		if len(f.items) > 1 {
-			b.WriteString(prNumberStyle.Render(it.target) + "  ")
+			b.WriteString(prNumberStyle.Render(it.pr.label()) + "  ")
 		}
 		b.WriteString(errorStyle.Render("✗ "+it.reason) + "\n")
 		if it.hint != "" {
@@ -163,9 +214,21 @@ func (a *App) renderMergeFailure(width, height int) string {
 			break
 		}
 	}
-	b.WriteString("\n" + fmtHints("enter", "dismiss"))
+	b.WriteString("\n" + f.hints())
 
 	body := strings.TrimRight(b.String(), "\n")
 	h := min(strings.Count(body, "\n")+3, max(height-1, 5))
-	return borderedPane("merge failed", body, w, h, colorError)
+	return borderedPane(f.noun()+" failed", body, w, h, colorError)
+}
+
+// hints offers r only when some failure is one a rebase fixes; advertising it
+// on a conflict would promise an action that cannot help.
+func (f *mergeFailure) hints() string {
+	switch n := len(f.rebaseTargets()); {
+	case n == 1:
+		return fmtHints("r", "rebase onto base", "enter", "dismiss")
+	case n > 1:
+		return fmtHints("r", fmt.Sprintf("rebase %d onto base", n), "enter", "dismiss")
+	}
+	return fmtHints("enter", "dismiss")
 }

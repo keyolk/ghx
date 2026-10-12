@@ -32,7 +32,7 @@ func TestClassifyMergeError(t *testing.T) {
 		{errors.New("gh pr merge: something new"), "merge failed"},
 	}
 	for _, c := range cases {
-		if got, _ := classifyMergeError(c.err); got != c.want {
+		if got, _ := classifyMergeError(confirmMerge, c.err); got != c.want {
 			t.Errorf("classify(%q) = %q, want %q", c.err, got, c.want)
 		}
 	}
@@ -58,8 +58,8 @@ func TestFailedMergeOpensABoxThatStays(t *testing.T) {
 	target := mergeTarget(2)
 	confirmAndRun(t, a, confirmMerge, []actionTarget{target})
 
-	item := newMergeFailureItem(target.label(), errors.New(conflictErr))
-	a.Update(actionDoneMsg{label: "merged #2", err: errors.New(conflictErr), mergeFailed: &item})
+	a.Update(actionDoneMsg{label: "merged #2", err: errors.New(conflictErr), failure: &mergeFailure{
+		kind: confirmMerge, items: []mergeFailureItem{newMergeFailureItem(confirmMerge, target, errors.New(conflictErr))}}})
 
 	if a.mergeFailure == nil {
 		t.Fatal("a refused merge did not open the failure box")
@@ -95,10 +95,10 @@ func TestBulkMergeFailureListsEachPR(t *testing.T) {
 		label:     "merged 1 PR",
 		completed: []string{mergeTarget(1).key()},
 		err:       errors.New("two failed"),
-		mergeFailures: []mergeFailureItem{
-			newMergeFailureItem(mergeTarget(2).label(), errors.New(conflictErr)),
-			newMergeFailureItem(mergeTarget(3).label(), errors.New("gh pr merge: X Pull request acme/one#3 is not mergeable: the base branch policy prohibits the merge.")),
-		},
+		failure: &mergeFailure{kind: confirmMerge, done: 1, items: []mergeFailureItem{
+			newMergeFailureItem(confirmMerge, mergeTarget(2), errors.New(conflictErr)),
+			newMergeFailureItem(confirmMerge, mergeTarget(3), errors.New("gh pr merge: X Pull request acme/one#3 is not mergeable: the base branch policy prohibits the merge.")),
+		}},
 	})
 
 	if a.mergeFailure == nil {
@@ -136,5 +136,80 @@ func TestOtherActionFailuresStayToasts(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("a failed close reported nothing")
+	}
+}
+
+const behindErr = "gh pr merge: X Pull request acme/one#2 is not mergeable: the head branch is not up to date with the base branch."
+
+// A branch that is only behind its base is what a server-side rebase fixes, so
+// the box offers r and r starts the rebase on exactly that PR.
+func TestBehindFailureOffersRebase(t *testing.T) {
+	a := listApp(t, rowsFor(1, 2, 3))
+	a.showMergeFailure(&mergeFailure{kind: confirmMerge, items: []mergeFailureItem{
+		newMergeFailureItem(confirmMerge, mergeTarget(2), errors.New(behindErr))}})
+
+	if got := stripANSI(a.View()); !strings.Contains(got, "rebase onto base") {
+		t.Fatalf("the box does not offer the rebase:\n%s", got)
+	}
+	cmd := a.handleKey(keyMsg("r"))
+	if cmd == nil {
+		t.Fatal("r did not start a rebase")
+	}
+	if a.mergeFailure != nil {
+		t.Error("the box stayed open over the rebase it started")
+	}
+	if a.pending == nil || a.pending.kind != confirmRebase {
+		t.Fatalf("pending = %+v, want a rebase in flight", a.pending)
+	}
+	if !a.list.isPending(pr.Summary{Repo: "acme/one", Number: 2}) {
+		t.Error("the PR being rebased is not marked")
+	}
+	if got := stripANSI(a.helpLine()); !strings.Contains(got, "rebasing") {
+		t.Errorf("footer = %q, want it to say a rebase is in flight", got)
+	}
+}
+
+// A conflict is not something GitHub can rebase past; offering r there would
+// promise a fix that fails the same way.
+func TestConflictFailureDoesNotOfferRebase(t *testing.T) {
+	a := listApp(t, rowsFor(1, 2))
+	a.showMergeFailure(&mergeFailure{kind: confirmMerge, items: []mergeFailureItem{
+		newMergeFailureItem(confirmMerge, mergeTarget(2), errors.New(conflictErr))}})
+
+	if got := stripANSI(a.View()); strings.Contains(got, "rebase onto base") {
+		t.Errorf("a conflict offered the rebase:\n%s", got)
+	}
+	if cmd := a.handleKey(keyMsg("r")); cmd != nil || a.mergeFailure == nil {
+		t.Error("r acted on a failure a rebase cannot fix")
+	}
+}
+
+// A failed rebase is boxed like a failed merge, under its own name.
+func TestRebaseFailureOpensTheBox(t *testing.T) {
+	a := listApp(t, rowsFor(1, 2))
+	err := errors.New("gh pr update-branch: merge conflict between base and head (HTTP 422)")
+	a.Update(actionDoneMsg{label: "rebased #2", err: err, failure: &mergeFailure{
+		kind: confirmRebase, items: []mergeFailureItem{newMergeFailureItem(confirmRebase, mergeTarget(2), err)}}})
+
+	body := stripANSI(a.View())
+	for _, want := range []string{"rebase failed", "Not rebased: #2 in acme/one", "merge conflict"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rendered view lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "rebase onto base") {
+		t.Error("a failed rebase offered to rebase again")
+	}
+}
+
+// :rebase goes through the y/n prompt like every other palette action.
+func TestPaletteRebaseAsksFirst(t *testing.T) {
+	a := listApp(t, rowsFor(1, 2))
+	a.runPalette("rebase")
+	if a.confirm == nil || a.confirm.kind != confirmRebase {
+		t.Fatalf("confirm = %+v, want a rebase prompt", a.confirm)
+	}
+	if got := stripANSI(a.View()); !strings.Contains(got, "onto its base?") {
+		t.Errorf("prompt does not say what it does:\n%s", got)
 	}
 }
