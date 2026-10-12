@@ -344,7 +344,7 @@ func (m *prListModel) handlePRListMsg(msg prListMsg) tea.Cmd {
 	}
 	// Persist so the next session — and the ghx in the next pane — opens on
 	// these rows instead of re-fetching.
-	if m.fileCache != nil {
+	if m.fileCache != nil && !msg.persisted {
 		m.fileCache.save(m.sources[msg.sourceIdx], msg.prs)
 	}
 	if msg.sourceIdx == m.curTab {

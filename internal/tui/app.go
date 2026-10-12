@@ -306,11 +306,16 @@ func (a *App) focus() tea.Cmd {
 		return nil
 	}
 	a.unfocused = false
+	var resumeChecks tea.Cmd
+	if a.detail != nil && a.detail.checksPollLapsed {
+		a.detail.checksPollLapsed = false
+		resumeChecks = a.detail.handleChecksPoll()
+	}
 	// Returning to the window is attention, so the poll resumes at the active
 	// cadence rather than inheriting an idle stretch that spanned the absence.
 	a.lastKeyAt = a.now()
 	a.pollGen++
-	return a.list.handlePollTick()
+	return tea.Batch(a.list.handlePollTick(), resumeChecks)
 }
 
 // noteActivity records a keypress. When it ends an idle stretch it refreshes
@@ -509,6 +514,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case checksPollTickMsg:
 		if a.detail == nil {
+			return a, nil
+		}
+		// The checks poll lapses while the window is unfocused, like the list
+		// poll: nobody is reading the tab, and every pending-CI PR left open in
+		// a parked window was a request every 15s for as long as CI ran. focus
+		// restarts it.
+		if a.unfocused {
+			a.detail.checksPollLapsed = true
 			return a, nil
 		}
 		return a, a.detail.handleChecksPoll()

@@ -24,6 +24,10 @@ type prListMsg struct {
 	fetchedAt  time.Time
 	warning    error
 	err        error
+	// persisted marks rows the fetch already wrote to the shared cache — from
+	// inside the cross-process lock, so a waiting sibling reads them the
+	// moment it gets the lock rather than after this window's next frame.
+	persisted bool
 }
 
 // prListTickMsg fires the periodic background refresh of the current source.

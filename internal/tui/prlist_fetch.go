@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/keyolk/ghx/internal/config"
+	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/pr"
 )
 
@@ -62,98 +63,149 @@ func (m *prListModel) shareWindow() time.Duration {
 	return interval * shareWindowNumerator / shareWindowDenominator
 }
 
-// sharedRows is another instance's recent answer for this source, when one is
-// allowed and one exists.
-func (m *prListModel) sharedRows(src config.SourceDef, share bool) ([]pr.Summary, time.Time, bool) {
-	if !share {
-		return nil, time.Time{}, false
+// shareCutoff is the oldest fetch a poll will accept from a neighbour: one
+// that was sent within the share window. Zero means no sharing at all.
+func (m *prListModel) shareCutoff() time.Time {
+	w := m.shareWindow()
+	if w <= 0 {
+		return time.Time{}
 	}
-	return m.fileCache.fresh(src, m.shareWindow())
+	// Wall time, not m.now(): it is compared against stamps other processes
+	// wrote with their own wall clocks.
+	return time.Now().Add(-w)
 }
 
-// fetchSource loads one source off the UI goroutine.
+// fetchSource loads one source off the UI goroutine, accepting a neighbour's
+// answer from within the share window.
 //
-// A source pinned to one repo goes through `gh pr list`, which is REST and has
-// its own generous rate limit. Only an unpinned source needs `gh search prs`,
-// which spans repositories but spends the much scarcer GraphQL search budget.
-//
-// Before either, the shared cache is consulted: with an ghx parked in every
-// tmux window, the usual reason a source is being fetched is that a sibling
-// instance fetched it moments ago. Reusing that answer is the difference
-// between the measured six-instance burn rate and one instance's.
+// A source pinned to one repo goes through `gh pr list`; an unpinned one needs
+// `gh search prs`, which spans repositories. Both are GraphQL underneath, and
+// both cost the account's shared pool — so before either, the shared cache is
+// consulted: with a ghx parked in every tmux window, the usual reason a source
+// is being fetched is that a sibling fetched it moments ago.
 func (m *prListModel) fetchSource(i int) tea.Cmd {
-	return m.fetchSourceShared(i, true)
+	return m.fetchSourceSince(i, m.shareCutoff())
 }
 
-// refetchSource fetches without accepting a neighbour's answer.
+// refetchSource fetches anew, accepting only an answer that was sent after
+// this moment.
 //
-// Every caller is a path where something just changed that no cached entry can
-// know about: an approve or a merge taken in this window, or a commit the
-// workspace sweep saw land on disk. A sibling's entry from ten seconds ago
-// predates all of them, and serving it would show the queue exactly as it was
-// before the action — the one moment the user is certain to be looking for the
-// change. `R` is here for the same reason: a manual refresh that answers from
-// a file is not a refresh.
+// Every caller is a path where something just changed: an approve or a merge
+// taken in this window, a commit the workspace sweep saw land on disk, or `R`.
+// An entry written before that change cannot contain it, and serving it would
+// show the queue exactly as it was before — the one moment the user is
+// certain to be looking for the change.
+//
+// What it does accept is a fetch that started after the change, and that is
+// not a corner case. A push is seen by every window watching the repository
+// within one sweep of each other; the first to take the source's lock fetches,
+// and the rest find its answer — sent after the push — when the lock comes
+// round to them. Refusing every cached entry, as this used to, made each of
+// them pay for the same push.
 func (m *prListModel) refetchSource(i int) tea.Cmd {
-	return m.fetchSourceShared(i, false)
+	return m.fetchSourceSince(i, time.Now())
 }
 
-func (m *prListModel) fetchSourceShared(i int, share bool) tea.Cmd {
+// fetchSourceSince fetches source i unless some ghx — this one or another —
+// has an answer that was sent at or after notBefore. A zero notBefore always
+// fetches.
+//
+// The check, the request and the write all happen under the source's
+// cross-process lock. Without it the check is a race: every instance that
+// misses at the same moment sees no entry and fetches, and the sharing only
+// pays off for whoever comes after the last of them has written. With it the
+// first fetches and writes before releasing, so the others re-check and find
+// that answer.
+func (m *prListModel) fetchSourceSince(i int, notBefore time.Time) tea.Cmd {
 	if i < 0 || i >= len(m.sources) {
 		return nil
 	}
 	src := m.sources[i]
 	client := m.client
+	cache := m.fileCache
+	accounts := m.cfg.Accounts
 	m.generations[i]++
 	generation := m.generations[i]
-	if rows, savedAt, ok := m.sharedRows(src, share); ok {
-		// Delivered as the ordinary response so it lands on the one path that
-		// clears loadings, releases inFlight and re-arms the poll. Short-cutting
-		// straight into the model here would skip all three and wedge the chain.
-		//
-		// The stamp is the file's, not now: these rows are as old as the fetch
-		// that produced them, and the title's age readout exists precisely to
-		// stop a hand-off like this from being reported as fresh.
-		return func() tea.Msg {
-			return prListMsg{
-				sourceIdx: i, generation: generation,
-				prs: rows, fetchedAt: savedAt,
-			}
-		}
-	}
-	if src.Repo != "" {
-		scoped := client.WithRepo(src.Repo)
-		query, repo := src.Query, src.Repo
-		return func() tea.Msg {
-			c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			prs, err := scoped.ListPRs(c, query, 50)
-			// ListPRs answers about one repo, so it never echoes the slug back;
-			// fill it in or every later call would have nothing to scope to.
-			for j := range prs {
-				if prs[j].Repo == "" {
-					prs[j].Repo = repo
-				}
-			}
-			var warning error
-			if err == nil {
-				prs, warning = scoped.EnrichPRStatuses(c, prs)
-			}
-			return prListMsg{sourceIdx: i, generation: generation, prs: prs, warning: warning, err: err}
-		}
-	}
-	query := src.Query
 	return func() tea.Msg {
+		if !notBefore.IsZero() {
+			// Checked before the lock too: the common case on a steady queue is
+			// that a sibling answered within the window, and that should not
+			// cost a lock round trip.
+			if rows, savedAt, ok := cache.freshSince(src, notBefore); ok {
+				return sharedListMsg(i, generation, rows, savedAt)
+			}
+			// The wait has its own bound, shorter than a request's, so a
+			// sibling wedged on a hung gh costs this window its place in the
+			// queue and not its refresh: once the wait runs out it fetches for
+			// itself, with a full request deadline still ahead of it.
+			wait, cancelWait := context.WithTimeout(context.Background(), lockWait)
+			release := cache.lock(wait, src)
+			cancelWait()
+			defer release()
+			if rows, savedAt, ok := cache.freshSince(src, notBefore); ok {
+				return sharedListMsg(i, generation, rows, savedAt)
+			}
+		}
 		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		prs, warning, err := searchPRsAcrossAccounts(c, client, m.cfg.Accounts, query, 50)
-		if err == nil {
-			var statusWarning error
-			prs, statusWarning = client.EnrichPRStatuses(c, prs)
-			warning = errors.Join(warning, statusWarning)
+		startedAt := time.Now()
+		prs, warning, err := fetchRows(c, client, accounts, src)
+		msg := prListMsg{sourceIdx: i, generation: generation, prs: prs, warning: warning, err: err}
+		// Written here, under the lock, rather than when the message reaches
+		// the UI goroutine: the waiters are blocked on this lock precisely to
+		// read this answer. The same exception the handler makes applies — an
+		// empty answer that came with a warning is not a verdict on the queue
+		// and must not replace one that had rows.
+		if err == nil && !(len(prs) == 0 && warning != nil) && cache != nil {
+			cache.saveStarted(src, prs, startedAt)
+			msg.persisted = true
 		}
-		return prListMsg{sourceIdx: i, generation: generation, prs: prs, warning: warning, err: err}
+		return msg
 	}
+}
+
+// lockWait bounds how long a fetch waits on a sibling holding the same
+// source. A cross-repo search with enrichment is a few seconds at worst, so
+// this outlasts any healthy holder with room to spare.
+const lockWait = 15 * time.Second
+
+// sharedListMsg delivers another instance's answer as an ordinary response, so
+// it lands on the one path that clears loadings, releases inFlight and re-arms
+// the poll. Short-cutting straight into the model would skip all three and
+// wedge the chain.
+//
+// The stamp is the file's, not now: these rows are as old as the fetch that
+// produced them, and the title's age readout exists precisely to stop a
+// hand-off like this from being reported as fresh.
+func sharedListMsg(i int, generation uint64, rows []pr.Summary, savedAt time.Time) prListMsg {
+	return prListMsg{sourceIdx: i, generation: generation, prs: rows, fetchedAt: savedAt}
+}
+
+// fetchRows is the request itself: one repository through `gh pr list`, or a
+// search across every configured account.
+func fetchRows(ctx context.Context, client *gh.Client, accounts []config.AccountDef, src config.SourceDef) ([]pr.Summary, error, error) {
+	if src.Repo != "" {
+		scoped := client.WithRepo(src.Repo)
+		prs, err := scoped.ListPRs(ctx, src.Query, 50)
+		if err != nil {
+			return nil, nil, err
+		}
+		// ListPRs answers about one repo, so it never echoes the slug back;
+		// fill it in or every later call would have nothing to scope to.
+		for j := range prs {
+			if prs[j].Repo == "" {
+				prs[j].Repo = src.Repo
+			}
+		}
+		prs, warning := scoped.EnrichPRStatuses(ctx, prs)
+		return prs, warning, nil
+	}
+	prs, warning, err := searchPRsAcrossAccounts(ctx, client, accounts, src.Query, 50)
+	if err != nil {
+		return nil, warning, err
+	}
+	prs, statusWarning := client.EnrichPRStatuses(ctx, prs)
+	return prs, errors.Join(warning, statusWarning), nil
 }
 
 // refreshCurrent reloads the visible source from GitHub.
@@ -213,7 +265,7 @@ func (m *prListModel) markAllDirty() {
 // its slot; the per-source generation is what discards a superseded response
 // here.
 func (m *prListModel) loadSource(i int) tea.Cmd {
-	return m.loadSourceShared(i, true)
+	return m.loadSourceSince(i, m.shareCutoff())
 }
 
 // reloadSource is loadSource for a repository that was just worked in.
@@ -224,14 +276,14 @@ func (m *prListModel) loadSource(i int) tea.Cmd {
 // with the age readout resetting — and still showed the queue from before the
 // push, which is worse than not having followed the work at all.
 func (m *prListModel) reloadSource(i int) tea.Cmd {
-	return m.loadSourceShared(i, false)
+	return m.loadSourceSince(i, time.Now())
 }
 
-func (m *prListModel) loadSourceShared(i int, share bool) tea.Cmd {
+func (m *prListModel) loadSourceSince(i int, notBefore time.Time) tea.Cmd {
 	if i < 0 || i >= len(m.sources) || m.loadings[i] {
 		return nil
 	}
 	m.loadings[i] = true
 	m.dirty[i] = false
-	return m.fetchSourceShared(i, share)
+	return m.fetchSourceSince(i, notBefore)
 }
