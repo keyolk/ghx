@@ -124,8 +124,11 @@ func run() (err error) {
 	// WithReportFocus is what lets the background poll stop while the window is
 	// not on screen. A terminal that does not support it simply never sends the
 	// message, and the poll behaves as it did before.
-	p := tea.NewProgram(app,
-		tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus())
+	//
+	// No mouse reporting: nothing handles tea.MouseMsg, and capturing the mouse
+	// only takes drag-to-select away from the terminal — the way people copy a
+	// branch name or an error out of the screen.
+	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithReportFocus())
 	if _, runErr := p.Run(); runErr != nil {
 		return fmt.Errorf("run: %w", runErr)
 	}
