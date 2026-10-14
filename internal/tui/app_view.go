@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"time"
 )
 
 // Top-level composition: the title line, the footer, overlay stacking, and the
@@ -166,8 +165,8 @@ func (a *App) helpLine() string {
 		return truncateFooter(a.mergeFailure.hints(), a.width)
 	}
 	// A recent toast outranks hints: it's the answer to what the user just did.
-	if a.toast != "" && time.Since(a.toastAt) < 4*time.Second {
-		return truncateFooter(a.toast, a.width)
+	if toast := a.toast.Text(); toast != "" {
+		return truncateFooter(toast, a.width)
 	}
 	if a.helpOpen {
 		return truncateFooter(fmtHints("?", "close", "esc", "close", "q", "close"), a.width)

@@ -83,8 +83,7 @@ type App struct {
 	// pendingAction for why the gap it fills was worth closing.
 	pending *pendingAction
 
-	toast   string
-	toastAt time.Time
+	toast Toast
 
 	// lastKeyAt is when the user last pressed a key, which is what decides
 	// whether the background poll runs at the active or the idle cadence. It is
@@ -409,6 +408,18 @@ func (a *App) Init() tea.Cmd {
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	seq := a.toast.Seq()
+	m, cmd := a.update(msg)
+	// Scheduled here rather than at every setToast call: there are a dozen of
+	// those, and one that forgot to return the tick would leave its toast on
+	// screen until some unrelated event happened to redraw.
+	if a.toast.Seq() != seq {
+		cmd = tea.Batch(cmd, a.toast.Expiry())
+	}
+	return m, cmd
+}
+
+func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
@@ -426,7 +437,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.blur()
 		return a, nil
 
+	case ToastExpiredMsg:
+		a.toast.Expire(msg)
+		return a, nil
+
 	case tea.KeyMsg:
+		// A key is the acknowledgement an error toast waits for. Cleared before
+		// the key is handled so that a toast the key itself raises survives.
+		a.toast.Ack()
 		// Recorded before the key is handled: the handler can quit, and a key that
 		// ends an idle stretch should refresh even if it also does something else.
 		wake := a.noteActivity()
@@ -466,7 +484,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case errMsg:
-		a.setToast(errorStyle.Render("error: ") + msg.err.Error())
+		a.setErrorToast(errorStyle.Render("error: ") + msg.err.Error())
 		return a, nil
 
 	case prListMsg:
@@ -646,7 +664,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if msg.err == nil {
 			a.setToast(msg.label)
 		} else if len(msg.completed) > 0 {
-			a.setToast(fmt.Sprintf("%s; some failed: %v", msg.label, msg.err))
+			a.setErrorToast(fmt.Sprintf("%s; some failed: %v", msg.label, msg.err))
 		} else {
 			return a, errCmd(msg.err)
 		}
@@ -1048,11 +1066,6 @@ func (a *App) anyLoading() bool {
 func (a *App) showMergeFailure(f *mergeFailure) {
 	a.mergeFailure = f
 	a.setToast(f.toast())
-}
-
-func (a *App) setToast(s string) {
-	a.toast = s
-	a.toastAt = time.Now()
 }
 
 // openSelected switches to the detail view for the list's selection.

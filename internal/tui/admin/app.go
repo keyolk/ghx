@@ -7,7 +7,6 @@ package admin
 import (
 	"context"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -60,8 +59,7 @@ type App struct {
 	// loading and error state
 	loading bool
 	err     error
-	toast   string
-	toastAt time.Time
+	toast   tui.Toast
 
 	// list scrolls inside its own rows; see tui.ListPane.
 	pane tui.ListPane
@@ -225,7 +223,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyMsg:
+		a.toast.Ack()
 		return a, a.handleKey(msg)
+
+	case tui.ToastExpiredMsg:
+		a.toast.Expire(msg)
+		return a, nil
 
 	case dataMsg:
 		a.loading = false
@@ -264,9 +267,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case toastMsg:
-		a.toast = msg.text
-		a.toastAt = time.Now()
-		return a, nil
+		a.toast.Set(msg.text)
+		return a, a.toast.Expiry()
 
 	case writeDoneMsg:
 		a.busy = false
@@ -274,23 +276,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// A toast, not a.err: the list on screen is still the truth about
 			// who has access, and replacing it with an error page would hide
 			// exactly the state needed to decide what to do next.
-			a.toast = tui.ErrorStyle.Render("error: ") + msg.err.Error()
-			a.toastAt = time.Now()
+			a.toast.SetError(tui.ErrorStyle.Render("error: ") + msg.err.Error())
 			return a, nil
 		}
-		a.toast = msg.text
-		a.toastAt = time.Now()
+		a.toast.Set(msg.text)
+		expiry := a.toast.Expiry()
 		if msg.reloadTeam != "" {
 			// The cached member list is now wrong, and it is what the drill-down
 			// renders from. Dropping it is what makes the re-fetch actually go
 			// out rather than being served from the map.
 			delete(a.teamMembers, msg.reloadTeam)
-			return a, a.loadTeamMembers(msg.reloadTeam)
+			return a, tea.Batch(expiry, a.loadTeamMembers(msg.reloadTeam))
 		}
 		if msg.needsReload() {
-			return a, a.loadCategory(msg.reload)
+			return a, tea.Batch(expiry, a.loadCategory(msg.reload))
 		}
-		return a, nil
+		return a, expiry
 	}
 	return a, nil
 }
