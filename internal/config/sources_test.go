@@ -356,3 +356,16 @@ func TestBrowserCommandPrecedence(t *testing.T) {
 		t.Errorf("config should outrank $BROWSER, got %q", got)
 	}
 }
+
+// A whitespace-only editor is unset, not a command: the caller execs the first
+// whitespace-separated field, and there is none, which used to panic the TUI.
+func TestEditorCommandIgnoresBlankValues(t *testing.T) {
+	t.Setenv("EDITOR", "   ")
+	if got := (&Config{}).EditorCommand(); got != "vi" {
+		t.Errorf("blank $EDITOR resolved to %q, want the vi fallback", got)
+	}
+	t.Setenv("EDITOR", "nano")
+	if got := (&Config{Editor: " \t"}).EditorCommand(); got != "nano" {
+		t.Errorf("blank config editor resolved to %q, want $EDITOR", got)
+	}
+}
