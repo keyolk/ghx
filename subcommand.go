@@ -84,9 +84,9 @@ func runSubcommand(args []string, kind string) error {
 	var model tea.Model
 	switch kind {
 	case "admin":
-		model = admin.NewApp(client, repo)
+		model = admin.NewApp(client, repo).UseKeymap(admin.LoadKeymap())
 	case "actions":
-		model = actions.NewApp(client, repo)
+		model = actions.NewApp(client, repo).UseKeymap(actions.LoadKeymap())
 	default:
 		return fmt.Errorf("unknown subcommand %q", kind)
 	}

@@ -51,7 +51,8 @@ actions.
 - `internal/tui/keymap.go` — 단일 binding table (tuikit `keys`). dispatch·footer·`?`·`:` 팔레트가
   전부 여기서 파생된다. 핸들러는 키가 아니라 action 이름으로 switch한다(`app_keys.go`,
   `detail_keys.go`, `detail_footer.go`). 사용자 재바인딩: config.yaml `keymap:` 또는
-  `~/.config/ghx/keys.yaml` (`ghx admin`/`ghx actions`는 `subkeys.go`의 공용 list 키 + 자체 table)
+  `~/.config/ghx/keys.yaml`. `ghx admin`/`ghx actions`는 `subkeys.go`의 공용 list 키 + 자체
+  table이고, 각자 `keys-admin.yaml`/`keys-actions.yaml`을 읽는다(`keys.ConfigPath("ghx", sub)`)
 - `internal/tui/ui_state.go` — 탭·필터·split·상세 탭을 `$XDG_STATE_HOME/ghx/ui.json`에 보존
   (tuikit `prefs.Saver`, debounce + quit 시 Flush). 감지된 repo가 있으면 저장된 탭보다 우선
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)

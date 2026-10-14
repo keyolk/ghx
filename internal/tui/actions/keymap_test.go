@@ -1,6 +1,9 @@
 package actions
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -80,10 +83,10 @@ func TestCtrlCQuitsFromEveryState(t *testing.T) {
 // it resolves to its own action in some stack — the footer is drawn from the
 // same table, so a hint cannot name a key that does something else.
 func TestKeymapIsConsistent(t *testing.T) {
-	for _, c := range keymap.Conflicts(allStacks...) {
+	for _, c := range defaultKeys.Conflicts(allStacks...) {
 		t.Error(c)
 	}
-	for _, b := range keymap.Bindings() {
+	for _, b := range defaultKeys.Bindings() {
 		for _, k := range b.Keys {
 			msg := keyMsg(k)
 			if k == "down" || k == "up" || k == "pgdown" || k == "pgup" || k == "backspace" ||
@@ -92,7 +95,7 @@ func TestKeymapIsConsistent(t *testing.T) {
 			}
 			reached := false
 			for _, st := range allStacks {
-				if got, ok := keymap.Resolve(st, msg, keys.Opts{}); ok && got.Action == b.Action {
+				if got, ok := defaultKeys.Resolve(st, msg, keys.Opts{}); ok && got.Action == b.Action {
 					reached = true
 				}
 			}
@@ -100,5 +103,63 @@ func TestKeymapIsConsistent(t *testing.T) {
 				t.Errorf("%s.%s: %q reaches it in no stack", b.Ctx, b.Action, k)
 			}
 		}
+	}
+}
+
+// writeKeys writes name (keys.yaml or keys-<panel>.yaml) into a fresh
+// XDG_CONFIG_HOME/ghx.
+func writeKeys(t *testing.T, files map[string]string) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	if err := os.MkdirAll(filepath.Join(dir, "ghx"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, "ghx", name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// The panel reads its own keys-actions.yaml and dispatches and draws from it;
+// the PR app's keys.yaml, whose names the panel does not share, is not its
+// business.
+func TestPanelKeysFileRebindsDispatchAndFooter(t *testing.T) {
+	writeKeys(t, map[string]string{
+		"keys-actions.yaml": "quit: [x]\n",
+		"keys.yaml":         "status: [F]\n",
+	})
+	km, err := LoadKeymap()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := testApp(t, 160, 24).UseKeymap(km, nil)
+	if isQuit(a.handleKey(keyMsg("q"))) {
+		t.Error("q still quits after rebinding quit to x")
+	}
+	if !isQuit(a.handleKey(keyMsg("x"))) {
+		t.Error("x does not quit after the rebinding")
+	}
+	if foot := plain(a.footer()); !strings.Contains(foot, "x quit") {
+		t.Errorf("the footer does not follow the rebinding:\n%s", foot)
+	}
+}
+
+// A bad file keeps the defaults and says so once the panel is up, rather than
+// stopping the panel or silently ignoring the user's file.
+func TestBadPanelKeysFileKeepsDefaults(t *testing.T) {
+	writeKeys(t, map[string]string{"keys-actions.yaml": "nosuchaction: [z]\n"})
+	km, err := LoadKeymap()
+	if err == nil {
+		t.Fatal("an unknown action was accepted")
+	}
+	a := testApp(t, 160, 24).UseKeymap(km, err)
+	a.Init()
+	if !strings.Contains(plain(a.footer()), "nosuchaction") {
+		t.Errorf("the bad file is not reported:\n%s", plain(a.footer()))
+	}
+	if !isQuit(a.handleKey(keyMsg("q"))) {
+		t.Error("the defaults were not kept")
 	}
 }

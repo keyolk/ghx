@@ -1,6 +1,10 @@
 package actions
 
 import (
+	"errors"
+	"path/filepath"
+	"strings"
+
 	"github.com/keyolk/tuikit/keys"
 
 	"github.com/keyolk/ghx/internal/tui"
@@ -51,7 +55,36 @@ func defaultKeymap() keys.Keymap {
 	return keys.New(bs...)
 }
 
-var keymap = defaultKeymap()
+// defaultKeys is the built-in table; an App without a loaded one uses it.
+var defaultKeys = defaultKeymap()
+
+// LoadKeymap is the built-in table with the user's overrides from
+// keys-actions.yaml beside the PR app's keys.yaml (keys.ConfigPath("ghx",
+// "actions")). A file of its own rather than a share of keys.yaml: the panels
+// reuse action names (cancel, remove, logs) with meanings of their own, and
+// keys.yaml rejects names the PR app does not bind. A bad file is reported and
+// the defaults are kept, as for the PR app.
+func LoadKeymap() (keys.Keymap, error) {
+	path := keys.ConfigPath("ghx", "actions")
+	km, err := defaultKeys.LoadOverrides(path, allStacks...)
+	if err != nil {
+		// The error leads with the full path, which can fill the one-line
+		// toast before the part that says what is wrong; the file name is
+		// enough to find it.
+		return km, errors.New(strings.ReplaceAll(err.Error(), path, filepath.Base(path)))
+	}
+	return km, nil
+}
+
+// keymap is the table the App dispatches and draws with.
+func (a *App) keymap() keys.Keymap { return a.km.Or(defaultKeys) }
+
+// UseKeymap installs a loaded table; err, from LoadKeymap, is shown once the
+// panel is up.
+func (a *App) UseKeymap(km keys.Keymap, err error) *App {
+	a.km, a.keymapErr = km, err
+	return a
+}
 
 func (a *App) stack() []keys.Ctx {
 	switch {

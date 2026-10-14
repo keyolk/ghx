@@ -62,6 +62,11 @@ type App struct {
 	err     error
 	toast   tui.Toast
 
+	// km is the key table (LoadKeymap); the zero value means the defaults.
+	// keymapErr is a bad override file, shown as a toast by Init.
+	km        keys.Keymap
+	keymapErr error
+
 	// list scrolls inside its own rows; see tui.ListPane.
 	pane tui.ListPane
 
@@ -99,6 +104,9 @@ func NewApp(client *gh.Client, repo string) *App {
 
 // Init loads the first category's data.
 func (a *App) Init() tea.Cmd {
+	if a.keymapErr != nil {
+		a.toast.SetError("keys: " + a.keymapErr.Error())
+	}
 	return a.loadCategory(catCollaborators)
 }
 
@@ -306,7 +314,7 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 
 	// confirmation prompt owns the keyboard
 	if a.confirm != nil {
-		b, _ := keymap.Resolve(stackConfirm, msg, keys.Opts{})
+		b, _ := a.keymap().Resolve(stackConfirm, msg, keys.Opts{})
 		switch b.Action {
 		case "yes":
 			act := *a.confirm
@@ -331,7 +339,7 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	// contain j, k, q, and the digits without triggering navigation. Raw: a
 	// jamo there is the query, not a shortcut.
 	if a.searching {
-		b, _ := keymap.ResolveRaw(stackSearch, msg, keys.Opts{})
+		b, _ := a.keymap().ResolveRaw(stackSearch, msg, keys.Opts{})
 		return a.handleSearchKey(b.Action, msg)
 	}
 
@@ -343,7 +351,7 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	// d, p, and TestWriteKeysShadowNoListKey keeps it so: a key that used to
 	// move the cursor and now revokes someone's access is the failure worth
 	// designing out.
-	b, ok := keymap.Resolve(a.stack(), msg, a.keyOpts())
+	b, ok := a.keymap().Resolve(a.stack(), msg, a.keyOpts())
 	if !ok {
 		return nil
 	}

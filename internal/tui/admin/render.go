@@ -51,7 +51,7 @@ func (a *App) renderHeader() string {
 	// reason: an extra line would resize the list under the cursor while
 	// someone is typing into it.
 	if a.prompt.open() {
-		return a.prompt.render(a.width)
+		return a.prompt.render(a.width, a.keymap())
 	}
 	if a.searching {
 		return tui.RenderSearchBar(a.query, a.width)
@@ -236,7 +236,7 @@ func (a *App) footer() string {
 		// footer truncates — so what has to lead is the part that must not be
 		// cut off, and that is the warning itself. See confirmAction.prompt.
 		line := tui.ErrorStyle.Render(a.confirm.prompt(a.repo, a.org()))
-		return tui.TruncateFooter(line+"  "+hints(stackConfirm, max(a.width-tui.LipglossWidth(line)-2, 1)), a.width)
+		return tui.TruncateFooter(line+"  "+hints(a.keymap(), stackConfirm, max(a.width-tui.LipglossWidth(line)-2, 1)), a.width)
 	}
 	if a.busy {
 		return tui.TruncateFooter(tui.DimStyle.Render("  working…"), a.width)
@@ -254,7 +254,7 @@ func (a *App) footer() string {
 	if pos != "" {
 		room -= tui.LipglossWidth(pos) + 2
 	}
-	line := keymap.Footer(a.stack(), max(room, 1), a.keyOpts(), tui.FooterStyle())
+	line := a.keymap().Footer(a.stack(), max(room, 1), a.keyOpts(), tui.FooterStyle())
 	if pos != "" {
 		line += "  " + tui.DimStyle.Render(pos)
 	}

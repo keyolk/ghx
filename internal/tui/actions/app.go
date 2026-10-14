@@ -52,6 +52,11 @@ type App struct {
 	err     error
 	toast   tui.Toast
 
+	// km is the key table (LoadKeymap); the zero value means the defaults.
+	// keymapErr is a bad override file, shown as a toast by Init.
+	km        keys.Keymap
+	keymapErr error
+
 	// list scrolls inside its own rows; see tui.ListPane.
 	pane tui.ListPane
 
@@ -67,6 +72,9 @@ func NewApp(client *gh.Client, repo string) *App {
 
 // Init loads the runs list.
 func (a *App) Init() tea.Cmd {
+	if a.keymapErr != nil {
+		a.toast.SetError("keys: " + a.keymapErr.Error())
+	}
 	return a.loadRuns()
 }
 
@@ -179,13 +187,13 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	// contain j, k, q, f, and the digits without triggering navigation — and
 	// resolves without the CJK rewrite, so a jamo is typed, not a shortcut.
 	if a.searching {
-		b, _ := keymap.ResolveRaw(stackSearch, msg, keys.Opts{})
+		b, _ := a.keymap().ResolveRaw(stackSearch, msg, keys.Opts{})
 		return a.handleSearchKey(b.Action, msg)
 	}
 
 	// Resolve rewrites a Korean jamo to the Latin key at the same physical
 	// position, so shortcuts fire without switching the input source back.
-	b, ok := keymap.Resolve(a.stack(), msg, a.keyOpts())
+	b, ok := a.keymap().Resolve(a.stack(), msg, a.keyOpts())
 	if !ok {
 		return nil
 	}
@@ -572,7 +580,7 @@ func (a *App) renderLogs() string {
 	end := min(a.logOff+h, len(lines))
 
 	header := tui.TitleStyle.Render(" run logs ")
-	header += keymap.Footer(stackLogs, max(a.width-tui.LipglossWidth(header), 1), keys.Opts{}, tui.FooterStyle())
+	header += a.keymap().Footer(stackLogs, max(a.width-tui.LipglossWidth(header), 1), keys.Opts{}, tui.FooterStyle())
 	// Each line is clipped to the terminal width. A log line is routinely wider
 	// than the pane, and a wrapped one costs two rows — enough of them and the
 	// frame overflows, which costs the header at the top rather than the excess
@@ -600,7 +608,7 @@ func (a *App) footer() string {
 	if a.active == tabWorkflows {
 		stack = stackWorkflows
 	}
-	line := keymap.Footer(stack, max(room, 1), a.keyOpts(), tui.FooterStyle())
+	line := a.keymap().Footer(stack, max(room, 1), a.keyOpts(), tui.FooterStyle())
 	if pos != "" {
 		line += "  " + tui.DimStyle.Render(pos)
 	}

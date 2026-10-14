@@ -86,11 +86,11 @@ func (p prompt) label() string {
 }
 
 // render draws the open prompt in the tab strip's row.
-func (p prompt) render(width int) string {
+func (p prompt) render(width int, km keys.Keymap) string {
 	switch p.kind {
 	case promptLogin:
 		bar := tui.RenderPromptBar(p.label(), p.value, width)
-		return tui.TruncateFooter(bar+"  "+hints(stackLogin, max(width-tui.LipglossWidth(bar)-2, 1)), width)
+		return tui.TruncateFooter(bar+"  "+hints(km, stackLogin, max(width-tui.LipglossWidth(bar)-2, 1)), width)
 	case promptPermission:
 		// The whole set is shown with the selection marked, rather than one
 		// value that changes as tab is pressed. Five options fit in a line, and
@@ -105,7 +105,7 @@ func (p prompt) render(width int) string {
 			parts = append(parts, tui.DimStyle.Render(" "+c+" "))
 		}
 		line := tui.HelpKeyStyle.Render(p.label()+": ") + strings.Join(parts, "")
-		return tui.TruncateFooter(line+"  "+hints(stackPermission, max(width-tui.LipglossWidth(line)-2, 1)), width)
+		return tui.TruncateFooter(line+"  "+hints(km, stackPermission, max(width-tui.LipglossWidth(line)-2, 1)), width)
 	}
 	return ""
 }
@@ -119,7 +119,7 @@ func (a *App) handlePromptKey(msg tea.KeyMsg) tea.Cmd {
 	switch a.prompt.kind {
 	case promptLogin:
 		// A text field: raw, so a jamo is typed rather than rewritten.
-		b, _ := keymap.ResolveRaw(stackLogin, msg, keys.Opts{})
+		b, _ := a.keymap().ResolveRaw(stackLogin, msg, keys.Opts{})
 		switch b.Action {
 		case "cancel":
 			a.prompt = prompt{}
@@ -143,7 +143,7 @@ func (a *App) handlePromptKey(msg tea.KeyMsg) tea.Cmd {
 
 	case promptPermission:
 		// A shortcut menu, not text: Resolve normalizes a jamo to its key.
-		b, _ := keymap.Resolve(stackPermission, msg, keys.Opts{})
+		b, _ := a.keymap().Resolve(stackPermission, msg, keys.Opts{})
 		switch b.Action {
 		case "cancel":
 			a.prompt = prompt{}
