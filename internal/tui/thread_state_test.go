@@ -192,7 +192,7 @@ func TestUnknownResolutionSurvivesTheFilter(t *testing.T) {
 // The footer holds itself to 100 cells, the width detail_footer_test.go pins
 // for every other tab. It was passing only because the fixture had no threads:
 // the legend appears with them, and it appears at the end, where truncation
-// takes it. fitLegend drops it whole rather than showing half a key.
+// takes it. It goes whole rather than showing half a key.
 func TestCommentsFooterFitsACommonTerminalWithThreads(t *testing.T) {
 	c := newCommentsView()
 	c.threads = threeThreads()
@@ -213,14 +213,20 @@ func TestCommentsFooterFitsACommonTerminalWithThreads(t *testing.T) {
 }
 
 // A half-truncated legend reads as a label rather than a key, so it goes whole
-// or not at all.
+// or not at all, at every width.
 func TestLegendIsDroppedRatherThanTruncated(t *testing.T) {
-	hints := "j/k:thread"
-	legend := iconThreadOpen + " open " + iconThreadResolved + " resolved"
-	if got := fitLegend(hints, legend, 200); !strings.Contains(got, legend) {
-		t.Errorf("the legend was dropped despite fitting: %q", got)
+	c := commentsWithAll()
+	full := stripANSISeqs(c.glyphLegend())
+	for w := 10; w <= footerBudget; w++ {
+		got := stripANSISeqs(c.helpLine(w))
+		if lipglossWidth(got) > w {
+			t.Errorf("width %d: footer overflows: %q", w, got)
+		}
+		if strings.Contains(got, iconThreadOpen) && !strings.Contains(got, full) {
+			t.Errorf("width %d: the legend was cut instead of dropped: %q", w, got)
+		}
 	}
-	if got := fitLegend(hints, legend, 12); got != hints {
-		t.Errorf("a legend that does not fit was truncated instead of dropped: %q", got)
+	if got := stripANSISeqs(c.helpLine(footerBudget)); !strings.Contains(got, full) {
+		t.Errorf("the legend was dropped despite fitting: %q", got)
 	}
 }

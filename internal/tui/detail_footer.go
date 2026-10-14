@@ -205,18 +205,19 @@ func (c *commentsView) keyOpts() keys.Opts {
 
 // helpLine is the comments footer plus a legend for the thread glyphs whenever
 // more than one state is on screen. The legend is not guessable from any key,
-// so the hints give way to it: they are rendered into the width the legend
-// leaves, and drop their lowest-priority entries first.
+// so it is the footer's Right text: the hints give way to it, lowest priority
+// first, and it goes whole — never cut — only when quit and help alone no
+// longer fit beside it. Half a legend is worse than none: "✓ res" reads as a
+// label rather than as a key. The glyphs are also in the ? overlay.
 func (c *commentsView) helpLine(width int) string {
 	km := c.km.Or(defaultKeymap)
 	legend := c.glyphLegend()
 	if legend == "" {
 		return km.Footer(stackComments, width, c.keyOpts(), footerStyle())
 	}
-	styled := dimStyle.Render(legend)
-	budget := min(width, footerBudget)
-	hints := km.Footer(stackComments, max(budget-lipglossWidth(styled)-2, 1), c.keyOpts(), footerStyle())
-	return fitLegend(hints, styled, budget)
+	st := footerStyle()
+	st.Right = dimStyle.Render(legend)
+	return km.Footer(stackComments, min(width, footerBudget), c.keyOpts(), st)
 }
 
 // --- checks ---

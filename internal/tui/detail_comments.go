@@ -554,18 +554,3 @@ func (c *commentsView) glyphLegend() string {
 	}
 	return strings.Join(parts, " ")
 }
-
-// fitLegend drops the legend rather than let it push the footer past the width
-// a common terminal shows. Truncation would cut the legend anyway — it sits at
-// the end — but silently, and half a legend is worse than none: "✓ res" reads
-// as a label rather than as a key. The glyphs are also in the ? overlay.
-func fitLegend(hints, legend string, width int) string {
-	if legend == "" {
-		return hints
-	}
-	full := hints + "  " + legend
-	if lipglossWidth(full) <= width {
-		return full
-	}
-	return hints
-}
