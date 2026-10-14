@@ -20,10 +20,12 @@ func helpSections() []helpSection {
 			{"j / k", "move down / up"},
 			{"J / K", "next / previous hunk (diff)"},
 			{"H / L", "previous / next file (diff; { } also)"},
-			{"h / l", "fold / unfold a file, on its header row (diff)"},
 			{"g / G", "jump to top / bottom"},
 			{"^f / ^b", "page down / up"},
-			{"h / l", "cycle tabs (detail) · pane focus (list)"},
+			// h / l has one row. It used to have two that contradicted each other;
+			// the diff tab's own meanings live on the s and 3 Diff rows, where
+			// someone reading about the diff will find them.
+			{"h / l", "previous / next tab (detail) · hide / show preview (list)"},
 			{"[ / ]", "resize the split"},
 			{"1-9", "jump to source tab (list) or detail tab"},
 			{"enter", "open PR · select file/thread/check"},
@@ -32,7 +34,7 @@ func helpSections() []helpSection {
 		{"Review", [][2]string{
 			{"c", "comment on the diff line under the cursor"},
 			{"v", "visual range, then c to comment on it"},
-			{"s", "unified / side-by-side diff"},
+			{"s", "unified / side-by-side diff; h / l pick the column"},
 			{"C", "PR-level comment"},
 			{"a", "approve (asks first)"},
 			{"r", "request changes"},
@@ -53,7 +55,7 @@ func helpSections() []helpSection {
 		{"Views", [][2]string{
 			{"1 Overview", "metadata and description"},
 			{"2 Files", "changed files with +/- counts"},
-			{"3 Diff", "unified diff with inline threads"},
+			{"3 Diff", "inline threads; h / l fold a file on its header"},
 			{"4 Comments", "review threads; ○ open · ✓ resolved · ? unknown"},
 			{"5 Commits", "commit list"},
 			{"6 Checks", "CI results; enter opens the log"},
