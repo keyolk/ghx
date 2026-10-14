@@ -221,6 +221,12 @@ func (a *App) openEditor(draft string) tea.Cmd {
 	// The editor needs the real terminal, so hand it over via ExecProcess and
 	// read the file back when it exits.
 	parts := strings.Fields(editor)
+	if len(parts) == 0 {
+		// EditorCommand never returns a blank command, but an empty argv here
+		// is an index panic that takes the TUI down, so refuse it explicitly.
+		os.Remove(name)
+		return errCmd(fmt.Errorf("no editor configured"))
+	}
 	args := append(parts[1:], name)
 	cmd := exec.Command(parts[0], args...)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {

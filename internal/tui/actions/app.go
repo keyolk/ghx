@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -50,8 +49,7 @@ type App struct {
 	// state
 	loading bool
 	err     error
-	toast   string
-	toastAt time.Time
+	toast   tui.Toast
 
 	// list scrolls inside its own rows; see tui.ListPane.
 	pane tui.ListPane
@@ -109,8 +107,11 @@ type logMsg struct {
 	err  error
 }
 
-// toastMsg surfaces a transient message.
-type toastMsg struct{ text string }
+// toastMsg surfaces a message in the footer. An error stays until a key.
+type toastMsg struct {
+	text  string
+	isErr bool
+}
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -119,7 +120,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyMsg:
+		a.toast.Ack()
 		return a, a.handleKey(msg)
+
+	case tui.ToastExpiredMsg:
+		a.toast.Expire(msg)
+		return a, nil
 
 	case runsMsg:
 		a.loading = false
@@ -144,8 +150,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case logMsg:
 		a.logBusy = false
 		if msg.err != nil {
-			a.toast = "error: " + msg.err.Error()
-			a.toastAt = time.Now()
+			a.toast.SetError("error: " + msg.err.Error())
 			return a, nil
 		}
 		a.logView = msg.logs
@@ -153,9 +158,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case toastMsg:
-		a.toast = msg.text
-		a.toastAt = time.Now()
-		return a, nil
+		if msg.isErr {
+			a.toast.SetError(msg.text)
+			return a, nil
+		}
+		a.toast.Set(msg.text)
+		return a, a.toast.Expiry()
 	}
 	return a, nil
 }
@@ -313,7 +321,7 @@ func (a *App) rerun(failedOnly bool) tea.Cmd {
 			err = client.RerunRun(ctx, runID)
 		}
 		if err != nil {
-			return toastMsg{text: "error: " + err.Error()}
+			return toastMsg{text: "error: " + err.Error(), isErr: true}
 		}
 		return toastMsg{text: verb + " #" + runID}
 	}
@@ -333,7 +341,7 @@ func (a *App) cancelRun() tea.Cmd {
 	return func() tea.Msg {
 		err := client.CancelRun(ctx, runID)
 		if err != nil {
-			return toastMsg{text: "error: " + err.Error()}
+			return toastMsg{text: "error: " + err.Error(), isErr: true}
 		}
 		return toastMsg{text: "cancelled #" + runID}
 	}
@@ -362,7 +370,7 @@ func (a *App) toggleWorkflow(enable bool) tea.Cmd {
 			err = client.DisableWorkflow(ctx, wfID)
 		}
 		if err != nil {
-			return toastMsg{text: "error: " + err.Error()}
+			return toastMsg{text: "error: " + err.Error(), isErr: true}
 		}
 		return toastMsg{text: verb + " " + wf.Name}
 	}
@@ -581,8 +589,8 @@ func (a *App) renderLogs() string {
 }
 
 func (a *App) footer() string {
-	if a.toast != "" && time.Since(a.toastAt) < 4*time.Second {
-		return tui.TruncateFooter(a.toast, a.width)
+	if toast := a.toast.Text(); toast != "" {
+		return tui.TruncateFooter(toast, a.width)
 	}
 	var line string
 	if a.active == tabRuns {

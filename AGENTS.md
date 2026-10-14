@@ -40,6 +40,10 @@ actions.
 - `internal/repowatch` — 로컬 git 이벤트 감지 (commit/checkout/push/fetch), 요청 0건
 - `internal/tui/workspace.go` — tmux window 재탐지 + git 이벤트 기반 갱신
 - `internal/tui/repostore.go` — repo 사용 이력(방문수 × 최근성) 랭킹, `~/.config/ghx/repos.json`
+  (쓰기는 Cmd에서 `cachefile.Lock` 안에 디스크와 병합 후 원자적 쓰기 — 창 여러 개가 공유)
+- `internal/tui/toast.go` — footer toast (`tui.Toast`, main/admin/actions 공용). 만료는
+  `tea.Tick`으로 한다 — idle 상태에서는 render가 없어 View의 나이 검사만으로는 안 지워진다.
+  에러는 키 입력까지 유지
 - `internal/tui/repo_picker.go` — `e` / `:repo`, 임의 repo를 탭으로 여는 피커
 - `internal/tui/admin` — `ghx admin`: People/Teams/보호규칙/릴리스/브랜치/태그/웹훅
 - `internal/tui/admin/actions.go` — admin 쓰기(협업자·팀 권한·팀 멤버)와 확인 프롬프트

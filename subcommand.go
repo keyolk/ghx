@@ -97,7 +97,9 @@ func runSubcommand(args []string, kind string) error {
 		}
 	}()
 
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// No mouse reporting, as in the main TUI: no subcommand handles mouse
+	// events, and capturing them disables the terminal's own text selection.
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("run: %w", err)
 	}

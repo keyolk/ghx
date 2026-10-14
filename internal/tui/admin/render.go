@@ -3,7 +3,6 @@ package admin
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/tui"
@@ -228,8 +227,8 @@ func (a *App) renderWebhooks() string {
 }
 
 func (a *App) footer() string {
-	if a.toast != "" && time.Since(a.toastAt) < 4*time.Second {
-		return tui.TruncateFooter(a.toast, a.width)
+	if toast := a.toast.Text(); toast != "" {
+		return tui.TruncateFooter(toast, a.width)
 	}
 	if a.confirm != nil {
 		// The org-wide warning is the sentence's own first words rather than a

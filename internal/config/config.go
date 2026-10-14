@@ -440,11 +440,15 @@ func (c *Config) ResetDerivedForTest() {
 }
 
 // EditorCommand resolves the editor command: config > $EDITOR > "vi".
+//
+// A value of only whitespace counts as unset. The caller splits the command on
+// whitespace and execs the first field, so "  " is not an editor but an empty
+// argv — and indexing that panicked the whole TUI the moment ^e was pressed.
 func (c *Config) EditorCommand() string {
-	if c.Editor != "" {
+	if strings.TrimSpace(c.Editor) != "" {
 		return c.Editor
 	}
-	if e := os.Getenv("EDITOR"); e != "" {
+	if e := os.Getenv("EDITOR"); strings.TrimSpace(e) != "" {
 		return e
 	}
 	return "vi"
