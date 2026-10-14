@@ -19,7 +19,7 @@ actions.
 - `internal/pr` — domain types
 - `internal/diff` — unified diff parser with LEFT/RIGHT line mapping
 - `internal/config` — ~/.config/ghx/config.yaml
-- `internal/repodetect` — cwd/tmux repo detection
+- `internal/repodetect` — cwd/tmux repo detection. pane 목록은 tuikit `tmux.Client`로 읽는다(`Detector`); 테스트는 `tmux.Fake`만 쓰고 실제 tmux를 부르지 않는다
 - `internal/gh/credential.go` — repo별 Git credential 선택과 gh 인증 fallback
 - `internal/tui/account_search.go` — 복수 GitHub account 검색 병합과 중복 제거
 - `internal/gh/fallback.go` — GraphQL 거부/rate-limit 판별 (REST 재시도 여부)
