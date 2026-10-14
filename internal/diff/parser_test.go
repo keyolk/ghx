@@ -44,10 +44,10 @@ index abc123..def456 100644
 	// Verify per-line LEFT/RIGHT mapping. This is the mapping inline comments
 	// depend on, so assert exact numbers.
 	want := []struct {
-		kind  pr.DiffLineKind
-		old   int
-		new   int
-		text  string
+		kind pr.DiffLineKind
+		old  int
+		new  int
+		text string
 	}{
 		{pr.DiffLineContext, 10, 10, "\tctx := context.Background()"},
 		{pr.DiffLineDeletion, 11, 0, "\told := 1"},

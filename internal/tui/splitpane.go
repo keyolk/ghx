@@ -16,8 +16,8 @@ type SplitPane struct {
 	List    *list.Model
 	Preview viewport.Model
 
-	Show    bool // preview pane visible
-	Focus   bool // true = preview focused, false = list focused
+	Show     bool // preview pane visible
+	Focus    bool // true = preview focused, false = list focused
 	CacheKey string
 
 	ItemHeight int

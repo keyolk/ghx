@@ -127,10 +127,10 @@ func TestClosingLogsReturnsToList(t *testing.T) {
 // way to ask for logs, and the UI must say so rather than silently doing nothing.
 func TestParseRunURL(t *testing.T) {
 	cases := []struct {
-		name          string
-		link          string
+		name             string
+		link             string
 		wantRun, wantJob string
-		wantOK        bool
+		wantOK           bool
 	}{
 		{
 			"run and job",
