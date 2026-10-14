@@ -218,7 +218,7 @@ func (a *App) renderMergeFailure(width, height int) string {
 
 	body := strings.TrimRight(b.String(), "\n")
 	h := min(strings.Count(body, "\n")+3, max(height-1, 5))
-	return borderedPane(f.noun()+" failed", body, w, h, colorError)
+	return borderedPane(f.noun()+" failed", body, w, h, paneBorderErrorStyle)
 }
 
 // hints offers r only when some failure is one a rebase fixes; advertising it

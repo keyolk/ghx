@@ -36,16 +36,20 @@ func paneBox(s string, w, h int) string {
 
 // decoratedPane draws a bordered box with a label, bright border when focused.
 func decoratedPane(label, body string, w, h int, focused bool) string {
-	border := colorBorderDim
+	border := paneBorderStyle
 	if focused {
-		border = colorBorderFocused
+		border = paneBorderFocusedStyle
 	}
 	return borderedPane(label, body, w, h, border)
 }
 
-// borderedPane is decoratedPane with the border color chosen by the caller, for
+// borderedPane is decoratedPane with the border style chosen by the caller, for
 // a box whose frame has to say something before its text is read (a failure).
-func borderedPane(label, body string, w, h int, border lipgloss.Color) string {
+//
+// The frame is painted through lipgloss styles from styles.go, not hand-built
+// escape sequences: raw truecolor codes ignore the terminal's colour profile
+// and survive SetNoColor, so NO_COLOR still got coloured boxes.
+func borderedPane(label, body string, w, h int, border lipgloss.Style) string {
 	if w < 6 || h < 3 {
 		return paneBox(body, w, h)
 	}
@@ -62,15 +66,11 @@ func borderedPane(label, body string, w, h int, border lipgloss.Color) string {
 	if dashAfter < 0 {
 		dashAfter = 0
 	}
-	br, bg, bb := hexToRGB(string(border))
-	bold := func(s string) string {
-		return "\x1b[1m" + s + "\x1b[0m"
-	}
-	col := func(s string) string {
-		return "\x1b[38;2;" + intToStr(int(br)) + ";" + intToStr(int(bg)) + ";" + intToStr(int(bb)) + "m" + s + "\x1b[0m"
-	}
-	top := col("╭") + col(strings.Repeat("─", dashBefore)) + bold(labelStr) + col(strings.Repeat("─", dashAfter)) + col("╮")
-	bottom := col("╰") + col(strings.Repeat("─", innerW)) + col("╯")
+	col := border.Render
+	top := col("╭"+strings.Repeat("─", dashBefore)) + paneLabelStyle.Render(labelStr) +
+		col(strings.Repeat("─", dashAfter)+"╮")
+	bottom := col("╰" + strings.Repeat("─", innerW) + "╯")
+	side := col("│")
 	// Body lines: wrap with side borders.
 	bodyLines := strings.Split(body, "\n")
 	for len(bodyLines) < h-2 {
@@ -86,10 +86,10 @@ func borderedPane(label, body string, w, h int, border lipgloss.Color) string {
 		if pad < 0 {
 			pad = 0
 		}
-		out.WriteString(col("│"))
+		out.WriteString(side)
 		out.WriteString(bl)
 		out.WriteString(strings.Repeat(" ", pad))
-		out.WriteString(col("│"))
+		out.WriteString(side)
 		out.WriteByte('\n')
 	}
 	out.WriteString(bottom)

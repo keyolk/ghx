@@ -279,3 +279,14 @@ func TestNoColorKeepsSelectionVisible(t *testing.T) {
 		t.Errorf("NO_COLOR must not emit a foreground colour: %q", rendered)
 	}
 }
+
+// hexToRGB parses a "#RRGGBB" hex color string into RGB components.
+func hexToRGB(hex string) (uint8, uint8, uint8) {
+	hex = strings.TrimPrefix(hex, "#")
+	if len(hex) != 6 {
+		return 128, 128, 128
+	}
+	var r, g, b uint8
+	fmt.Sscanf(hex, "%02x%02x%02x", &r, &g, &b)
+	return r, g, b
+}

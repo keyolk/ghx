@@ -61,23 +61,14 @@ func truncateExact(s string, targetW int) (string, int) {
 	return s, w
 }
 
-// hexToRGB parses a "#RRGGBB" hex color string into RGB components.
-func hexToRGB(hex string) (uint8, uint8, uint8) {
-	hex = strings.TrimPrefix(hex, "#")
-	if len(hex) != 6 {
-		return 128, 128, 128
-	}
-	var r, g, b uint8
-	fmt.Sscanf(hex, "%02x%02x%02x", &r, &g, &b)
-	return r, g, b
-}
-
 // renderFixedSplit composes left|border|right with manual ANSI layout, CJK-aware.
-func renderFixedSplit(left, right string, listW, previewW, contentH int, borderColor lipgloss.Color) string {
+//
+// The cursor moves (CHA) stay raw: they are layout, not colour. The divider
+// is styled through lipgloss so it honours NO_COLOR and the colour profile.
+func renderFixedSplit(left, right string, listW, previewW, contentH int, border lipgloss.Style) string {
 	leftLines := strings.Split(left, "\n")
 	rightLines := strings.Split(right, "\n")
-	br, bg, bb := hexToRGB(string(borderColor))
-	borderCell := fmt.Sprintf("\x1b[38;2;%d;%d;%dm│\x1b[0m", br, bg, bb)
+	borderCell := border.Render("│")
 	const reset = "\x1b[0m"
 	borderCHA := fmt.Sprintf("\x1b[%dG", listW+1)
 	rightCHA := fmt.Sprintf("\x1b[%dG", listW+2)
@@ -163,13 +154,13 @@ func (sp *SplitPane) Render(totalW, totalH, splitRatio int) string {
 		sp.Preview.Height = max(contentH, 1)
 		sp.CacheKey = ""
 	}
-	borderColor := colorBorderDim
+	border := paneBorderStyle
 	if sp.Focus {
-		borderColor = colorBorderFocused
+		border = paneBorderFocusedStyle
 	}
 	left := sp.listView(contentH)
 	right := sp.Preview.View()
-	return renderFixedSplit(left, right, listW, previewW, contentH, borderColor)
+	return renderFixedSplit(left, right, listW, previewW, contentH, border)
 }
 
 // Resize adjusts dimensions after terminal resize, preserving selection.

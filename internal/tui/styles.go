@@ -138,6 +138,13 @@ var (
 	// action, and green would read as the action having finished.
 	pendingMarkStyle = lipgloss.NewStyle().Foreground(colorWarn)
 
+	// Pane frames. The label is bold rather than coloured so it reads as the
+	// box's title whatever the frame colour says about focus or failure.
+	paneBorderStyle        = lipgloss.NewStyle().Foreground(colorBorderDim)
+	paneBorderFocusedStyle = lipgloss.NewStyle().Foreground(colorBorderFocused)
+	paneBorderErrorStyle   = lipgloss.NewStyle().Foreground(colorError)
+	paneLabelStyle         = lipgloss.NewStyle().Bold(true)
+
 	// Spinner
 	spinnerColors = []lipgloss.Color{colorSuccess, colorUser, colorAssistant, colorPrimary, colorPurple}
 )
@@ -200,6 +207,11 @@ func SetNoColor() {
 	strip(&threadOpenGlyph)
 	strip(&threadResolvedGlyph)
 	strip(&threadUnknownGlyph)
+	strip(&pendingMarkStyle)
+	strip(&paneBorderStyle)
+	strip(&paneBorderFocusedStyle)
+	strip(&paneBorderErrorStyle)
+	strip(&paneLabelStyle)
 }
 
 // fmtKey renders a "key:desc" token for the help line.
