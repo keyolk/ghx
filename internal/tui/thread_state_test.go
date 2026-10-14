@@ -152,7 +152,7 @@ func TestThreadStateCounts(t *testing.T) {
 // nobody can decode is not a signal.
 func TestGlyphLegendNamesTheVisibleStates(t *testing.T) {
 	c := commentsWithAll() // hideResolved = false, all three states
-	got := stripANSISeqs(c.helpLine())
+	got := stripANSISeqs(c.helpLine(footerBudget))
 	for _, glyph := range []string{iconThreadOpen, iconThreadResolved, iconThreadUnknown} {
 		if !strings.Contains(got, glyph) {
 			t.Errorf("the legend does not name %q: %q", glyph, got)
@@ -162,7 +162,7 @@ func TestGlyphLegendNamesTheVisibleStates(t *testing.T) {
 	// Hiding resolved threads drops it from the legend, because it is no longer
 	// on screen to be told apart from anything.
 	c.hideResolved = true
-	got = stripANSISeqs(c.helpLine())
+	got = stripANSISeqs(c.helpLine(footerBudget))
 	if strings.Contains(got, iconThreadResolved+" resolved") {
 		t.Errorf("the legend names a state that is filtered out: %q", got)
 	}
@@ -198,7 +198,7 @@ func TestCommentsFooterFitsACommonTerminalWithThreads(t *testing.T) {
 	c.threads = threeThreads()
 	for _, hide := range []bool{true, false} {
 		c.hideResolved = hide
-		got := c.helpLine()
+		got := c.helpLine(footerBudget)
 		if w := lipglossWidth(got); w > 100 {
 			t.Errorf("hideResolved=%v: footer is %d cells — a 100-column terminal cuts it:\n%s",
 				hide, w, stripANSISeqs(got))

@@ -27,7 +27,7 @@ func TestDetailFooterAdvertisesTheKeysThatWork(t *testing.T) {
 	// Files delegate to their own tab, which owns a different vocabulary.
 	for _, tab := range []detailTabKind{tabOverview, tabCommits} {
 		a.detail.activeTab = tab
-		footer := a.detail.helpLine()
+		footer := a.detail.helpLine(a.width)
 		for _, key := range []string{"M", "y", "a", "r", "o"} {
 			if !strings.Contains(footer, key) {
 				t.Errorf("%s footer does not mention %q: %q",
@@ -66,7 +66,7 @@ func TestDetailFooterFitsACommonTerminal(t *testing.T) {
 
 	for _, tab := range a.detail.tabs {
 		a.detail.activeTab = tab
-		if w := lipglossWidth(a.detail.helpLine()); w > 100 {
+		if w := lipglossWidth(a.detail.helpLine(footerBudget)); w > 100 {
 			t.Errorf("%s footer is %d cells — a 100-column terminal truncates it",
 				detailTabNames[tab], w)
 		}

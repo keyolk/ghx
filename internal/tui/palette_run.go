@@ -16,9 +16,9 @@ func (a *App) runPalette(line string) tea.Cmd {
 	head, arg := parsePalette(line)
 	switch head {
 	case "quit", "q":
-		return tea.Quit
+		return a.quit()
 	case "help", "?":
-		a.helpOpen = true
+		a.openHelp()
 		return nil
 	case "refresh":
 		if a.state == viewPRDetail && a.detail != nil {

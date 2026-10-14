@@ -472,25 +472,32 @@ func (v *diffView) landOnPair(p sidePair) {
 // Reports false when that half is blank, so the caller can leave the key to
 // whatever else claims it.
 func (v *diffView) focusSide(which halfSide) bool {
+	target, ok := v.sideTarget(which)
+	if !ok {
+		return false
+	}
+	v.sideFocus = which
+	v.cursor = target
+	return true
+}
+
+// sideTarget is the row focusSide would move to, without moving: the footer
+// and key dispatch ask whether h/l have a column to switch to.
+func (v *diffView) sideTarget(which halfSide) (int, bool) {
 	pairs := v.sideRows()
 	if len(pairs) == 0 {
-		return false
+		return 0, false
 	}
 	p := pairs[v.cursorPairIndex(pairs)]
 	target := p.right
 	if which == sideLeft {
 		target = p.left
 	}
-	if target < 0 {
-		return false
-	}
 	// A full-width row (header or thread) has no columns to switch between.
-	if p.left == p.right {
-		return false
+	if target < 0 || p.left == p.right {
+		return 0, false
 	}
-	v.sideFocus = which
-	v.cursor = target
-	return true
+	return target, true
 }
 
 func otherSide(s halfSide) halfSide {

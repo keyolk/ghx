@@ -107,9 +107,9 @@ func TestOnlyYConfirmsAWrite(t *testing.T) {
 // rows — refusing with the reason is what keeps the row's "via team" marker
 // actionable rather than decorative.
 func TestATeamDerivedCollaboratorCannotBeChangedHere(t *testing.T) {
-	for _, key := range []string{"d", "p"} {
+	for key, action := range map[string]string{"d": "remove", "p": "permission"} {
 		a := collabApp(t, []gh.Collaborator{{Login: "carol", RoleName: "write", Direct: false}})
-		cmd, handled := a.handleWriteKey(key)
+		cmd, handled := a.handleWriteKey(action)
 		if !handled {
 			t.Fatalf("%q was not handled", key)
 		}

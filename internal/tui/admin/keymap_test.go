@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
 )
 
 // isQuit reports whether a returned command is tea.Quit, by running it and
@@ -101,5 +102,38 @@ func TestCtrlCQuitsFromEveryState(t *testing.T) {
 				t.Fatalf("ctrl+c did not quit from %s", tc.name)
 			}
 		})
+	}
+}
+
+// No key is bound twice in a context, and no write key shares a letter with a
+// list key: the write contexts sit in front of the list, so a shared letter
+// would silently turn navigation into a write.
+func TestKeymapIsConsistent(t *testing.T) {
+	for _, c := range keymap.Conflicts(allStacks...) {
+		if c.Kind == keys.Unreachable {
+			continue // G: a shifted key a Korean layout does not produce
+		}
+		t.Error(c)
+	}
+}
+
+func TestWriteKeysShadowNoListKey(t *testing.T) {
+	list := map[string]string{}
+	for _, b := range keymap.Bindings() {
+		if b.Ctx == ctxList {
+			for _, k := range b.Keys {
+				list[k] = b.Action
+			}
+		}
+	}
+	for _, b := range keymap.Bindings() {
+		if b.Ctx != ctxCollab && b.Ctx != ctxTeams && b.Ctx != ctxMembers {
+			continue
+		}
+		for _, k := range b.Keys {
+			if other, ok := list[k]; ok {
+				t.Errorf("%s.%s on %q hides the list's %s", b.Ctx, b.Action, k, other)
+			}
+		}
 	}
 }

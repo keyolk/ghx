@@ -87,7 +87,7 @@ func (c *composer) body() string {
 
 // update handles composer keys. Returns (cmd, handled); handled=false means the
 // key wasn't consumed and the caller may treat it normally.
-func (c *composer) update(msg tea.KeyMsg) (tea.Cmd, bool) {
+func (c *composer) update(action string, msg tea.KeyMsg) (tea.Cmd, bool) {
 	if !c.active {
 		return nil, false
 	}
@@ -95,21 +95,21 @@ func (c *composer) update(msg tea.KeyMsg) (tea.Cmd, bool) {
 		// Swallow input while posting so a second Enter can't double-submit.
 		return nil, true
 	}
-	switch msg.String() {
-	case "esc":
+	switch action {
+	case "cancel":
 		c.close()
 		return nil, true
-	case "ctrl+s":
+	case "submit":
 		// Explicit submit that works regardless of newline handling.
 		return c.submit(), true
-	case "enter":
+	case "post":
 		// Enter submits a single-line body; once the body has newlines the
 		// user is clearly composing prose, so Enter keeps inserting them and
 		// ctrl+s submits.
 		if !strings.Contains(c.ta.Value(), "\n") {
 			return c.submit(), true
 		}
-	case "ctrl+e":
+	case "editor":
 		return c.openEditor(), true
 	}
 	var cmd tea.Cmd
@@ -141,13 +141,12 @@ func (c *composer) setBody(s string) {
 }
 
 // render draws the composer as a bottom overlay describing its target.
-func (c *composer) render(width, height int) string {
+func (c *composer) render(width, height int, hint string) string {
 	if !c.active {
 		return ""
 	}
 	boxH := composerHeight(height)
 	title := c.titleText()
-	hint := fmtHints("enter", "post", "^s", "post", "^e", "$EDITOR", "esc", "cancel")
 	if c.busy {
 		hint = dimStyle.Render("posting…")
 	}

@@ -53,9 +53,6 @@ var (
 	HelpStyle    = helpStyle
 )
 
-// FmtHints is exported for sub-TUIs to build footer hint lines.
-func FmtHints(pairs ...string) string { return fmtHints(pairs...) }
-
 // TruncateExact is exported for sub-TUIs.
 func TruncateExact(s string, w int) (string, int) { return truncateExact(s, w) }
 
@@ -83,7 +80,7 @@ func RenderSearchBar(query string, w int) string { return renderSearchBar(query,
 
 // RenderPromptBar draws a labelled one-line prompt in the same row the search
 // bar uses, for the subcommand TUIs' own inputs (a login to add, a permission
-// to grant). hints are key/description pairs, as FmtHints takes them.
-func RenderPromptBar(label, value string, w int, hints ...string) string {
-	return renderPromptBar(label, value, w, hints...)
+// to grant). The caller appends the prompt's key hints from its own table.
+func RenderPromptBar(label, value string, w int) string {
+	return renderPromptBar(label, value, w)
 }

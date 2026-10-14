@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
 )
 
 // isQuit reports whether a returned command is tea.Quit, by running it and
@@ -72,5 +73,35 @@ func TestCtrlCQuitsFromEveryState(t *testing.T) {
 				t.Fatalf("ctrl+c did not quit from %s", tc.name)
 			}
 		})
+	}
+}
+
+// The panel's one table has no key bound twice in a context, and every key in
+// it resolves to its own action in some stack — the footer is drawn from the
+// same table, so a hint cannot name a key that does something else.
+func TestKeymapIsConsistent(t *testing.T) {
+	for _, c := range keymap.Conflicts(allStacks...) {
+		if c.Kind == keys.Unreachable {
+			continue // R and G: shifted keys a Korean layout does not produce
+		}
+		t.Error(c)
+	}
+	for _, b := range keymap.Bindings() {
+		for _, k := range b.Keys {
+			msg := keyMsg(k)
+			if k == "down" || k == "up" || k == "pgdown" || k == "pgup" || k == "backspace" ||
+				k == "ctrl+d" || k == "ctrl+u" {
+				continue // named keys keyMsg does not build; their siblings cover the action
+			}
+			reached := false
+			for _, st := range allStacks {
+				if got, ok := keymap.Resolve(st, msg, keys.Opts{}); ok && got.Action == b.Action {
+					reached = true
+				}
+			}
+			if !reached {
+				t.Errorf("%s.%s: %q reaches it in no stack", b.Ctx, b.Action, k)
+			}
+		}
 	}
 }

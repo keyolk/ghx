@@ -6,10 +6,12 @@ package actions
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/keyolk/tuikit/keys"
 
 	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/tui"
@@ -174,104 +176,95 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return tea.Quit
 	}
 
-	// Under a Korean input source the shortcut keys arrive as jamo (`q` -> `ㅂ`).
-	// Rewrite them to the Latin key at the same physical position so shortcuts
-	// fire without switching the input source back. Skipped while the search
-	// prompt owns keys, where the jamo is the intended input.
-	if !a.searching {
-		msg = tui.NormalizeCJKKey(msg)
+	// The search prompt owns the keyboard while it is open, so a query can
+	// contain j, k, q, f, and the digits without triggering navigation — and
+	// resolves without the CJK rewrite, so a jamo is typed, not a shortcut.
+	if a.searching {
+		b, _ := keymap.ResolveRaw(stackSearch, msg, keys.Opts{})
+		return a.handleSearchKey(b.Action, msg)
 	}
 
-	// log viewer mode: j/k scrolls, esc exits
+	// Resolve rewrites a Korean jamo to the Latin key at the same physical
+	// position, so shortcuts fire without switching the input source back.
+	b, ok := keymap.Resolve(a.stack(), msg, a.keyOpts())
+	if !ok {
+		return nil
+	}
+	// The position of the pressed key picks the tab, so a rebound tab key
+	// still means "the first" or "the second".
+	return a.run(b.Action, slices.Index(b.Keys, keys.NormalizeCJK(msg).String()))
+}
+
+// run dispatches an action of the current stack. key is the position of the
+// pressed key in the binding's key list.
+func (a *App) run(action string, key int) tea.Cmd {
 	if a.logView != "" {
-		switch msg.String() {
-		case "esc":
+		switch action {
+		case "back":
 			a.logView = ""
-			return nil
-		case "j", "down":
+		case "down":
 			a.logOff++
-			return nil
-		case "k", "up":
+		case "up":
 			a.logOff = max(a.logOff-1, 0)
-			return nil
-		case "q":
+		case "quit":
 			return tea.Quit
 		}
 		return nil
 	}
 
-	// The search prompt owns the keyboard while it is open, so a query can
-	// contain j, k, q, f, and the digits without triggering navigation.
-	if a.searching {
-		return a.handleSearchKey(msg)
-	}
-
-	switch msg.String() {
-	case "q":
+	switch action {
+	case "quit":
 		return tea.Quit
-	case "/":
+	case "search":
 		a.searching = true
-		return nil
-	case "esc":
+	case "clear":
 		if a.query != "" {
 			a.query = ""
 			a.pane.Reset()
 		}
-		return nil
-	case "1":
+	case "tab":
+		if key == 1 {
+			a.active = tabWorkflows
+			a.query = ""
+			a.pane.Reset()
+			if a.workflows == nil {
+				return a.loadWorkflows()
+			}
+			return nil
+		}
 		a.active = tabRuns
 		a.query = ""
 		a.pane.Reset()
 		if a.runs == nil {
 			return a.loadRuns()
 		}
-		return nil
-	case "2":
-		a.active = tabWorkflows
-		a.query = ""
-		a.pane.Reset()
-		if a.workflows == nil {
-			return a.loadWorkflows()
-		}
-		return nil
-	case "j", "down":
+	case "down":
 		a.pane.Move(1, a.itemCount())
-		return nil
-	case "k", "up":
+	case "up":
 		a.pane.Move(-1, a.itemCount())
-		return nil
-	case "ctrl+d", "pgdown":
+	case "pagedown":
 		a.pane.Move(a.listRows()/2, a.itemCount())
-		return nil
-	case "ctrl+u", "pgup":
+	case "pageup":
 		a.pane.Move(-a.listRows()/2, a.itemCount())
-		return nil
-	case "g":
+	case "top":
 		a.pane.Top()
-		return nil
-	case "G":
+	case "bottom":
 		a.pane.Bottom(a.itemCount())
-		return nil
-	case "f":
-		// Toggle failed-only filter (runs tab)
+	case "failed":
 		a.failedOnly = !a.failedOnly
 		a.pane.Reset()
-		return nil
-	case "enter":
+	case "logs":
 		return a.onEnter()
-	case "r":
+	case "rerun":
 		return a.rerun(false)
-	case "R":
+	case "rerunfailed":
 		return a.rerun(true)
-	case "c":
+	case "cancel":
 		return a.cancelRun()
-	case "e":
+	case "enable":
 		return a.toggleWorkflow(true)
-	case "d":
-		if a.active == tabWorkflows {
-			return a.toggleWorkflow(false)
-		}
-		return nil
+	case "disable":
+		return a.toggleWorkflow(false)
 	}
 	return nil
 }
@@ -378,19 +371,24 @@ func (a *App) toggleWorkflow(enable bool) tea.Cmd {
 
 // handleSearchKey edits the query. The filter applies as it is typed so the
 // list narrows under the cursor rather than after a commit.
-func (a *App) handleSearchKey(msg tea.KeyMsg) tea.Cmd {
-	switch msg.Type {
-	case tea.KeyEsc:
+func (a *App) handleSearchKey(action string, msg tea.KeyMsg) tea.Cmd {
+	switch action {
+	case "clear":
 		a.searching = false
 		a.query = ""
 		a.pane.Reset()
-	case tea.KeyEnter:
+		return nil
+	case "apply":
 		a.searching = false
-	case tea.KeyBackspace:
+		return nil
+	case "erase":
 		if r := []rune(a.query); len(r) > 0 {
 			a.query = string(r[:len(r)-1])
 			a.pane.Reset()
 		}
+		return nil
+	}
+	switch msg.Type {
 	case tea.KeyRunes:
 		a.query += string(msg.Runes)
 		a.pane.Reset()
@@ -574,8 +572,8 @@ func (a *App) renderLogs() string {
 	a.logOff = clamp(a.logOff, 0, max(len(lines)-h, 0))
 	end := min(a.logOff+h, len(lines))
 
-	header := tui.TitleStyle.Render(" run logs ") +
-		tui.DimStyle.Render("esc:back j/k:scroll q:quit")
+	header := tui.TitleStyle.Render(" run logs ")
+	header += keymap.Footer(stackLogs, max(a.width-tui.LipglossWidth(header), 1), keys.Opts{}, tui.FooterStyle())
 	// Each line is clipped to the terminal width. A log line is routinely wider
 	// than the pane, and a wrapped one costs two rows — enough of them and the
 	// frame overflows, which costs the header at the top rather than the excess
@@ -592,17 +590,19 @@ func (a *App) footer() string {
 	if toast := a.toast.Text(); toast != "" {
 		return tui.TruncateFooter(toast, a.width)
 	}
-	var line string
-	if a.active == tabRuns {
-		line = tui.FmtHints("j/k", "move", "/", "search", "enter", "logs",
-			"r", "rerun", "R", "rerun failed", "c", "cancel", "f", "failed", "q", "quit")
-	} else {
-		line = tui.FmtHints("j/k", "move", "/", "search",
-			"e", "enable", "d", "disable", "q", "quit")
-	}
 	// The position is only worth a footer slot when the list does not fit; a
 	// counter that always reads 1/1 is noise.
-	if pos := a.pane.ScrollHint(a.itemCount(), a.listRows()); pos != "" {
+	pos := a.pane.ScrollHint(a.itemCount(), a.listRows())
+	room := a.width
+	if pos != "" {
+		room -= tui.LipglossWidth(pos) + 2
+	}
+	stack := stackRuns
+	if a.active == tabWorkflows {
+		stack = stackWorkflows
+	}
+	line := keymap.Footer(stack, max(room, 1), a.keyOpts(), tui.FooterStyle())
+	if pos != "" {
 		line += "  " + tui.DimStyle.Render(pos)
 	}
 	return tui.TruncateFooter(line, a.width)

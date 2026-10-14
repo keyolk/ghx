@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/keyolk/tuikit/keys"
 
 	"github.com/keyolk/ghx/internal/pr"
 )
@@ -16,6 +17,9 @@ import (
 
 // checksView owns the check list cursor and the log viewport.
 type checksView struct {
+	// km renders the footer; the zero value falls back to the defaults.
+	km keys.Keymap
+
 	checks []pr.Check
 	cursor int
 	offset int
@@ -230,12 +234,4 @@ func checkDuration(ck pr.Check) string {
 	default:
 		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
 	}
-}
-
-// helpLine returns the checks-tab footer hints.
-func (c *checksView) helpLine() string {
-	if c.showingLogs() {
-		return fmtHints("j/k", "scroll", "esc", "back to checks")
-	}
-	return fmtHints("j/k", "check", "enter", "logs", "o", "browser", "esc", "back")
 }

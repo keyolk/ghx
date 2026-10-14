@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/keyolk/tuikit/keys"
+
 	"github.com/keyolk/ghx/internal/diff"
 	"github.com/keyolk/ghx/internal/pr"
 )
@@ -56,6 +58,9 @@ type diffRow struct {
 // diffView holds the diff viewer's own state so detail_diff.go owns it rather
 // than growing prDetailModel.
 type diffView struct {
+	// km renders the footer; the zero value falls back to the defaults.
+	km keys.Keymap
+
 	files   []pr.DiffFile
 	threads []pr.ReviewThread
 
@@ -799,98 +804,6 @@ func lineNoStr(n int) string {
 		return ""
 	}
 	return fmt.Sprint(n)
-}
-
-// helpLine returns the diff-tab footer hints. In visual mode it also states the
-// range that would actually be commented on: the highlight can span a hunk
-// boundary while the range cannot, and the operator needs to see which it is
-// before pressing c.
-func (v *diffView) helpLine() string {
-	if !v.visual {
-		layout := "side-by-side"
-		if v.sideBySide {
-			layout = "unified"
-		}
-		// On a thread row the keys mean different things, so say which ones.
-		if _, onThread := v.threadUnderCursor(); onThread {
-			action := "reply"
-			if v.threadHasReplies() {
-				action = "replies"
-			}
-			// A applies only where there is something to apply, so it is named
-			// only there — a hint for a key that would refuse is worse than none.
-			if _, _, ok := v.suggestionUnderCursor(); ok {
-				return fmtHints(
-					"j/k", "line",
-					"A", "apply suggestion",
-					"enter", action,
-					"c", "reply",
-					"s", layout,
-					"esc", "back",
-				)
-			}
-			return fmtHints(
-				"j/k", "line",
-				"enter", action,
-				"c", "reply",
-				"s", layout,
-				"esc", "back",
-			)
-		}
-		// On a file header h/l fold rather than switch columns, so the footer
-		// says which — the same two keys mean different things a row apart.
-		if _, onHeader := v.foldPathForCursor(); onHeader {
-			return fmtHints(
-				"j/k", "line",
-				"J/K", "hunk",
-				"H/L", "file",
-				"h/l", "fold",
-				"s", layout,
-				"esc", "back",
-			)
-		}
-		hints := fmtHints(
-			"j/k", "line",
-			"J/K", "hunk",
-			"H/L", "file",
-			"h/l", "column",
-			"c", "comment",
-			"v", "visual",
-			"s", layout,
-			"esc", "back",
-		)
-		if !v.sideBySide {
-			// o:fold is dropped rather than H/L: h/l fold from a file header,
-			// which is where you are when folding, and the line stops fitting a
-			// 100-column terminal at ten hints. o still works, and is in ?.
-			hints = fmtHints(
-				"j/k", "line",
-				"J/K", "hunk",
-				"H/L", "file",
-				"c", "comment",
-				"v", "visual",
-				"s", layout,
-				"enter", "thread",
-				"esc", "back",
-			)
-		}
-		return v.sidePrefix() + hints
-	}
-	hints := fmtHints("j/k", "extend", "c", "comment", "v", "cancel", "esc", "back")
-	_, _, line, startLine, ok := v.commentTarget()
-	if !ok {
-		return dimStyle.Render("(not a commentable line) ") + hints
-	}
-	if startLine == 0 {
-		// The selection is not a usable range — say so rather than letting the
-		// highlight imply otherwise.
-		return v.sidePrefix() + diffHunkStyle.Render(fmt.Sprintf("line %d only", line)) + " " + hints
-	}
-	lo, hi := startLine, line
-	if lo > hi {
-		lo, hi = hi, lo
-	}
-	return v.sidePrefix() + diffHunkStyle.Render(fmt.Sprintf("lines %d-%d", lo, hi)) + " " + hints
 }
 
 // sidePrefix names the column the cursor is in, so it is clear which side of a

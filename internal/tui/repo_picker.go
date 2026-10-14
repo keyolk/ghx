@@ -65,11 +65,12 @@ func (a *App) handleRepoPickerKey(msg tea.KeyMsg) tea.Cmd {
 	if p == nil {
 		return nil
 	}
-	switch msg.String() {
-	case "esc":
+	action, _ := a.resolveIn(stackRepos, msg, true)
+	switch action {
+	case "cancel":
 		a.repos = nil
 		return nil
-	case "enter":
+	case "open":
 		vis := p.visible()
 		if p.cursor < len(vis) {
 			slug := vis[p.cursor].Slug
@@ -83,17 +84,17 @@ func (a *App) handleRepoPickerKey(msg tea.KeyMsg) tea.Cmd {
 			return a.openRepo(slug)
 		}
 		return nil
-	case "up", "ctrl+p":
+	case "up":
 		if n := len(p.visible()); n > 0 {
 			p.cursor = clamp(p.cursor-1, 0, n-1)
 		}
 		return nil
-	case "down", "ctrl+n":
+	case "down":
 		if n := len(p.visible()); n > 0 {
 			p.cursor = clamp(p.cursor+1, 0, n-1)
 		}
 		return nil
-	case "backspace":
+	case "erase":
 		if r := []rune(p.query); len(r) > 0 {
 			p.query = string(r[:len(r)-1])
 			p.cursor = 0
@@ -197,7 +198,7 @@ func (a *App) renderRepoPicker(width, height int) string {
 		b.WriteString(line + "\n")
 	}
 
-	b.WriteString("\n" + fmtHints("↑↓", "move", "enter", "open", "esc", "cancel"))
+	b.WriteString("\n" + a.modalHints(stackRepos, 60))
 	return decoratedPane("open repository", b.String(), boxW, boxH, true)
 }
 

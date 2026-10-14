@@ -55,7 +55,7 @@ func TestLegendNamesUnknownWithoutPressingT(t *testing.T) {
 	if v.hideResolved != true {
 		t.Fatal("the default should still hide resolved threads")
 	}
-	got := stripANSISeqs(v.helpLine())
+	got := stripANSISeqs(v.helpLine(footerBudget))
 	if !strings.Contains(got, iconThreadUnknown+" unknown") {
 		t.Errorf("the footer does not decode %q while it is on screen: %q",
 			iconThreadUnknown, got)
@@ -67,7 +67,7 @@ func TestLegendNamesUnknownWithoutPressingT(t *testing.T) {
 func TestLegendIsAbsentWithASingleState(t *testing.T) {
 	v := newCommentsView()
 	v.setThreads([]pr.ReviewThread{graphQLThread("T1", false), graphQLThread("T2", false)})
-	if got := stripANSISeqs(v.helpLine()); strings.Contains(got, "unknown") ||
+	if got := stripANSISeqs(v.helpLine(footerBudget)); strings.Contains(got, "unknown") ||
 		strings.Contains(got, iconThreadResolved+" resolved") {
 		t.Errorf("the legend shows with only one state on screen: %q", got)
 	}

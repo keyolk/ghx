@@ -78,7 +78,10 @@ func TestThreadOverlayAcrossHunks(t *testing.T) {
 	if err := v.setContent(twoHunkDiff, threads); err != nil {
 		t.Fatalf("setContent: %v", err)
 	}
-	for _, want := range []struct{ id string; anchor int }{{"A", 11}, {"B", 51}} {
+	for _, want := range []struct {
+		id     string
+		anchor int
+	}{{"A", 11}, {"B", 51}} {
 		idx := -1
 		for i, r := range v.rows {
 			if r.kind == rowDiffLine && r.side == "RIGHT" && r.anchorLine == want.anchor {
@@ -216,12 +219,12 @@ func TestVisualHelpLineNamesTheRange(t *testing.T) {
 	v.visual = true
 	v.visualStart = v.cursor
 	cursorToLine(t, v, "RIGHT", 12)
-	if got := v.helpLine(); !contains(got, "lines 11-12") {
+	if got := v.helpLine(footerBudget); !contains(got, "lines 11-12") {
 		t.Errorf("help line should state the span, got: %s", got)
 	}
 
 	cursorToLine(t, v, "RIGHT", 51)
-	if got := v.helpLine(); !contains(got, "line 51 only") {
+	if got := v.helpLine(footerBudget); !contains(got, "line 51 only") {
 		t.Errorf("a cross-hunk selection should say it is one line, got: %s", got)
 	}
 }

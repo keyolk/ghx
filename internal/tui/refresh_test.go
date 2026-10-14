@@ -13,7 +13,7 @@ import (
 
 func TestRefreshKeyIsAdvertisedInTheFooter(t *testing.T) {
 	a := testApp(t, sampleRows)
-	if got := a.list.helpLine(); !contains(got, "R") || !contains(got, "refresh") {
+	if got := a.list.helpLine(a.width); !contains(got, "R") || !contains(got, "refresh") {
 		t.Errorf("footer = %q, want it to mention R:refresh", got)
 	}
 }

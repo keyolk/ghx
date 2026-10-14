@@ -151,8 +151,12 @@ type bulkActionDoneMsg struct {
 	failure *mergeFailure
 }
 
-// paletteRunMsg carries a submitted command line for app.go to dispatch.
-type paletteRunMsg struct{ line string }
+// paletteRunMsg carries a submitted command line, or the action of a picked
+// key binding, for app.go to dispatch.
+type paletteRunMsg struct {
+	line   string
+	action string
+}
 
 // searchSubmitMsg carries a submitted search query for the PR list.
 type searchSubmitMsg struct{ query string }

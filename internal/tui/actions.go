@@ -121,20 +121,21 @@ func (a *App) startMerge() tea.Cmd {
 
 func (a *App) handleMergePromptKey(msg tea.KeyMsg) tea.Cmd {
 	p := a.mergePrompt
-	switch msg.String() {
-	case "esc", "n", "q":
+	action, _ := a.resolveIn(stackMerge, msg, false)
+	switch action {
+	case "no":
 		a.mergePrompt = nil
 		return nil
-	case "s":
+	case "squash":
 		p.strategy = "squash"
 		return nil
-	case "m":
+	case "mergecommit":
 		p.strategy = "merge"
 		return nil
-	case "b":
+	case "rebase":
 		p.strategy = "rebase"
 		return nil
-	case "y":
+	case "yes":
 		n, strategy, client := a.detail.number, p.strategy, a.detail.client
 		return func() tea.Msg {
 			c, cancel := context.WithTimeout(context.Background(), 60*time.Second)

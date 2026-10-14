@@ -235,54 +235,27 @@ func (a *App) footer() string {
 		// marker prepended here. Both would say the same thing twice, and the
 		// footer truncates — so what has to lead is the part that must not be
 		// cut off, and that is the warning itself. See confirmAction.prompt.
-		return tui.TruncateFooter(
-			tui.ErrorStyle.Render(a.confirm.prompt(a.repo, a.org())+" y/n"),
-			a.width)
+		line := tui.ErrorStyle.Render(a.confirm.prompt(a.repo, a.org()))
+		return tui.TruncateFooter(line+"  "+hints(stackConfirm, max(a.width-tui.LipglossWidth(line)-2, 1)), a.width)
 	}
 	if a.busy {
 		return tui.TruncateFooter(tui.DimStyle.Render("  working…"), a.width)
 	}
 
-	hints := []string{"1-7", "category", "j/k", "move", "/", "search"}
-	// The write keys are listed only where they do something. A key advertised
-	// on a read-only category is a key someone presses and gets nothing from,
-	// which reads as a broken binding rather than an inapplicable one.
+	// The write keys are listed only where they do something (keymap.go): a
+	// key advertised on a read-only category, or over an error pane, is a key
+	// someone presses and gets nothing from — measured against
+	// sendbird/ops-k8s without admin rights, whose roster answers 403.
 	//
-	// Nor while the pane is showing an error or nothing at all — measured
-	// against sendbird/ops-k8s without admin rights, which answers the roster
-	// with HTTP 403: the pane said "Must have push access" and the footer went
-	// on offering `a:add · p:permission · d:remove`, keys that had no row to
-	// act on and no permission to act with. The footer describes what is on
-	// screen, and an error is not a list.
-	switch {
-	case a.loading || a.err != nil || a.memberBusy:
-		// Nothing added: navigation and quit still apply, and they are the only
-		// things that do. An *empty* list is not this case — a repository with
-		// no collaborators is exactly where `a` is wanted, and the row-based
-		// keys below are filtered by whether there is a row.
-	case a.teamSlug != "":
-		hints = append(hints, "a", "add member")
-		if a.itemCount() > 0 {
-			hints = append(hints, "d", "remove")
-		}
-		hints = append(hints, "esc", "back to teams")
-	case a.active == catTeams:
-		if a.itemCount() > 0 {
-			hints = append(hints,
-				"enter", "members", "p", "permission", "d", "revoke")
-		}
-	case a.active == catCollaborators:
-		hints = append(hints, "a", "add")
-		if a.itemCount() > 0 {
-			hints = append(hints, "p", "permission", "d", "remove")
-		}
-	}
-	hints = append(hints, "q", "quit")
-
-	line := tui.FmtHints(hints...)
 	// The position is only worth a footer slot when the list does not fit; a
 	// counter that always reads 1/1 is noise.
-	if pos := a.pane.ScrollHint(a.itemCount(), a.listRows()); pos != "" {
+	pos := a.pane.ScrollHint(a.itemCount(), a.listRows())
+	room := a.width
+	if pos != "" {
+		room -= tui.LipglossWidth(pos) + 2
+	}
+	line := keymap.Footer(a.stack(), max(room, 1), a.keyOpts(), footerStyle())
+	if pos != "" {
 		line += "  " + tui.DimStyle.Render(pos)
 	}
 	return tui.TruncateFooter(line, a.width)

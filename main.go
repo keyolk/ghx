@@ -71,7 +71,9 @@ func run() (err error) {
 		}()
 	}
 
-	km := tui.DefaultKeymap()
+	// A bad override keeps the defaults and is shown once the TUI is up.
+	km, keymapErr := tui.LoadKeymap(cfg.Keymap.Map())
+	uiState, uiStateErr := tui.LoadUIState()
 
 	// Lead the PR list with the repositories the user is working in. Detection is
 	// best-effort: outside a checkout, or with an unrelated remote, the list just
@@ -97,6 +99,12 @@ func run() (err error) {
 		}
 	}
 	app := tui.NewAppWithRepo(cfg, km, client, detected)
+	app.RestoreUIState(uiState)
+	for _, warn := range []error{keymapErr, uiStateErr} {
+		if warn != nil {
+			app.StartupWarning(warn)
+		}
+	}
 	if len(cfg.Accounts) > 0 {
 		// Verified after the first frame: two accounts cost ~1.5s of `gh auth
 		// status`, and the cached rows are useful long before that returns.

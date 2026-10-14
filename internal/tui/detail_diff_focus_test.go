@@ -181,8 +181,8 @@ func TestVisualRangeStaysOnOneSideInPairedLayout(t *testing.T) {
 	if lo != 10 || hi != 11 {
 		t.Errorf("range = %d-%d, want 10-11", lo, hi)
 	}
-	if !contains(v.helpLine(), "lines 10-11") {
-		t.Errorf("footer should report the span: %s", v.helpLine())
+	if !contains(v.helpLine(footerBudget), "lines 10-11") {
+		t.Errorf("footer should report the span: %s", v.helpLine(footerBudget))
 	}
 }
 
@@ -243,16 +243,16 @@ func TestJumpToSyncsFocus(t *testing.T) {
 // modification a comment would attach to.
 func TestFooterNamesFocusedColumn(t *testing.T) {
 	v := sideViewAt(t, modDiff, "RIGHT", 10)
-	if got := v.helpLine(); !contains(got, "[new]") {
+	if got := v.helpLine(footerBudget); !contains(got, "[new]") {
 		t.Errorf("footer should mark the new side: %s", got)
 	}
 	v.focusSide(sideLeft)
-	if got := v.helpLine(); !contains(got, "[old]") {
+	if got := v.helpLine(footerBudget); !contains(got, "[old]") {
 		t.Errorf("footer should mark the old side: %s", got)
 	}
 	// The unified layout has no columns, so it must not claim one.
 	v.sideBySide = false
-	if got := v.helpLine(); contains(got, "[old]") || contains(got, "[new]") {
+	if got := v.helpLine(footerBudget); contains(got, "[old]") || contains(got, "[new]") {
 		t.Errorf("unified layout should not name a column: %s", got)
 	}
 }
@@ -335,8 +335,8 @@ func TestVisualRangeSpansRunOnEitherColumn(t *testing.T) {
 				t.Errorf("range = %d-%d, want %d-%d", lo, hi, c.wantLo, c.wantHi)
 			}
 			want := fmt.Sprintf("lines %d-%d", c.wantLo, c.wantHi)
-			if !contains(v.helpLine(), want) {
-				t.Errorf("footer should report %q, got: %s", want, stripANSISeqs(v.helpLine()))
+			if !contains(v.helpLine(footerBudget), want) {
+				t.Errorf("footer should report %q, got: %s", want, stripANSISeqs(v.helpLine(footerBudget)))
 			}
 		})
 	}
