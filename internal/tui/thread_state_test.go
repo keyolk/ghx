@@ -152,7 +152,7 @@ func TestThreadStateCounts(t *testing.T) {
 // nobody can decode is not a signal.
 func TestGlyphLegendNamesTheVisibleStates(t *testing.T) {
 	c := commentsWithAll() // hideResolved = false, all three states
-	got := stripANSISeqs(c.helpLine())
+	got := stripANSISeqs(c.helpLine(footerBudget))
 	for _, glyph := range []string{iconThreadOpen, iconThreadResolved, iconThreadUnknown} {
 		if !strings.Contains(got, glyph) {
 			t.Errorf("the legend does not name %q: %q", glyph, got)
@@ -162,7 +162,7 @@ func TestGlyphLegendNamesTheVisibleStates(t *testing.T) {
 	// Hiding resolved threads drops it from the legend, because it is no longer
 	// on screen to be told apart from anything.
 	c.hideResolved = true
-	got = stripANSISeqs(c.helpLine())
+	got = stripANSISeqs(c.helpLine(footerBudget))
 	if strings.Contains(got, iconThreadResolved+" resolved") {
 		t.Errorf("the legend names a state that is filtered out: %q", got)
 	}
@@ -192,13 +192,13 @@ func TestUnknownResolutionSurvivesTheFilter(t *testing.T) {
 // The footer holds itself to 100 cells, the width detail_footer_test.go pins
 // for every other tab. It was passing only because the fixture had no threads:
 // the legend appears with them, and it appears at the end, where truncation
-// takes it. fitLegend drops it whole rather than showing half a key.
+// takes it. It goes whole rather than showing half a key.
 func TestCommentsFooterFitsACommonTerminalWithThreads(t *testing.T) {
 	c := newCommentsView()
 	c.threads = threeThreads()
 	for _, hide := range []bool{true, false} {
 		c.hideResolved = hide
-		got := c.helpLine()
+		got := c.helpLine(footerBudget)
 		if w := lipglossWidth(got); w > 100 {
 			t.Errorf("hideResolved=%v: footer is %d cells — a 100-column terminal cuts it:\n%s",
 				hide, w, stripANSISeqs(got))
@@ -213,14 +213,38 @@ func TestCommentsFooterFitsACommonTerminalWithThreads(t *testing.T) {
 }
 
 // A half-truncated legend reads as a label rather than a key, so it goes whole
-// or not at all.
+// or not at all, at every width.
 func TestLegendIsDroppedRatherThanTruncated(t *testing.T) {
-	hints := "j/k:thread"
-	legend := iconThreadOpen + " open " + iconThreadResolved + " resolved"
-	if got := fitLegend(hints, legend, 200); !strings.Contains(got, legend) {
+	c := commentsWithAll()
+	full := stripANSISeqs(c.glyphLegend())
+	for w := 10; w <= footerBudget; w++ {
+		got := stripANSISeqs(c.helpLine(w))
+		if lipglossWidth(got) > w {
+			t.Errorf("width %d: footer overflows: %q", w, got)
+		}
+		if strings.Contains(got, iconThreadOpen) && !strings.Contains(got, full) {
+			t.Errorf("width %d: the legend was cut instead of dropped: %q", w, got)
+		}
+	}
+	if got := stripANSISeqs(c.helpLine(footerBudget)); !strings.Contains(got, full) {
 		t.Errorf("the legend was dropped despite fitting: %q", got)
 	}
-	if got := fitLegend(hints, legend, 12); got != hints {
-		t.Errorf("a legend that does not fit was truncated instead of dropped: %q", got)
+}
+
+// The empty-tab advice names the key that shows resolved threads now, so a
+// user who rebound it is not told to press a key that does nothing.
+func TestAllResolvedAdviceNamesTheBoundKey(t *testing.T) {
+	c := newCommentsView()
+	c.threads = threeThreads()[1:2] // the resolved one; hidden by default
+	if got := stripANSISeqs(c.render(80, 10)); !strings.Contains(got, "press t to show them") {
+		t.Errorf("default advice: %q", got)
+	}
+	km, err := DefaultKeymap().Override(map[string][]string{"resolvedfilter": {"T"}}, allStacks...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.km = km
+	if got := stripANSISeqs(c.render(80, 10)); !strings.Contains(got, "press T to show them") {
+		t.Errorf("advice after rebinding t to T: %q", got)
 	}
 }

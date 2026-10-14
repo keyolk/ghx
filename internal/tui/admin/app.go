@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
 
 	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/tui"
@@ -61,6 +62,11 @@ type App struct {
 	err     error
 	toast   tui.Toast
 
+	// km is the key table (LoadKeymap); the zero value means the defaults.
+	// keymapErr is a bad override file, shown as a toast by Init.
+	km        keys.Keymap
+	keymapErr error
+
 	// list scrolls inside its own rows; see tui.ListPane.
 	pane tui.ListPane
 
@@ -98,6 +104,9 @@ func NewApp(client *gh.Client, repo string) *App {
 
 // Init loads the first category's data.
 func (a *App) Init() tea.Cmd {
+	if a.keymapErr != nil {
+		a.toast.SetError("keys: " + a.keymapErr.Error())
+	}
 	return a.loadCategory(catCollaborators)
 }
 
@@ -296,16 +305,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
-// isInTextInput reports whether a text field currently owns the keyboard. Used
-// to gate CJK normalization: there the jamo IS the intended input.
-//
-// The write prompt is split by kind: promptLogin is a text field, while
-// promptPermission is a shortcut menu (tab/j/k/l/h), so the prompt being open
-// does not by itself mean text is being typed.
-func (a *App) isInTextInput() bool {
-	return a.searching || a.prompt.kind == promptLogin
-}
-
 func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	// ctrl+c quits from anywhere, ahead of the confirmation, the write prompt,
 	// and the search box. Nothing is written until Enter, so aborting is safe.
@@ -313,22 +312,16 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return tea.Quit
 	}
 
-	// Under a Korean input source the shortcut keys arrive as jamo (`q` -> `ㅂ`).
-	// Rewrite them to the Latin key at the same physical position so shortcuts
-	// fire without switching the input source back.
-	if !a.isInTextInput() {
-		msg = tui.NormalizeCJKKey(msg)
-	}
-
 	// confirmation prompt owns the keyboard
 	if a.confirm != nil {
-		switch msg.String() {
-		case "y", "Y":
+		b, _ := a.keymap().Resolve(stackConfirm, msg, keys.Opts{})
+		switch b.Action {
+		case "yes":
 			act := *a.confirm
 			a.confirm = nil
 			a.busy = true
 			return a.run(act)
-		case "n", "N", "esc":
+		case "no":
 			a.confirm = nil
 		}
 		// Anything else is ignored rather than treated as consent.
@@ -343,19 +336,31 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 
 	// The search prompt owns the keyboard while it is open, so a query can
-	// contain j, k, q, and the digits without triggering navigation.
+	// contain j, k, q, and the digits without triggering navigation. Raw: a
+	// jamo there is the query, not a shortcut.
 	if a.searching {
-		return a.handleSearchKey(msg)
+		b, _ := a.keymap().ResolveRaw(stackSearch, msg, keys.Opts{})
+		return a.handleSearchKey(b.Action, msg)
 	}
 
-	switch msg.String() {
-	case "q":
-		return tea.Quit
-	case "/":
-		a.searching = true
+	// Resolve rewrites a Korean jamo to the Latin key at the same physical
+	// position, so shortcuts fire without switching the input source back.
+	//
+	// The write keys sit in contexts in front of the list, so an inner write
+	// would win over a list key on the same letter. The list binds none of a,
+	// d, p, and TestWriteKeysShadowNoListKey keeps it so: a key that used to
+	// move the cursor and now revokes someone's access is the failure worth
+	// designing out.
+	b, ok := a.keymap().Resolve(a.stack(), msg, a.keyOpts())
+	if !ok {
 		return nil
-	case "esc":
-		// One narrowing layer at a time: the filter first, then the drill-down.
+	}
+	switch b.Action {
+	case "quit":
+		return tea.Quit
+	case "search":
+		a.searching = true
+	case "clear":
 		if a.query != "" {
 			a.query = ""
 			a.pane.Reset()
@@ -365,45 +370,33 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 			a.teamSlug = ""
 			a.pane.Reset()
 		}
-		return nil
-	case "j", "down":
+	case "down":
 		a.pane.Move(1, a.itemCount())
-		return nil
-	case "k", "up":
+	case "up":
 		a.pane.Move(-1, a.itemCount())
-		return nil
-	case "ctrl+d", "pgdown":
+	case "pagedown":
 		a.pane.Move(a.listRows()/2, a.itemCount())
-		return nil
-	case "ctrl+u", "pgup":
+	case "pageup":
 		a.pane.Move(-a.listRows()/2, a.itemCount())
-		return nil
-	case "enter":
-		return a.onEnter()
-	case "1", "2", "3", "4", "5", "6", "7":
-		idx := int(msg.String()[0] - '1')
-		if idx < len(categoryNames) {
+	case "top":
+		a.pane.Top()
+	case "bottom":
+		a.pane.Bottom(a.itemCount())
+	case "category":
+		// The position of the pressed key picks the category, so a rebound
+		// key still means "the third".
+		idx := b.KeyIndex(msg)
+		if idx >= 0 && idx < len(categoryNames) {
 			a.active = category(idx)
 			a.teamSlug = ""
 			a.query = ""
 			a.pane.Reset()
 			return a.loadCategory(a.active)
 		}
-	case "g":
-		a.pane.Top()
-		return nil
-	case "G":
-		a.pane.Bottom(a.itemCount())
-		return nil
-	case "?":
-		// TODO: help overlay
-		return nil
-	}
-	// The write keys come last so they can never shadow navigation: a and d are
-	// not bound above, but a future navigation binding must win over a write
-	// rather than the reverse — pressing a key that used to move the cursor and
-	// having it revoke someone's access is the failure worth designing out.
-	if cmd, handled := a.handleWriteKey(msg.String()); handled {
+	case "members":
+		return a.onEnter()
+	default:
+		cmd, _ := a.handleWriteKey(b.Action)
 		return cmd
 	}
 	return nil
@@ -411,19 +404,24 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 
 // handleSearchKey edits the query. The filter applies as it is typed so the
 // list narrows under the cursor rather than after a commit.
-func (a *App) handleSearchKey(msg tea.KeyMsg) tea.Cmd {
-	switch msg.Type {
-	case tea.KeyEsc:
+func (a *App) handleSearchKey(action string, msg tea.KeyMsg) tea.Cmd {
+	switch action {
+	case "clear":
 		a.searching = false
 		a.query = ""
 		a.pane.Reset()
-	case tea.KeyEnter:
+		return nil
+	case "apply":
 		a.searching = false
-	case tea.KeyBackspace:
+		return nil
+	case "erase":
 		if r := []rune(a.query); len(r) > 0 {
 			a.query = string(r[:len(r)-1])
 			a.pane.Reset()
 		}
+		return nil
+	}
+	switch msg.Type {
 	case tea.KeyRunes:
 		a.query += string(msg.Runes)
 		a.pane.Reset()

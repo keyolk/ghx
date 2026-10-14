@@ -167,7 +167,7 @@ func (a *App) askConfirm(act confirmAction) tea.Cmd {
 // Read-only categories deliberately do nothing rather than saying "not
 // supported": the footer lists the keys that apply to what is on screen, so a
 // key that is absent from it was never offered.
-func (a *App) handleWriteKey(key string) (tea.Cmd, bool) {
+func (a *App) handleWriteKey(action string) (tea.Cmd, bool) {
 	// Nothing is written over a pane that is not showing its data. The footer
 	// already stops advertising the keys there, and that alone would be the
 	// worse half of the fix: a panel that looks read-only and acts otherwise.
@@ -178,22 +178,22 @@ func (a *App) handleWriteKey(key string) (tea.Cmd, bool) {
 	}
 	switch a.active {
 	case catCollaborators:
-		return a.collaboratorWriteKey(key)
+		return a.collaboratorWriteKey(action)
 	case catTeams:
 		if a.teamSlug != "" {
-			return a.memberWriteKey(key)
+			return a.memberWriteKey(action)
 		}
-		return a.teamWriteKey(key)
+		return a.teamWriteKey(action)
 	}
 	return nil, false
 }
 
-func (a *App) collaboratorWriteKey(key string) (tea.Cmd, bool) {
-	switch key {
-	case "a":
+func (a *App) collaboratorWriteKey(action string) (tea.Cmd, bool) {
+	switch action {
+	case "add":
 		a.prompt = prompt{kind: promptLogin}
 		return nil, true
-	case "d", "p":
+	case "remove", "permission":
 		rows := a.visibleCollaborators()
 		if a.pane.Cursor >= len(rows) {
 			return nil, true
@@ -209,7 +209,7 @@ func (a *App) collaboratorWriteKey(key string) (tea.Cmd, bool) {
 				"%s has access through a team — change it on the Teams tab (2)",
 				row.Login)), true
 		}
-		if key == "d" {
+		if action == "remove" {
 			return a.askConfirm(confirmAction{
 				kind: actRemoveCollaborator, user: row.Login,
 			}), true
@@ -225,10 +225,10 @@ func (a *App) collaboratorWriteKey(key string) (tea.Cmd, bool) {
 	return nil, false
 }
 
-func (a *App) teamWriteKey(key string) (tea.Cmd, bool) {
+func (a *App) teamWriteKey(action string) (tea.Cmd, bool) {
 	rows := a.visibleTeams()
-	switch key {
-	case "p":
+	switch action {
+	case "permission":
 		if a.pane.Cursor >= len(rows) {
 			return nil, true
 		}
@@ -240,7 +240,7 @@ func (a *App) teamWriteKey(key string) (tea.Cmd, bool) {
 			teamSlug: row.Slug,
 		}
 		return nil, true
-	case "d":
+	case "remove":
 		if a.pane.Cursor >= len(rows) {
 			return nil, true
 		}
@@ -251,12 +251,12 @@ func (a *App) teamWriteKey(key string) (tea.Cmd, bool) {
 	return nil, false
 }
 
-func (a *App) memberWriteKey(key string) (tea.Cmd, bool) {
-	switch key {
-	case "a":
+func (a *App) memberWriteKey(action string) (tea.Cmd, bool) {
+	switch action {
+	case "add":
 		a.prompt = prompt{kind: promptLogin, teamSlug: a.teamSlug}
 		return nil, true
-	case "d":
+	case "remove":
 		rows := a.visibleMembers()
 		if a.pane.Cursor >= len(rows) {
 			return nil, true

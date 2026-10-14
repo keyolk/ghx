@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
 
 	"github.com/keyolk/ghx/internal/config"
 	"github.com/keyolk/ghx/internal/gh"
@@ -19,7 +20,7 @@ import (
 type prListModel struct {
 	cfg    *config.Config
 	client *gh.Client
-	km     *Keymap
+	km     keys.Keymap
 
 	sources []config.SourceDef
 	curTab  int
@@ -121,14 +122,14 @@ func (i prListItem) FilterValue() string {
 	return fmt.Sprintf("#%d %s %s", i.pr.Number, i.pr.Title, i.pr.Author.Login)
 }
 
-func newPRListModel(cfg *config.Config, client *gh.Client, km *Keymap) *prListModel {
+func newPRListModel(cfg *config.Config, client *gh.Client, km keys.Keymap) *prListModel {
 	return newPRListModelWithRepo(cfg, client, km, nil)
 }
 
 // newPRListModelWithRepo builds the list with detectedRepos leading the tabs, so
 // launching ghx inside a checkout — or beside one in the same tmux window —
 // opens on those repositories' PRs.
-func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km *Keymap, detectedRepos []string) *prListModel {
+func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km keys.Keymap, detectedRepos []string) *prListModel {
 	sources := cfg.EffectiveSources(detectedRepos...)
 	if len(sources) == 0 {
 		sources = []config.SourceDef{
@@ -526,64 +527,71 @@ func prListItemKey(item list.Item) string {
 	return selectionKey(row.pr)
 }
 
+// update runs msg if it is one of the list's own bindings (not the PR actions
+// or the pickers, which are App's).
 func (m *prListModel) update(msg tea.KeyMsg) tea.Cmd {
-	key, isNav := translateNav(msg)
-	if isNav {
-		switch key {
-		case "up", "down", "pgup", "pgdown":
-			// Let the list move the cursor; it handles bounds and paging.
-			newL, cmd := m.list.Update(navKeyMsg(key))
-			*m.list = newL
-			return cmd
-		case "home":
-			m.list.Select(0)
-			return nil
-		case "end":
-			if n := len(m.list.VisibleItems()); n > 0 {
-				m.list.Select(n - 1)
-			}
-			return nil
-		case "right":
-			m.pane.Show = true
-			m.pane.Focus = true
-			m.pane.Resize(m.width, m.height-1, m.cfg.DiffSplitRatio)
-			return nil
-		case "left":
-			if m.pane.Focus {
-				m.pane.Focus = false
-			} else {
-				m.pane.Show = false
-			}
-			m.pane.Resize(m.width, m.height-1, m.cfg.DiffSplitRatio)
-			return nil
-		}
+	b, ok := m.km.Or(defaultKeymap).Resolve([]keys.Ctx{ctxList}, msg, keys.Opts{})
+	if !ok {
 		return nil
 	}
+	cmd, _ := m.runAction(b, msg)
+	return cmd
+}
 
-	switch key {
-	case "enter":
-		return func() tea.Msg { return openDetailMsg{} }
-	case " ":
+// runAction runs a list binding. The list owns cursor movement, the preview
+// split, source tabs and the selection; the pickers it opens live on App.
+func (m *prListModel) runAction(b keys.Binding, msg tea.KeyMsg) (tea.Cmd, bool) {
+	switch b.Action {
+	case "down", "up", "pagedown", "pageup":
+		// Let the list move the cursor; it handles bounds and paging.
+		newL, cmd := m.list.Update(navKeyMsg(b.Action))
+		*m.list = newL
+		return cmd, true
+	case "top":
+		m.list.Select(0)
+		return nil, true
+	case "bottom":
+		if n := len(m.list.VisibleItems()); n > 0 {
+			m.list.Select(n - 1)
+		}
+		return nil, true
+	case "showpreview":
+		m.pane.Show = true
+		m.pane.Focus = true
+		m.pane.Resize(m.width, m.height-1, m.cfg.DiffSplitRatio)
+		return nil, true
+	case "hidepreview":
+		if m.pane.Focus {
+			m.pane.Focus = false
+		} else {
+			m.pane.Show = false
+		}
+		m.pane.Resize(m.width, m.height-1, m.cfg.DiffSplitRatio)
+		return nil, true
+	case "select":
 		m.toggleSelected()
-		return nil
-	case "A":
+		return nil, true
+	case "selectall":
 		m.toggleAllVisible()
-		return nil
-	case "R":
-		return m.refreshCurrent()
-	case "tab":
-		return m.selectTab((m.curTab + 1) % len(m.sources))
-	case "shift+tab":
-		return m.selectTab((m.curTab - 1 + len(m.sources)) % len(m.sources))
-	case "[":
+		return nil, true
+	case "refresh":
+		return m.refreshCurrent(), true
+	case "nextsource":
+		return m.selectTab((m.curTab + 1) % len(m.sources)), true
+	case "prevsource":
+		return m.selectTab((m.curTab - 1 + len(m.sources)) % len(m.sources)), true
+	case "narrower":
 		m.adjustRatio(-5)
-		return nil
-	case "]":
+		return nil, true
+	case "wider":
 		m.adjustRatio(5)
-		return nil
-	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		return m.selectTab(int(key[0] - '1'))
-	case "esc":
+		return nil, true
+	case "source":
+		if i := b.KeyIndex(msg); i >= 0 {
+			return m.selectTab(i), true
+		}
+		return nil, true
+	case "clear":
 		// Clear one narrowing layer at a time before dropping multi-selection.
 		if m.query != "" {
 			m.applyQuery("")
@@ -593,9 +601,9 @@ func (m *prListModel) update(msg tea.KeyMsg) tea.Cmd {
 		} else if len(m.selected) > 0 {
 			m.clearSelected()
 		}
-		return nil
+		return nil, true
 	}
-	return nil
+	return nil, false
 }
 
 // navKeyMsg rebuilds a canonical key message for the list to consume.
@@ -605,9 +613,9 @@ func navKeyMsg(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyUp}
 	case "down":
 		return tea.KeyMsg{Type: tea.KeyDown}
-	case "pgup":
+	case "pageup":
 		return tea.KeyMsg{Type: tea.KeyPgUp}
-	case "pgdown":
+	case "pagedown":
 		return tea.KeyMsg{Type: tea.KeyPgDown}
 	}
 	return tea.KeyMsg{}
@@ -867,23 +875,7 @@ func reviewDecisionLabel(d string) string {
 	return d
 }
 
-func (m *prListModel) helpLine() string {
-	return fmtHints(
-		" ", "select",
-		"A", "all",
-		"enter", "open",
-		"a", "approve",
-		"x", "close",
-		"M", "merge",
-		"L", "labels",
-		"d", "ready/draft",
-		"r", "request",
-		"o", "browser",
-		"f", "status",
-		"e", "repo",
-		"/", "search",
-		"R", "refresh",
-		":", "palette",
-		"?", "help",
-	)
+// helpLine is the list footer, derived from the binding table.
+func (m *prListModel) helpLine(width int) string {
+	return m.km.Or(defaultKeymap).Footer(stackList, width, keys.Opts{}, footerStyle())
 }

@@ -89,25 +89,26 @@ func (a *App) handleStatusFilterKey(msg tea.KeyMsg) tea.Cmd {
 	if picker == nil {
 		return nil
 	}
-	switch msg.String() {
-	case "j", "down":
+	action, _ := a.resolveIn(stackStatus, msg, false)
+	switch action {
+	case "down":
 		picker.cursor = min(picker.cursor+1, len(prStatusOptions)-1)
-	case "k", "up":
+	case "up":
 		picker.cursor = max(picker.cursor-1, 0)
-	case " ", "tab":
+	case "toggle":
 		status := prStatusOptions[picker.cursor]
 		if picker.pending[status] {
 			delete(picker.pending, status)
 		} else {
 			picker.pending[status] = true
 		}
-	case "c":
+	case "clear":
 		clear(picker.pending)
-	case "enter":
+	case "apply":
 		a.list.statusFilters = picker.pending
 		a.list.syncListItems()
 		a.statusFilter = nil
-	case "esc", "q":
+	case "cancel":
 		a.statusFilter = nil
 	}
 	return nil
@@ -133,7 +134,7 @@ func (a *App) renderStatusFilter(width, height int) string {
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\n" + fmtHints("sp", "toggle", "enter", "apply", "c", "clear", "esc", "cancel"))
+	b.WriteString("\n" + a.modalHints(stackStatus, 60))
 	// The box is sized from the option list rather than a literal: adding a
 	// status used to leave the last one clipped off the bottom.
 	//   header + blank + one row per option + blank + hints + two border rows

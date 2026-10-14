@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
 
 	"github.com/keyolk/ghx/internal/config"
 	"github.com/keyolk/ghx/internal/gh"
@@ -35,7 +36,7 @@ var detailTabNames = map[detailTabKind]string{
 type prDetailModel struct {
 	cfg            *config.Config
 	client         *gh.Client
-	km             *Keymap
+	km             keys.Keymap
 	number         int
 	owner          string
 	repo           string
@@ -98,14 +99,14 @@ type prDetailModel struct {
 // newPRDetailModel builds the detail view. repoSlug ("owner/name") comes from
 // the list row: the queue spans repositories, so every gh call for this PR must
 // be scoped explicitly rather than inheriting the working directory.
-func newPRDetailModel(cfg *config.Config, client *gh.Client, km *Keymap, number int, repoSlug string) *prDetailModel {
+func newPRDetailModel(cfg *config.Config, client *gh.Client, km keys.Keymap, number int, repoSlug string) *prDetailModel {
 	return newPRDetailModelWithCredential(cfg, client, km, number, repoSlug, "")
 }
 
 func newPRDetailModelWithCredential(
 	cfg *config.Config,
 	client *gh.Client,
-	km *Keymap,
+	km keys.Keymap,
 	number int,
 	repoSlug string,
 	credentialRepo string,
@@ -119,6 +120,8 @@ func newPRDetailModelWithCredential(
 		comments:  newCommentsView(),
 		checks:    newChecksView(),
 	}
+	// The tab views render their own footers, so they carry the same table.
+	d.diff.km, d.comments.km, d.checks.km = km, km, km
 	if credentialRepo != "" {
 		client = client.WithCredentialRepo(credentialRepo)
 	}
@@ -651,29 +654,6 @@ func (d *prDetailModel) renderActiveTab(w, h int) string {
 func (d *prDetailModel) spinnerFrame() int { return d.spinner }
 
 func (d *prDetailModel) setSpinnerFrame(f int) { d.spinner = f }
-
-// helpLine delegates to the active tab so hints always match what keys do.
-func (d *prDetailModel) helpLine() string {
-	switch d.activeTab {
-	case tabDiff:
-		return d.diff.helpLine()
-	case tabComments:
-		return d.comments.helpLine()
-	case tabChecks:
-		return d.checks.helpLine()
-	case tabFiles:
-		return fmtHints("j/k", "file", "enter", "open in diff", "1-6", "tab",
-			"esc", "back")
-	default:
-		// M and y work here — and have all along — but the footer never said so,
-		// which for merge is the whole difference between a key existing and a
-		// key being usable: nothing else in the view hints that the PR can be
-		// merged from it.
-		return fmtHints("1-6", "tab", "h/l", "cycle", "a", "approve",
-			"r", "request", "M", "merge", "y", "copy", "o", "browser",
-			"esc", "back")
-	}
-}
 
 func errCmd(err error) tea.Cmd {
 	return func() tea.Msg { return errMsg{err: err} }

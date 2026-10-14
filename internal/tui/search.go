@@ -33,12 +33,12 @@ func (s *search) clear() {
 }
 
 // update handles search keys. handled=false means the key wasn't consumed.
-func (s *search) update(msg tea.KeyMsg) (cmd tea.Cmd, handled bool) {
+func (s *search) update(action string, msg tea.KeyMsg) (cmd tea.Cmd, handled bool) {
 	if !s.active {
 		return nil, false
 	}
-	switch msg.Type {
-	case tea.KeyEsc:
+	switch action {
+	case "clear":
 		// Esc abandons the edit and the filter, restoring the full list.
 		q := s.query
 		s.clear()
@@ -46,15 +46,17 @@ func (s *search) update(msg tea.KeyMsg) (cmd tea.Cmd, handled bool) {
 			return nil, true
 		}
 		return func() tea.Msg { return searchSubmitMsg{query: ""} }, true
-	case tea.KeyEnter:
+	case "apply":
 		s.close()
 		q := s.query
 		return func() tea.Msg { return searchSubmitMsg{query: q} }, true
-	case tea.KeyBackspace:
+	case "erase":
 		if r := []rune(s.query); len(r) > 0 {
 			s.query = string(r[:len(r)-1])
 		}
 		return s.liveCmd(), true
+	}
+	switch msg.Type {
 	case tea.KeyRunes:
 		s.query += string(msg.Runes)
 		return s.liveCmd(), true
@@ -72,12 +74,11 @@ func (s *search) liveCmd() tea.Cmd {
 }
 
 // render draws the search prompt as a one-line overlay.
-func (s *search) render(width, height int) string {
+func (s *search) render(width, height int, hint string) string {
 	if !s.active {
 		return ""
 	}
 	prompt := helpKeyStyle.Render("Search: ") + s.query + blockCursor()
-	hint := fmtHints("enter", "apply", "esc", "clear")
 	return decoratedPane("filter", prompt+"\n"+hint, width, 4, true)
 }
 

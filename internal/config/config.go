@@ -109,8 +109,45 @@ func (a AccountDef) Label() string {
 	return "(unnamed)"
 }
 
-// KeymapOverrides is a placeholder for per-key YAML overrides (Phase 6).
-type KeymapOverrides map[string]string
+// KeymapOverrides rebinds actions by name, the same format as
+// ~/.config/ghx/keys.yaml (tuikit keys.Override): an action ("approve"), or a
+// context-qualified one ("diff.comment"), mapped to its keys. A single key may
+// be written as a scalar, which is what this placeholder accepted before it
+// was wired up:
+//
+//	keymap:
+//	  palette: ";"
+//	  status: [f, F]
+type KeymapOverrides map[string]KeyList
+
+// KeyList is one action's keys; a YAML scalar is a list of one.
+type KeyList []string
+
+// UnmarshalYAML accepts either a scalar or a sequence.
+func (k *KeyList) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode {
+		*k = KeyList{n.Value}
+		return nil
+	}
+	var list []string
+	if err := n.Decode(&list); err != nil {
+		return err
+	}
+	*k = list
+	return nil
+}
+
+// Map returns the overrides in the shape keys.Override takes.
+func (o KeymapOverrides) Map() map[string][]string {
+	if len(o) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(o))
+	for name, ks := range o {
+		out[name] = []string(ks)
+	}
+	return out
+}
 
 // ColorOverrides maps semantic token names to hex strings (Phase 7).
 type ColorOverrides map[string]string

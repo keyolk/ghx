@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -21,9 +22,17 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "create test home:", err)
 		os.Exit(1)
 	}
-	if err := os.Setenv("HOME", home); err != nil {
-		fmt.Fprintln(os.Stderr, "set HOME:", err)
-		os.Exit(1)
+	// The XDG variables win over HOME when the developer has them set, and
+	// ghx reads keys.yaml from one and writes ui.json under the other.
+	for k, v := range map[string]string{
+		"HOME":            home,
+		"XDG_CONFIG_HOME": filepath.Join(home, ".config"),
+		"XDG_STATE_HOME":  filepath.Join(home, ".local", "state"),
+	} {
+		if err := os.Setenv(k, v); err != nil {
+			fmt.Fprintln(os.Stderr, "set "+k+":", err)
+			os.Exit(1)
+		}
 	}
 	code := m.Run()
 	if err := os.RemoveAll(home); err != nil {

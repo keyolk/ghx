@@ -176,4 +176,3 @@ func scrollBlock(s string, offset, height int) string {
 	end := min(offset+height, len(lines))
 	return strings.Join(lines[offset:end], "\n")
 }
-

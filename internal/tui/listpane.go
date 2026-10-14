@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/keyolk/tuikit/keys"
 )
 
 // Shared scrolling list for the subcommand TUIs (admin, actions). They each
@@ -138,8 +140,17 @@ func filterRows(query string, n int, haystack func(int) string) []int {
 // extra row would resize the pane mid-search, and the tabs are not reachable
 // while the query owns the keyboard anyway.
 func renderSearchBar(query string, w int) string {
-	return renderPromptBar("Search", query, w, "enter", "apply", "esc", "clear")
+	bar := renderPromptBar("Search", query, w)
+	room := w - lipglossWidth(bar) - 2
+	if room <= 0 {
+		return bar
+	}
+	return bar + "  " + searchBarKeys.Footer([]keys.Ctx{"search"}, room, keys.Opts{}, footerStyle())
 }
+
+// searchBarKeys is the subcommands' search prompt, from the same bindings
+// their tables use for it.
+var searchBarKeys = keys.New(SearchBindings("search")...)
 
 // renderPromptBar is renderSearchBar generalized: any one-line prompt that
 // takes over the tab strip's row while it owns the keyboard.
@@ -147,12 +158,10 @@ func renderSearchBar(query string, w int) string {
 // It exists because the admin panel's writes need input — a login to add, a
 // permission to grant — and reusing the search bar would label every one of
 // them "Search:". The row it occupies is the same row for the same reason: an
-// extra line would resize the list under the cursor mid-prompt.
-func renderPromptBar(label, value string, w int, hints ...string) string {
+// extra line would resize the list under the cursor mid-prompt. The caller
+// appends its own key hints, from its binding table.
+func renderPromptBar(label, value string, w int) string {
 	line := helpKeyStyle.Render(label+": ") + value + blockCursor()
-	if len(hints) > 0 {
-		line += "  " + fmtHints(hints...)
-	}
 	line, _ = truncateExact(line, w)
 	return line
 }

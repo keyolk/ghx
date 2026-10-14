@@ -4,54 +4,24 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/prefs"
 )
 
-// isQuit reports whether a returned command is tea.Quit, by running it and
-// checking for the QuitMsg. tea.Quit is a plain func, so it cannot be compared
-// directly.
+// isQuit reports whether a returned command quits, by running it. Quitting
+// first flushes the UI state (prefs.Saver.Flush) and quits on the final
+// Saved, so that message counts as quitting too. tea.Quit is a plain func, so
+// it cannot be compared directly.
 func isQuit(cmd tea.Cmd) bool {
 	if cmd == nil {
 		return false
 	}
-	_, ok := cmd().(tea.QuitMsg)
-	return ok
-}
-
-func TestNormalizeCJKKeyMapsJamoByPhysicalPosition(t *testing.T) {
-	for jamo, want := range map[string]string{
-		"ㅂ": "q", "ㅁ": "a", "ㅋ": "z", "ㅓ": "j", "ㅏ": "k",
-		"ㅃ": "Q", "ㄲ": "R",
-	} {
-		if got := NormalizeCJKKey(keyMsg(jamo)).String(); got != want {
-			t.Errorf("NormalizeCJKKey(%q) = %q, want %q", jamo, got, want)
-		}
+	switch msg := cmd().(type) {
+	case tea.QuitMsg:
+		return true
+	case prefs.Saved:
+		return msg.Final
 	}
-}
-
-func TestNormalizeCJKKeyLeavesEverythingElseAlone(t *testing.T) {
-	// Latin keys, digits, and composed syllables pass through: a composed
-	// syllable only reaches the TUI as committed text, never as a shortcut.
-	for _, k := range []string{"q", "R", "0", "가"} {
-		if got := NormalizeCJKKey(keyMsg(k)).String(); got != k {
-			t.Errorf("NormalizeCJKKey(%q) = %q, want it unchanged", k, got)
-		}
-	}
-	for _, in := range []tea.KeyMsg{{Type: tea.KeyEnter}, {Type: tea.KeyCtrlC}, {Type: tea.KeyEsc}} {
-		if got := NormalizeCJKKey(in); got.String() != in.String() {
-			t.Errorf("NormalizeCJKKey(%q) = %q, want it unchanged", in.String(), got.String())
-		}
-	}
-}
-
-func TestNormalizeCJKKeyLeavesPasteAndAltAlone(t *testing.T) {
-	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'ㅂ'}, Paste: true}
-	if got := NormalizeCJKKey(paste); got.String() != paste.String() {
-		t.Errorf("pasted jamo was rewritten to %q", got.String())
-	}
-	alt := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'ㅂ'}, Alt: true}
-	if got := NormalizeCJKKey(alt); got.String() != alt.String() {
-		t.Errorf("alt chord was rewritten to %q", got.String())
-	}
+	return false
 }
 
 // --- through the real dispatcher --------------------------------------------

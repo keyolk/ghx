@@ -166,11 +166,12 @@ func (a *App) handleSuggestionKey(msg tea.KeyMsg) tea.Cmd {
 		// return from pushing the same change twice.
 		return nil
 	}
-	switch msg.String() {
-	case "y", "Y":
+	action, _ := a.resolveIn(stackSuggest, msg, false)
+	switch action {
+	case "yes":
 		p.busy = true
 		return a.applySuggestion(p)
-	case "n", "N", "esc", "q":
+	case "no":
 		a.suggestion = nil
 		return nil
 	}
@@ -206,7 +207,7 @@ func (a *App) renderSuggestionPrompt(width, height int) string {
 			b.WriteString(diffAddStyle.Render(fitCell("+"+line, inner)) + "\n")
 		}
 	}
-	b.WriteString("\n" + fmtHints("y", "apply", "n", "cancel"))
+	b.WriteString("\n" + a.modalHints(stackSuggest, 60))
 
 	rows := len(p.original) + strings.Count(p.suggestion.Replacement, "\n") + 9
 	return decoratedPane("apply suggestion", b.String(),

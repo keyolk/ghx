@@ -213,8 +213,3 @@ func SetNoColor() {
 	strip(&paneBorderErrorStyle)
 	strip(&paneLabelStyle)
 }
-
-// fmtKey renders a "key:desc" token for the help line.
-func fmtKey(key, desc string) string {
-	return helpKeyStyle.Render(key) + helpStyle.Render(":"+desc)
-}

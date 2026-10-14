@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/keyolk/tuikit/keys"
+
 	"github.com/keyolk/ghx/internal/pr"
 )
 
@@ -13,6 +15,9 @@ import (
 
 // commentsView owns the thread list cursor and expansion state.
 type commentsView struct {
+	// km renders the footer; the zero value falls back to the defaults.
+	km keys.Keymap
+
 	threads []pr.ReviewThread
 	// conversations are the PR-level comments: the issue-comment stream and the
 	// review bodies. They are listed alongside the inline threads because a
@@ -260,8 +265,11 @@ func (c *commentsView) render(width, height int) string {
 		// started this: the tab was telling the truth about threads and the
 		// wrong thing about the PR.
 		if len(c.threads) > 0 {
-			return dimStyle.Render(fmt.Sprintf(
-				"All %d threads are resolved — press t to show them.", len(c.threads)))
+			msg := fmt.Sprintf("All %d threads are resolved.", len(c.threads))
+			if k, ok := keyName(c.km, stackComments, "resolvedfilter", c.keyOpts()); ok {
+				msg = fmt.Sprintf("All %d threads are resolved — press %s to show them.", len(c.threads), k)
+			}
+			return dimStyle.Render(msg)
 		}
 		return dimStyle.Render("No comments on this PR.")
 	}
@@ -527,44 +535,6 @@ func threadRange(t pr.ReviewThread) (lo, hi int, ok bool) {
 }
 
 // helpLine returns the comments-tab footer hints.
-func (c *commentsView) helpLine() string {
-	resolved := "show all"
-	if !c.hideResolved {
-		resolved = "hide done"
-	}
-	// enter:expand is dropped rather than the legend. Expanding with enter is the
-	// convention every other list in ghx follows, and it is in the ? overlay; the
-	// glyph column is neither conventional nor guessable, and it is on screen in
-	// every row.
-	// The hints are shortened to make room for the glyph legend. A footer past
-	// 100 cells is truncated on a common terminal, and what it drops is whatever
-	// sits at the end — which would be the legend, the one part that is not
-	// guessable from the key it describes. "resolve/unresolve" and "jump to diff"
-	// are each the obvious reading of their key in this tab; the glyphs are not.
-	// "thread" becomes "row" once conversations are listed, because j/k then
-	// walks both and naming only one of them misdescribes the key.
-	unit := "thread"
-	if len(c.conversations) > 0 {
-		unit = "row"
-	}
-	line := fmtHints(
-		"j/k", unit,
-		"c", "reply",
-		"X", "resolve",
-		"d", "diff",
-		"t", resolved,
-		"esc", "back",
-	)
-	// Name the glyphs whenever more than one state is on screen. Keyed to what
-	// is visible rather than to the filter: an unknown-resolution thread survives
-	// the default filter, so `?` appears without `t` ever being pressed, and a
-	// glyph nobody can decode is not a signal. With one state showing there is
-	// nothing to tell apart and the legend is just noise in the footer.
-	// 100 columns is the footer budget this codebase holds itself to; past it a
-	// terminal cuts the end of the line, which is where the legend sits.
-	return fitLegend(line, dimStyle.Render(c.glyphLegend()), 100)
-}
-
 // glyphLegend names the states currently on screen, or "" when there is only
 // one and nothing to distinguish.
 //
@@ -586,19 +556,4 @@ func (c *commentsView) glyphLegend() string {
 		return ""
 	}
 	return strings.Join(parts, " ")
-}
-
-// fitLegend drops the legend rather than let it push the footer past the width
-// a common terminal shows. Truncation would cut the legend anyway — it sits at
-// the end — but silently, and half a legend is worse than none: "✓ res" reads
-// as a label rather than as a key. The glyphs are also in the ? overlay.
-func fitLegend(hints, legend string, width int) string {
-	if legend == "" {
-		return hints
-	}
-	full := hints + "  " + legend
-	if lipglossWidth(full) <= width {
-		return full
-	}
-	return hints
 }

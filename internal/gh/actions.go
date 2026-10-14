@@ -13,9 +13,9 @@ import (
 type Run struct {
 	DatabaseID   int64  `json:"databaseId"`
 	DisplayTitle string `json:"displayTitle"`
-	Status       string `json:"status"`      // queued, in_progress, completed
-	Conclusion   string `json:"conclusion"`   // success, failure, cancelled, null
-	Event        string `json:"event"`        // push, pull_request, schedule, ...
+	Status       string `json:"status"`     // queued, in_progress, completed
+	Conclusion   string `json:"conclusion"` // success, failure, cancelled, null
+	Event        string `json:"event"`      // push, pull_request, schedule, ...
 	HeadBranch   string `json:"headBranch"`
 	WorkflowName string `json:"workflowName"`
 	CreatedAt    string `json:"createdAt"`
@@ -56,9 +56,9 @@ func (c *Client) CancelRun(ctx context.Context, runID string) error {
 
 // Workflow is a repository workflow file.
 type Workflow struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-	Path string `json:"path"`
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Path  string `json:"path"`
 	State string `json:"state"` // active, disabled_manually, disabled_inactivity
 }
 
@@ -103,12 +103,12 @@ type RunJobDetail struct {
 
 // RunDetail returns a run's metadata and jobs.
 type RunDetail struct {
-	DatabaseID   int64         `json:"databaseId"`
-	DisplayTitle string        `json:"displayTitle"`
-	Status       string        `json:"status"`
-	Conclusion   string        `json:"conclusion"`
-	Event        string        `json:"event"`
-	HeadBranch   string        `json:"headBranch"`
+	DatabaseID   int64          `json:"databaseId"`
+	DisplayTitle string         `json:"displayTitle"`
+	Status       string         `json:"status"`
+	Conclusion   string         `json:"conclusion"`
+	Event        string         `json:"event"`
+	HeadBranch   string         `json:"headBranch"`
 	Jobs         []RunJobDetail `json:"jobs"`
 }
 
