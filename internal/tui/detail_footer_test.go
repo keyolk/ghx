@@ -72,3 +72,30 @@ func TestDetailFooterFitsACommonTerminal(t *testing.T) {
 		}
 	}
 }
+
+// On a file header h/l fold, and in a visual range j/k extend it: the same
+// actions as on a diff line, so only the footer label follows the cursor.
+func TestDiffFooterLabelsFollowTheCursor(t *testing.T) {
+	v := newDiffView()
+	if err := v.setContent(twoHunkDiff, nil); err != nil {
+		t.Fatalf("setContent: %v", err)
+	}
+	v.sideBySide = true
+	v.cursor = 0
+	if !v.onHeader() {
+		t.Fatal("row 0 is not the file header")
+	}
+	if got := stripANSI(v.helpLine(200)); !strings.Contains(got, " fold") || strings.Contains(got, "column") {
+		t.Errorf("header footer does not say h/l fold: %q", got)
+	}
+
+	cursorToLine(t, v, "RIGHT", 11)
+	if got := stripANSI(v.helpLine(200)); !strings.Contains(got, "column") || !strings.Contains(got, " line") {
+		t.Errorf("line footer lost its column / line labels: %q", got)
+	}
+	v.visual = true
+	v.visualStart = v.cursor
+	if got := stripANSI(v.helpLine(200)); !strings.Contains(got, " extend") {
+		t.Errorf("visual footer does not say j/k extend: %q", got)
+	}
+}

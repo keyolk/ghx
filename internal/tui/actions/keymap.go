@@ -31,7 +31,7 @@ func defaultKeymap() keys.Keymap {
 	bs = append(bs, tui.SearchBindings(ctxSearch)...)
 	bs = append(bs,
 		keys.Binding{Action: "clear", Keys: []string{"esc"}, Ctx: ctxList, Help: "clear the search"},
-		keys.Binding{Action: "tab", Keys: []string{"1", "2"}, Ctx: ctxList, Help: "tab: 1 runs · 2 workflows"},
+		keys.Binding{Action: "tab", Keys: []string{"1", "2"}, KeyLabel: "1-2", Ctx: ctxList, Help: "tab: 1 runs · 2 workflows"},
 
 		keys.Binding{Action: "logs", Keys: []string{"enter"}, Ctx: ctxRuns, Help: "logs", Footer: 4},
 		keys.Binding{Action: "rerun", Keys: []string{"r"}, Ctx: ctxRuns, Help: "rerun", Footer: 5},

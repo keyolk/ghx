@@ -81,9 +81,6 @@ func TestCtrlCQuitsFromEveryState(t *testing.T) {
 // same table, so a hint cannot name a key that does something else.
 func TestKeymapIsConsistent(t *testing.T) {
 	for _, c := range keymap.Conflicts(allStacks...) {
-		if c.Kind == keys.Unreachable {
-			continue // R and G: shifted keys a Korean layout does not produce
-		}
 		t.Error(c)
 	}
 	for _, b := range keymap.Bindings() {

@@ -6,7 +6,6 @@ package admin
 
 import (
 	"context"
-	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -378,7 +377,7 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "category":
 		// The position of the pressed key picks the category, so a rebound
 		// key still means "the third".
-		idx := slices.Index(b.Keys, keys.NormalizeCJK(msg).String())
+		idx := b.KeyIndex(msg)
 		if idx >= 0 && idx < len(categoryNames) {
 			a.active = category(idx)
 			a.teamSlug = ""

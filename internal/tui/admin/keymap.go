@@ -42,7 +42,7 @@ func defaultKeymap() keys.Keymap {
 	bs := tui.ListBindings(ctxList)
 	bs = append(bs, tui.SearchBindings(ctxSearch)...)
 	bs = append(bs,
-		keys.Binding{Action: "category", Keys: []string{"1", "2", "3", "4", "5", "6", "7"}, Ctx: ctxList, Help: "category", Footer: 1},
+		keys.Binding{Action: "category", Keys: []string{"1", "2", "3", "4", "5", "6", "7"}, KeyLabel: "1-7", Ctx: ctxList, Help: "category", Footer: 1},
 		// One narrowing layer at a time: the filter first, then the drill-down.
 		keys.Binding{Action: "clear", Keys: []string{"esc"}, Ctx: ctxList, Help: "clear the search, then leave the team",
 			Labels: map[string]string{"team": "back to teams"}, Footer: 20},
@@ -75,13 +75,6 @@ func defaultKeymap() keys.Keymap {
 }
 
 var keymap = defaultKeymap()
-
-// footerStyle shows the category key as the range it is: "1-7 category".
-func footerStyle() keys.FooterStyle {
-	st := tui.FooterStyle()
-	st.Names = st.Names.With("1", "1-7")
-	return st
-}
 
 func (a *App) stack() []keys.Ctx {
 	switch {
@@ -127,5 +120,5 @@ func (a *App) keyOpts() keys.Opts {
 
 // hints renders a prompt's own keys for its bar.
 func hints(stack []keys.Ctx, width int) string {
-	return keymap.Footer(stack, width, keys.Opts{}, footerStyle())
+	return keymap.Footer(stack, width, keys.Opts{}, tui.FooterStyle())
 }

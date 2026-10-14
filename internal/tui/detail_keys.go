@@ -26,7 +26,7 @@ func (d *prDetailModel) runTab(b keys.Binding, _ tea.KeyMsg) (tea.Cmd, bool) {
 		return d.updateOverview(b.Action)
 	case ctxFiles:
 		return d.updateFiles(b.Action)
-	case ctxDiff, ctxDiffHeader, ctxVisual:
+	case ctxDiff:
 		return d.updateDiff(b.Action)
 	case ctxComments:
 		return d.updateComments(b.Action)

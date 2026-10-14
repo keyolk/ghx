@@ -6,7 +6,6 @@ package actions
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -192,7 +191,7 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	// The position of the pressed key picks the tab, so a rebound tab key
 	// still means "the first" or "the second".
-	return a.run(b.Action, slices.Index(b.Keys, keys.NormalizeCJK(msg).String()))
+	return a.run(b.Action, b.KeyIndex(msg))
 }
 
 // run dispatches an action of the current stack. key is the position of the

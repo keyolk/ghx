@@ -297,8 +297,8 @@ func TestTheFooterOffersNoWritesOverAnError(t *testing.T) {
 			t.Errorf("an error pane offers %q:\n%s", key, foot)
 		}
 	}
-	if !strings.Contains(foot, "category") {
-		t.Errorf("navigation was dropped along with the writes:\n%s", foot)
+	if !strings.Contains(foot, "1-7 category") {
+		t.Errorf("navigation was dropped along with the writes, or lost its key range:\n%s", foot)
 	}
 }
 

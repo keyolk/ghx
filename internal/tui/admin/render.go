@@ -254,7 +254,7 @@ func (a *App) footer() string {
 	if pos != "" {
 		room -= tui.LipglossWidth(pos) + 2
 	}
-	line := keymap.Footer(a.stack(), max(room, 1), a.keyOpts(), footerStyle())
+	line := keymap.Footer(a.stack(), max(room, 1), a.keyOpts(), tui.FooterStyle())
 	if pos != "" {
 		line += "  " + tui.DimStyle.Render(pos)
 	}

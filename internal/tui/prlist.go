@@ -587,7 +587,7 @@ func (m *prListModel) runAction(b keys.Binding, msg tea.KeyMsg) (tea.Cmd, bool) 
 		m.adjustRatio(5)
 		return nil, true
 	case "source":
-		if i := keyIndex(b, msg); i >= 0 {
+		if i := b.KeyIndex(msg); i >= 0 {
 			return m.selectTab(i), true
 		}
 		return nil, true

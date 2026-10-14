@@ -30,7 +30,7 @@ func (d *prDetailModel) stack() []keys.Ctx {
 	case tabFiles:
 		return stackFiles
 	case tabDiff:
-		return d.diff.stack()
+		return stackDiff
 	case tabComments:
 		return stackComments
 	case tabCommits:
@@ -74,16 +74,6 @@ func (d *prDetailModel) helpLine(width int) string {
 }
 
 // --- diff ---
-
-func (v *diffView) stack() []keys.Ctx {
-	if v.visual {
-		return stackVisual
-	}
-	if _, onHeader := v.foldPathForCursor(); onHeader {
-		return stackHeader
-	}
-	return stackDiff
-}
 
 func (v *diffView) keyOpts() keys.Opts {
 	return keys.Opts{Enabled: v.enabled, Visible: v.offered, State: v.keyState}
@@ -141,6 +131,14 @@ func (v *diffView) onHeader() bool { _, ok := v.foldPathForCursor(); return ok }
 // keyState picks the label of the keys whose meaning follows the cursor.
 func (v *diffView) keyState(action string) string {
 	switch action {
+	case "down", "up":
+		if v.visual {
+			return "visual"
+		}
+	case "left", "right":
+		if v.onHeader() {
+			return "header"
+		}
 	case "layout":
 		if v.sideBySide {
 			return "sbs"
@@ -185,7 +183,7 @@ func (v *diffView) helpLine(width int) string {
 		}
 	}
 	rest := max(width-lipglossWidth(prefix), 1)
-	return prefix + v.km.Or(defaultKeymap).Footer(v.stack(), rest, v.keyOpts(), footerStyle())
+	return prefix + v.km.Or(defaultKeymap).Footer(stackDiff, rest, v.keyOpts(), footerStyle())
 }
 
 // --- comments ---

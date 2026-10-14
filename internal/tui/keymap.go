@@ -4,7 +4,6 @@ import (
 	"slices"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/keys"
 )
 
@@ -30,14 +29,9 @@ const (
 	ctxOverview keys.Ctx = "overview"
 	ctxFiles    keys.Ctx = "files"
 	ctxDiff     keys.Ctx = "diff"
-	// ctxDiffHeader and ctxVisual exist for the footer: on a file header h/l
-	// fold rather than switch columns, and in a visual range j/k extend it. The
-	// actions are the diff's own; only the footer label differs.
-	ctxDiffHeader keys.Ctx = "header"
-	ctxVisual     keys.Ctx = "visual"
-	ctxComments   keys.Ctx = "comments"
-	ctxCommits    keys.Ctx = "commits"
-	ctxChecks     keys.Ctx = "checks"
+	ctxComments keys.Ctx = "comments"
+	ctxCommits  keys.Ctx = "commits"
+	ctxChecks   keys.Ctx = "checks"
 	// ctxLogs replaces ctxChecks while a log is open, rather than sitting in
 	// front of it: the checks list's enter and h must not act behind the log.
 	ctxLogs keys.Ctx = "logs"
@@ -74,8 +68,6 @@ var (
 	stackOverview  = detailStack(ctxOverview)
 	stackFiles     = detailStack(ctxFiles)
 	stackDiff      = detailStack(ctxDiff)
-	stackHeader    = detailStack(ctxDiffHeader, ctxDiff)
-	stackVisual    = detailStack(ctxVisual, ctxDiff)
 	stackComments  = detailStack(ctxComments)
 	stackCommits   = detailStack(ctxCommits)
 	stackChecks    = detailStack(ctxChecks)
@@ -91,7 +83,7 @@ var (
 	stackPalette   = []keys.Ctx{ctxPalette}
 	stackSearch    = []keys.Ctx{ctxSearch}
 	stackComposer  = []keys.Ctx{ctxComposer}
-	viewStacks     = [][]keys.Ctx{stackList, stackOverview, stackFiles, stackDiff, stackHeader, stackVisual, stackComments, stackCommits, stackChecks, stackLogs}
+	viewStacks     = [][]keys.Ctx{stackList, stackOverview, stackFiles, stackDiff, stackComments, stackCommits, stackChecks, stackLogs}
 	allStacks      = append(slices.Clone(viewStacks), stackHelp, stackConfirm, stackSuggest, stackMerge, stackFailure, stackStatus, stackLabels, stackRepos, stackPalette, stackSearch, stackComposer)
 	detailTabCtxes = map[detailTabKind]keys.Ctx{
 		tabOverview: ctxOverview, tabFiles: ctxFiles, tabDiff: ctxDiff,
@@ -128,6 +120,12 @@ func nav(ctx keys.Ctx, unit string, footer int, withEnds bool) []keys.Binding {
 // DefaultKeymap returns the built-in table. Footer numbers are priorities:
 // lower survives a narrow terminal longer; 0 keeps a binding out of the footer
 // (it is still in `?` and the palette).
+//
+// LatinOnly marks the uppercase keys (M, L, A, C, J/K, X) a Korean input
+// source cannot type. ghx bound them before the CJK mapping existed; the
+// physical keys work once the source is switched, and every one is also
+// reachable from the palette (`:` types under either source). Actions with a
+// second, non-letter key (R, G/end, H/L with {/}) need no mark.
 func DefaultKeymap() keys.Keymap {
 	var bs []keys.Binding
 	add := func(b ...keys.Binding) { bs = append(bs, b...) }
@@ -146,8 +144,8 @@ func DefaultKeymap() keys.Keymap {
 	add(
 		keys.Binding{Action: "approve", Keys: []string{"a"}, Ctx: ctxPR, Group: grpPR, Help: "approve (asks first)", Short: "approve", Footer: 10},
 		keys.Binding{Action: "close", Keys: []string{"x"}, Ctx: ctxPR, Group: grpPR, Help: "close / reopen (asks first)", Short: "close", Footer: 12},
-		keys.Binding{Action: "merge", Keys: []string{"M"}, Ctx: ctxPR, Group: grpPR, Help: "merge (asks first)", Short: "merge", Footer: 11},
-		keys.Binding{Action: "labels", Keys: []string{"L"}, Ctx: ctxPR, Group: grpPR, Help: "edit common labels", Short: "labels", Footer: 14},
+		keys.Binding{Action: "merge", Keys: []string{"M"}, LatinOnly: true, Ctx: ctxPR, Group: grpPR, Help: "merge (asks first)", Short: "merge", Footer: 11},
+		keys.Binding{Action: "labels", Keys: []string{"L"}, LatinOnly: true, Ctx: ctxPR, Group: grpPR, Help: "edit common labels", Short: "labels", Footer: 14},
 		keys.Binding{Action: "ready", Keys: []string{"d"}, Ctx: ctxPR, Group: grpPR, Help: "toggle ready / draft (asks first)", Short: "ready/draft", Footer: 15},
 		keys.Binding{Action: "request", Keys: []string{"r"}, Ctx: ctxPR, Group: grpReview, Help: "request changes", Short: "request", Footer: 13},
 		keys.Binding{Action: "browser", Keys: []string{"o"}, Ctx: ctxPR, Group: grpPR, Help: "open in the browser", Short: "browser", Footer: 16},
@@ -159,14 +157,17 @@ func DefaultKeymap() keys.Keymap {
 	add(
 		keys.Binding{Action: "open", Keys: []string{"enter"}, Ctx: ctxList, Group: grpNav, Help: "open the PR", Short: "open", Footer: 3},
 		keys.Binding{Action: "select", Keys: []string{" "}, Ctx: ctxList, Group: grpPR, Help: "toggle the row for multi-select", Short: "select", Footer: 1},
-		keys.Binding{Action: "selectall", Keys: []string{"A"}, Ctx: ctxList, Group: grpPR, Help: "toggle every visible row", Short: "all", Footer: 2},
+		keys.Binding{Action: "selectall", Keys: []string{"A"}, LatinOnly: true, Ctx: ctxList, Group: grpPR, Help: "toggle every visible row", Short: "all", Footer: 2},
 		keys.Binding{Action: "showpreview", Keys: []string{"l", "right"}, Ctx: ctxList, Group: grpNav, Help: "show / focus the preview"},
 		keys.Binding{Action: "hidepreview", Keys: []string{"h", "left"}, Ctx: ctxList, Group: grpNav, Help: "unfocus / hide the preview"},
 		keys.Binding{Action: "narrower", Keys: []string{"["}, Ctx: ctxList, Group: grpNav, Help: "shrink the list pane"},
 		keys.Binding{Action: "wider", Keys: []string{"]"}, Ctx: ctxList, Group: grpNav, Help: "grow the list pane"},
 		keys.Binding{Action: "nextsource", Keys: []string{"tab"}, Ctx: ctxList, Group: grpNav, Help: "next source tab"},
 		keys.Binding{Action: "prevsource", Keys: []string{"shift+tab"}, Ctx: ctxList, Group: grpNav, Help: "previous source tab"},
-		keys.Binding{Action: "source", Keys: []string{"1", "2", "3", "4", "5", "6", "7", "8", "9"}, Ctx: ctxList, Group: grpNav, Help: "jump to source tab N (* marks the repo you are in)"},
+		// The digit jumps go by position in Keys (KeyIndex), so a user who
+		// rebinds them to F1..F9 still jumps by position.
+		keys.Binding{Action: "source", Keys: []string{"1", "2", "3", "4", "5", "6", "7", "8", "9"}, KeyLabel: "1-9", NoPalette: true,
+			Ctx: ctxList, Group: grpNav, Help: "jump to source tab N (* marks the repo you are in)"},
 		keys.Binding{Action: "status", Keys: []string{"f"}, Ctx: ctxList, Group: grpFilters, Help: "filter by PR status", Short: "status", Footer: 20},
 		keys.Binding{Action: "search", Keys: []string{"/"}, Ctx: ctxList, Group: grpFilters, Help: "search text; combines with status filters", Short: "search", Footer: 22},
 		keys.Binding{Action: "clear", Keys: []string{"esc"}, Ctx: ctxList, Group: grpFilters, Help: "clear text, then status, then selection"},
@@ -177,12 +178,12 @@ func DefaultKeymap() keys.Keymap {
 	// detail — shared by every tab
 	add(
 		keys.Binding{Action: "back", Keys: []string{"esc"}, Ctx: ctxDetail, Group: grpNav, Help: "back to the list", Short: "back", Footer: 9},
-		keys.Binding{Action: "detailtab", Keys: []string{"1", "2", "3", "4", "5", "6"}, Ctx: ctxDetail, Group: grpViews,
+		keys.Binding{Action: "detailtab", Keys: []string{"1", "2", "3", "4", "5", "6"}, KeyLabel: "1-6", NoPalette: true, Ctx: ctxDetail, Group: grpViews,
 			Help: "tab: 1 Overview · 2 Files · 3 Diff · 4 Comments · 5 Commits · 6 Checks"},
-		keys.Binding{Action: "prcomment", Keys: []string{"C"}, Ctx: ctxDetail, Group: grpReview, Help: "PR-level comment"},
+		keys.Binding{Action: "prcomment", Keys: []string{"C"}, LatinOnly: true, Ctx: ctxDetail, Group: grpReview, Help: "PR-level comment"},
 		// M opens the strategy prompt here rather than the list's confirmation:
 		// with one PR open there is a strategy to choose.
-		keys.Binding{Action: "merge", Keys: []string{"M"}, Ctx: ctxDetail, Group: grpPR, Help: "merge (asks first)", Short: "merge", Footer: 11},
+		keys.Binding{Action: "merge", Keys: []string{"M"}, LatinOnly: true, Ctx: ctxDetail, Group: grpPR, Help: "merge (asks first)", Short: "merge", Footer: 11},
 		// Explicitly asking to refresh must not be answered from disk.
 		keys.Binding{Action: "refresh", Keys: []string{"R"}, Ctx: ctxDetail, Group: grpOther, Help: "refresh"},
 		// h/l cycle tabs wherever the tab has no use for them. The diff claims
@@ -208,14 +209,23 @@ func DefaultKeymap() keys.Keymap {
 	)
 
 	// diff
-	add(nav(ctxDiff, "line", 1, true)...)
+	// On a file header h/l fold rather than switch columns, and in a visual
+	// range j/k extend it: the same actions, so only the footer label follows
+	// the cursor (GroupLabels, picked by diffView.keyState).
+	diffNav := nav(ctxDiff, "line", 1, true)
+	for i := range diffNav[:2] {
+		diffNav[i].GroupLabels = map[string]string{"visual": "extend"}
+	}
+	add(diffNav...)
 	add(
-		keys.Binding{Action: "nexthunk", Keys: []string{"J"}, Ctx: ctxDiff, Group: grpNav, Help: "next hunk", Footer: 2, FooterGroup: "hunk"},
-		keys.Binding{Action: "prevhunk", Keys: []string{"K"}, Ctx: ctxDiff, Group: grpNav, Help: "previous hunk", Footer: 2, FooterGroup: "hunk"},
+		keys.Binding{Action: "nexthunk", Keys: []string{"J"}, LatinOnly: true, Ctx: ctxDiff, Group: grpNav, Help: "next hunk", Footer: 2, FooterGroup: "hunk"},
+		keys.Binding{Action: "prevhunk", Keys: []string{"K"}, LatinOnly: true, Ctx: ctxDiff, Group: grpNav, Help: "previous hunk", Footer: 2, FooterGroup: "hunk"},
 		keys.Binding{Action: "prevfile", Keys: []string{"H", "{"}, Ctx: ctxDiff, Group: grpNav, Help: "previous file", Footer: 3, FooterGroup: "file"},
 		keys.Binding{Action: "nextfile", Keys: []string{"L", "}"}, Ctx: ctxDiff, Group: grpNav, Help: "next file", Footer: 3, FooterGroup: "file"},
-		keys.Binding{Action: "left", Keys: []string{"h", "left"}, Ctx: ctxDiff, Group: grpReview, Help: "old column (side-by-side)", Footer: 4, FooterGroup: "column"},
-		keys.Binding{Action: "right", Keys: []string{"l", "right"}, Ctx: ctxDiff, Group: grpReview, Help: "new column (side-by-side)", Footer: 4, FooterGroup: "column"},
+		keys.Binding{Action: "left", Keys: []string{"h", "left"}, Ctx: ctxDiff, Group: grpReview, Help: "old column (side-by-side); fold the file on its header",
+			Footer: 4, FooterGroup: "column", GroupLabels: map[string]string{"header": "fold"}},
+		keys.Binding{Action: "right", Keys: []string{"l", "right"}, Ctx: ctxDiff, Group: grpReview, Help: "new column (side-by-side); unfold the file on its header",
+			Footer: 4, FooterGroup: "column", GroupLabels: map[string]string{"header": "fold"}},
 		keys.Binding{Action: "comment", Keys: []string{"c"}, Ctx: ctxDiff, Group: grpReview, Help: "comment on the line (reply on a thread)", Short: "comment",
 			Labels: map[string]string{"thread": "reply"}, Footer: 5},
 		keys.Binding{Action: "visual", Keys: []string{"v"}, Ctx: ctxDiff, Group: grpReview, Help: "visual range, then c to comment on it", Short: "visual",
@@ -224,21 +234,15 @@ func DefaultKeymap() keys.Keymap {
 			Labels: map[string]string{"unified": "side-by-side", "sbs": "unified"}, Footer: 7},
 		keys.Binding{Action: "thread", Keys: []string{"enter"}, Ctx: ctxDiff, Group: grpReview, Help: "expand a thread / reply to it", Short: "thread",
 			Labels: map[string]string{"replies": "replies", "reply": "reply"}, Footer: 8},
-		keys.Binding{Action: "apply", Keys: []string{"A"}, Ctx: ctxDiff, Group: grpReview, Help: "apply the suggestion under the cursor (asks first)", Short: "apply suggestion", Footer: 2},
+		keys.Binding{Action: "apply", Keys: []string{"A"}, LatinOnly: true, Ctx: ctxDiff, Group: grpReview, Help: "apply the suggestion under the cursor (asks first)", Short: "apply suggestion", Footer: 2},
 		keys.Binding{Action: "fold", Keys: []string{"o"}, Ctx: ctxDiff, Group: grpReview, Help: "fold / unfold the file", Short: "fold", Footer: 9},
-	)
-	add(
-		keys.Binding{Action: "left", Keys: []string{"h", "left"}, Ctx: ctxDiffHeader, Group: grpReview, Help: "fold the file (on its header)", Footer: 4, FooterGroup: "fold"},
-		keys.Binding{Action: "right", Keys: []string{"l", "right"}, Ctx: ctxDiffHeader, Group: grpReview, Help: "unfold the file (on its header)", Footer: 4, FooterGroup: "fold"},
-		keys.Binding{Action: "down", Keys: []string{"j", "down"}, Ctx: ctxVisual, Group: grpReview, Help: "extend the range down", Footer: 1, FooterGroup: "extend"},
-		keys.Binding{Action: "up", Keys: []string{"k", "up"}, Ctx: ctxVisual, Group: grpReview, Help: "extend the range up", Footer: 1, FooterGroup: "extend"},
 	)
 
 	// comments
 	add(nav(ctxComments, "row", 1, false)...)
 	add(
 		keys.Binding{Action: "reply", Keys: []string{"c"}, Ctx: ctxComments, Group: grpReview, Help: "reply to the thread or PR comment", Short: "reply", Footer: 2},
-		keys.Binding{Action: "resolve", Keys: []string{"X"}, Ctx: ctxComments, Group: grpReview, Help: "resolve / unresolve the thread", Short: "resolve", Footer: 3},
+		keys.Binding{Action: "resolve", Keys: []string{"X"}, LatinOnly: true, Ctx: ctxComments, Group: grpReview, Help: "resolve / unresolve the thread", Short: "resolve", Footer: 3},
 		keys.Binding{Action: "jumpdiff", Keys: []string{"d"}, Ctx: ctxComments, Group: grpReview, Help: "jump to the thread in the diff", Short: "diff", Footer: 4},
 		keys.Binding{Action: "resolvedfilter", Keys: []string{"t"}, Ctx: ctxComments, Group: grpReview,
 			Help: "show / hide resolved threads (○ open · ✓ resolved · ? unknown)", Labels: map[string]string{"hiding": "show all", "showing": "hide done"}, Footer: 5},
@@ -360,15 +364,4 @@ func footerStyle() keys.FooterStyle {
 		Key: helpKeyStyle, Desc: helpStyle, More: dimStyle,
 		Names: keyNames, GroupSeparator: "/",
 	}
-}
-
-// pressed is the key string a binding matched, after CJK normalization, so an
-// action bound to several keys (1-9) can tell which one was pressed.
-func pressed(msg tea.KeyMsg) string { return keys.NormalizeCJK(msg).String() }
-
-// keyIndex is the position of the pressed key in b.Keys, or -1. The source and
-// detail-tab jumps use it, so a user who rebinds them to F1..F6 still jumps by
-// position.
-func keyIndex(b keys.Binding, msg tea.KeyMsg) int {
-	return slices.Index(b.Keys, pressed(msg))
 }

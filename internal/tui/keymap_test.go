@@ -14,16 +14,10 @@ import (
 )
 
 // The table must not bind one key to two actions in a context, nor let an
-// inner context hide quit or help. Uppercase keys a Korean input source cannot
-// type (M, A, L…) are reported as Unreachable by the kit; ghx has bound them
-// since before the CJK mapping existed, the physical keys still work with the
-// input source switched, and every one of them is also reachable from the
-// palette — so that kind alone is accepted.
+// inner context hide quit or help, nor leave an action no Korean-layout key
+// reaches unless the binding says it is LatinOnly.
 func TestKeymapHasNoConflicts(t *testing.T) {
 	for _, c := range DefaultKeymap().Conflicts(allStacks...) {
-		if c.Kind == keys.Unreachable {
-			continue
-		}
 		t.Error(c)
 	}
 }
@@ -85,8 +79,8 @@ func appIn(t *testing.T, ctx keys.Ctx) *App {
 	a.copyClipboard = func(context.Context, string, string) error { return nil }
 	tab, ok := map[keys.Ctx]detailTabKind{
 		ctxDetail: tabOverview, ctxOverview: tabOverview, ctxFiles: tabFiles, ctxDiff: tabDiff,
-		ctxDiffHeader: tabDiff, ctxVisual: tabDiff, ctxComments: tabComments,
-		ctxCommits: tabCommits, ctxChecks: tabChecks, ctxLogs: tabChecks,
+		ctxComments: tabComments,
+		ctxCommits:  tabCommits, ctxChecks: tabChecks, ctxLogs: tabChecks,
 	}[ctx]
 	if !ok {
 		return a

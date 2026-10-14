@@ -19,8 +19,10 @@ func ListBindings(ctx keys.Ctx) []keys.Binding {
 		{Action: "up", Keys: []string{"k", "up"}, Ctx: ctx, Group: grpNav, Help: "move up", Footer: 2, FooterGroup: "move"},
 		{Action: "pagedown", Keys: []string{"ctrl+d", "pgdown"}, Ctx: ctx, Group: grpNav, Help: "half a page down"},
 		{Action: "pageup", Keys: []string{"ctrl+u", "pgup"}, Ctx: ctx, Group: grpNav, Help: "half a page up"},
-		{Action: "top", Keys: []string{"g"}, Ctx: ctx, Group: grpNav, Help: "jump to top"},
-		{Action: "bottom", Keys: []string{"G"}, Ctx: ctx, Group: grpNav, Help: "jump to bottom"},
+		// home/end as in the PR app: G alone is unreachable under a Korean
+		// input source.
+		{Action: "top", Keys: []string{"g", "home"}, Ctx: ctx, Group: grpNav, Help: "jump to top"},
+		{Action: "bottom", Keys: []string{"G", "end"}, Ctx: ctx, Group: grpNav, Help: "jump to bottom"},
 		{Action: "search", Keys: []string{"/"}, Ctx: ctx, Group: grpFilters, Help: "search", Footer: 3},
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/keyolk/tuikit/keys"
 )
 
 // isQuit reports whether a returned command is tea.Quit, by running it and
@@ -110,9 +109,6 @@ func TestCtrlCQuitsFromEveryState(t *testing.T) {
 // would silently turn navigation into a write.
 func TestKeymapIsConsistent(t *testing.T) {
 	for _, c := range keymap.Conflicts(allStacks...) {
-		if c.Kind == keys.Unreachable {
-			continue // G: a shifted key a Korean layout does not produce
-		}
 		t.Error(c)
 	}
 }

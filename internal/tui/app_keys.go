@@ -164,7 +164,7 @@ func (a *App) listAction(b keys.Binding, msg tea.KeyMsg) (tea.Cmd, bool) {
 func (a *App) detailAction(b keys.Binding, msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch b.Action {
 	case "detailtab":
-		if i := keyIndex(b, msg); i >= 0 && i < len(a.detail.tabs) {
+		if i := b.KeyIndex(msg); i >= 0 && i < len(a.detail.tabs) {
 			return a.detail.setTab(a.detail.tabs[i]), true
 		}
 		return nil, true
