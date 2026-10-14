@@ -2,12 +2,11 @@ package repodetect
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keyolk/tuikit/tmux"
 )
 
 // The budget has to clear the one-off cost of this process's first fork/exec,
@@ -35,9 +34,9 @@ func TestDetectionSurvivesASlowFirstSpawn(t *testing.T) {
 	// Well short of the ~3.6s measured, because the assertion does not need the
 	// real magnitude — it needs to exceed the two-second budget that produced
 	// the bug, and every second spent here is a second on every test run.
-	slowTmux(t, "0\t"+pane, 2500*time.Millisecond)
+	d := slowTmux(t, "0\t"+pane, 2500*time.Millisecond)
 
-	got := slugs(DetectAll(context.Background(), launch))
+	got := slugs(d.DetectAll(context.Background(), launch))
 	want := []string{"keyolk/ghx", "acme/widget"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("DetectAll = %v, want %v — the budget did not survive a slow "+
@@ -60,7 +59,8 @@ func TestDetectionStillGivesUpOnAHang(t *testing.T) {
 	<-ctx.Done()
 
 	done := make(chan []Result, 1)
-	go func() { done <- DetectAll(ctx, launch) }()
+	d, _ := fakeTmux(t, "")
+	go func() { done <- d.DetectAll(ctx, launch) }()
 	select {
 	case got := <-done:
 		if len(got) != 0 {
@@ -83,14 +83,18 @@ func TestTheBudgetLeavesRoomForTheGitCallsBehindTheListing(t *testing.T) {
 }
 
 // slowTmux is fakeTmux with a delay, for asserting what the budget tolerates.
-func slowTmux(t *testing.T, panes string, delay time.Duration) {
+// The delay honours ctx, as a real exec under CommandContext does.
+func slowTmux(t *testing.T, panes string, delay time.Duration) Detector {
 	t.Helper()
-	dir := t.TempDir()
-	script := fmt.Sprintf("#!/bin/sh\nsleep %.2f\ncat <<'PANES'\n%s\nPANES\n",
-		delay.Seconds(), panes)
-	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+	out := paneRows(panes)
+	f := tmux.NewFake()
+	f.Func = func(ctx context.Context, args []string) ([]byte, error) {
+		select {
+		case <-time.After(delay):
+			return []byte(out), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	return Detector{Tmux: tmux.Client{Runner: f}, Pane: ownPane}
 }

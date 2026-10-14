@@ -80,7 +80,7 @@ func TestDetectFromWorkingDirectory(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir, "https://github.com/keyolk/ghx.git")
 
-	got := Detect(context.Background(), dir)
+	got := outside.Detect(context.Background(), dir)
 	if !got.Found() {
 		t.Fatal("nothing detected in a repository with a GitHub remote")
 	}
@@ -101,7 +101,7 @@ func TestDetectFromSubdirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := Detect(context.Background(), sub)
+	got := outside.Detect(context.Background(), sub)
 	if got.Slug != "acme/widget" {
 		t.Errorf("slug = %q, want acme/widget", got.Slug)
 	}
@@ -121,7 +121,7 @@ func TestDetectFromLinkedWorktree(t *testing.T) {
 	wt := filepath.Join(root, ".worktree", "feature")
 	runGit(t, root, "worktree", "add", "-q", "-b", "feature", wt)
 
-	got := Detect(context.Background(), wt)
+	got := outside.Detect(context.Background(), wt)
 	if got.Slug != "acme/soda" {
 		t.Errorf("slug = %q, want acme/soda (a worktree is still the repo)", got.Slug)
 	}
@@ -130,11 +130,8 @@ func TestDetectFromLinkedWorktree(t *testing.T) {
 // Outside a repository nothing is detected — and specifically no guess is made,
 // because a wrong leading tab is worse than none.
 func TestDetectOutsideRepositoryFindsNothing(t *testing.T) {
-	// TMUX is cleared so the fallback cannot reach into a real session and make
-	// the result depend on the developer's terminal.
-	t.Setenv("TMUX", "")
 
-	got := Detect(context.Background(), t.TempDir())
+	got := outside.Detect(context.Background(), t.TempDir())
 	if got.Found() {
 		t.Errorf("detected %q outside any repository", got.Slug)
 	}
@@ -143,22 +140,20 @@ func TestDetectOutsideRepositoryFindsNothing(t *testing.T) {
 // A repository whose remote is not GitHub yields nothing: its PRs do not live
 // anywhere gh can reach.
 func TestDetectIgnoresNonGitHubRemote(t *testing.T) {
-	t.Setenv("TMUX", "")
 	dir := t.TempDir()
 	initRepo(t, dir, "git@gitlab.com:group/project.git")
 
-	if got := Detect(context.Background(), dir); got.Found() {
+	if got := outside.Detect(context.Background(), dir); got.Found() {
 		t.Errorf("detected %q from a GitLab remote", got.Slug)
 	}
 }
 
 // A repository with no remote at all is not an error, just not detectable.
 func TestDetectRepositoryWithoutRemote(t *testing.T) {
-	t.Setenv("TMUX", "")
 	dir := t.TempDir()
 	initRepo(t, dir, "")
 
-	if got := Detect(context.Background(), dir); got.Found() {
+	if got := outside.Detect(context.Background(), dir); got.Found() {
 		t.Errorf("detected %q with no remote configured", got.Slug)
 	}
 }
@@ -170,7 +165,7 @@ func TestDetectPrefersOrigin(t *testing.T) {
 	initRepo(t, dir, "https://github.com/me/fork.git")
 	runGit(t, dir, "remote", "add", "upstream", "https://github.com/acme/original.git")
 
-	got := Detect(context.Background(), dir)
+	got := outside.Detect(context.Background(), dir)
 	if got.Slug != "me/fork" {
 		t.Errorf("slug = %q, want me/fork (origin takes precedence)", got.Slug)
 	}
@@ -182,7 +177,7 @@ func TestDetectFallsBackToUpstream(t *testing.T) {
 	initRepo(t, dir, "")
 	runGit(t, dir, "remote", "add", "upstream", "https://github.com/acme/original.git")
 
-	got := Detect(context.Background(), dir)
+	got := outside.Detect(context.Background(), dir)
 	if got.Slug != "acme/original" {
 		t.Errorf("slug = %q, want acme/original", got.Slug)
 	}
@@ -194,7 +189,7 @@ func TestDetectFallsBackToAnyRemote(t *testing.T) {
 	initRepo(t, dir, "")
 	runGit(t, dir, "remote", "add", "fork", "https://github.com/o/n.git")
 
-	if got := Detect(context.Background(), dir); got.Slug != "o/n" {
+	if got := outside.Detect(context.Background(), dir); got.Slug != "o/n" {
 		t.Errorf("slug = %q, want o/n", got.Slug)
 	}
 }
@@ -202,12 +197,11 @@ func TestDetectFallsBackToAnyRemote(t *testing.T) {
 // A nonexistent or non-directory path must be handled quietly: detection runs at
 // startup and may be handed anything.
 func TestDetectHandlesBadPaths(t *testing.T) {
-	t.Setenv("TMUX", "")
 	file := filepath.Join(t.TempDir(), "a-file")
 	writeFile(t, file, "not a directory")
 
 	for _, p := range []string{"", "/definitely/not/here", file} {
-		if got := Detect(context.Background(), p); got.Found() {
+		if got := outside.Detect(context.Background(), p); got.Found() {
 			t.Errorf("Detect(%q) returned %q", p, got.Slug)
 		}
 	}
@@ -269,7 +263,7 @@ func TestSlugFromUnconventionalRemoteIsStable(t *testing.T) {
 	runGit(t, dir, "remote", "add", "alpha", "https://github.com/a/first.git")
 
 	for i := 0; i < 3; i++ {
-		got := Detect(context.Background(), dir)
+		got := outside.Detect(context.Background(), dir)
 		if got.Slug != "a/first" {
 			t.Fatalf("run %d: slug = %q, want a/first (the stable first remote)", i, got.Slug)
 		}

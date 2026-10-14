@@ -34,6 +34,17 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	// A decoy against the developer's tmux. The workspace sweep lists the
+	// window's panes through repodetect.New(nil), which reads $TMUX; with it
+	// unset that Client runs nothing, so a test that drives a sweep cannot
+	// list — or depend on — the panes of the window `go test` was started in.
+	// Tests that need panes hand the workspace a tmux.Fake.
+	for _, k := range []string{"TMUX", "TMUX_PANE"} {
+		if err := os.Unsetenv(k); err != nil {
+			fmt.Fprintln(os.Stderr, "unset "+k+":", err)
+			os.Exit(1)
+		}
+	}
 	code := m.Run()
 	if err := os.RemoveAll(home); err != nil {
 		fmt.Fprintln(os.Stderr, "remove test home:", err)

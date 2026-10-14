@@ -74,6 +74,10 @@ type workspace struct {
 	// field is what lets a test drive a sweep without touching the process's
 	// own working directory.
 	dir string
+	// detect lists the window's panes through tuikit's tmux.Client. A field,
+	// like dir, so a test hands it a tmux.Fake instead of reaching the
+	// developer's real tmux.
+	detect repodetect.Detector
 	// watchers is one per checkout *path*, not per repository.
 	//
 	// Keying by slug would be the obvious choice — a repo is one tab, so one
@@ -107,6 +111,7 @@ func newWorkspace() *workspace {
 	}
 	return &workspace{
 		dir:      dir,
+		detect:   repodetect.New(nil),
 		watchers: make(map[string]*repowatch.Watcher),
 		pathSlug: make(map[string]string),
 		prev:     make(map[string]repowatch.Snapshot),
@@ -130,6 +135,12 @@ func (w *workspace) seed(repos []string) {
 // filesystem; neither may run on the goroutine that draws frames. The result
 // comes back as a message like every other async result in this app.
 //
+// The tmux call is the Client's plain method inside this Cmd rather than its
+// PanesCmd: the pane list is only the first half of a sweep, the git
+// resolution behind it is the expensive half, and the two must come back as
+// one result in candidate order. Splitting them would add a message hop
+// without moving anything further off the UI loop — nothing here runs there.
+//
 // The watcher map is read and written only from the returned closure's caller —
 // handleWorkspaceScan — never inside the closure, so the sweep needs no lock.
 func (w *workspace) scanCmd(paneDetection bool, gen uint64) tea.Cmd {
@@ -140,7 +151,7 @@ func (w *workspace) scanCmd(paneDetection bool, gen uint64) tea.Cmd {
 		w    *repowatch.Watcher
 		prev repowatch.Snapshot
 	}
-	dir := w.dir
+	dir, detect := w.dir, w.detect
 	targets := make([]target, 0, len(w.watchers))
 	for path, watcher := range w.watchers {
 		targets = append(targets, target{path: path, w: watcher, prev: w.prev[path]})
@@ -150,8 +161,8 @@ func (w *workspace) scanCmd(paneDetection bool, gen uint64) tea.Cmd {
 		defer cancel()
 		var repos []repodetect.Result
 		if paneDetection {
-			repos = repodetect.DetectAll(ctx, dir)
-		} else if r := repodetect.Detect(ctx, dir); r.Found() {
+			repos = detect.DetectAll(ctx, dir)
+		} else if r := detect.Detect(ctx, dir); r.Found() {
 			repos = []repodetect.Result{r}
 		}
 		// The snapshot taken here is the one carried back, not one re-taken on

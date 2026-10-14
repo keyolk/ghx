@@ -253,6 +253,12 @@ func verifyAccounts(ctx context.Context, client accountVerifier, accounts []conf
 // launch directory, then the current tmux window's panes. It is the single
 // definition of "the repo I am working on" — the PR list leads with all of
 // them, and the admin/actions subcommands take the first as their target.
+//
+// It runs synchronously, before tea.NewProgram, and that is deliberate: its
+// answer decides which account the gh pre-flight authenticates (detected[0])
+// and which tabs the first frame holds, so there is nothing to draw until it
+// returns and no Update loop yet for a tmux call to stall. Every later
+// detection — the workspace sweep — runs inside a tea.Cmd.
 func detectRepos(ctx context.Context, cfg *config.Config) []string {
 	if !cfg.RepoDetectionEnabled() {
 		return nil
@@ -261,10 +267,11 @@ func detectRepos(ctx context.Context, cfg *config.Config) []string {
 	if err != nil {
 		return nil
 	}
+	d := repodetect.New(nil)
 	var found []repodetect.Result
 	if cfg.PaneDetectionEnabled() {
-		found = repodetect.DetectAll(ctx, wd)
-	} else if r := repodetect.Detect(ctx, wd); r.Found() {
+		found = d.DetectAll(ctx, wd)
+	} else if r := d.Detect(ctx, wd); r.Found() {
 		found = []repodetect.Result{r}
 	}
 	out := make([]string, 0, len(found))

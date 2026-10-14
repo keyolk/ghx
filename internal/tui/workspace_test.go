@@ -25,6 +25,7 @@ func workspaceApp(t *testing.T) *App {
 	// Detection would otherwise reach the developer's real tmux window and
 	// working directory, making the test depend on where it was run from.
 	a.workspace.dir = t.TempDir()
+	a.workspace.detect = repodetect.New(func(string) string { return "" })
 	return a
 }
 
