@@ -127,16 +127,16 @@ func (a *App) openRepo(slug string) tea.Cmd {
 	if a.list == nil || !validRepoSlug(slug) {
 		return errCmd(fmt.Errorf("not a repository: %q", slug))
 	}
-	a.repoStore.record(slug, a.now())
+	save := a.repoStore.record(slug, a.now())
 	if i, ok := a.list.sourceForRepo(slug); ok {
-		return a.list.selectTab(i)
+		return tea.Batch(save, a.list.selectTab(i))
 	}
 	a.list.appendSource(config.SourceDef{
 		Name:  config.ShortRepoName(slug),
 		Query: "state:open",
 		Repo:  slug,
 	}, nil)
-	return a.list.selectTab(len(a.list.sources) - 1)
+	return tea.Batch(save, a.list.selectTab(len(a.list.sources)-1))
 }
 
 func (a *App) renderRepoPicker(width, height int) string {

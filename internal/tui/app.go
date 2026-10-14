@@ -72,6 +72,8 @@ type App struct {
 	// someone actually works in. It outlives the process — the ranking is only
 	// useful once it has watched a few sessions.
 	repoStore *repoStore
+	// startupSave persists the launch directory's visit; Init runs it.
+	startupSave tea.Cmd
 
 	// suggestion gates applying a review suggestion — the only action in the
 	// diff view that writes a commit to someone's branch.
@@ -179,8 +181,11 @@ func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedR
 	// evidence that anyone opened them: counting a wide window as eight visits
 	// would let whatever happened to be split beside the work outrank the repo
 	// ghx was actually started in.
+	//
+	// The write is held for Init: NewApp runs before the program starts, and
+	// a failure reported from here would have nowhere to be shown.
 	if len(detectedRepos) > 0 {
-		a.repoStore.record(detectedRepos[0], a.lastKeyAt)
+		a.startupSave = a.repoStore.record(detectedRepos[0], a.lastKeyAt)
 	}
 	// Startup detection is the baseline: these repos already have tabs, so the
 	// first sweep must not announce them as newly appeared.
@@ -385,6 +390,7 @@ func (a *App) Init() tea.Cmd {
 		spinnerTickCmd(),
 		a.armPoll(),
 		a.armWorkspace(),
+		a.startupSave,
 	}
 	// Account verification is a `gh auth status` round trip per account. Running
 	// it here rather than before tea.NewProgram keeps it off the path to the
