@@ -214,7 +214,11 @@ func (v *diffView) renderSideBySide(width, height int) string {
 		// means the terminal shrank mid-render. Say so instead of drawing
 		// unreadable slivers — and do not call back into render(), which would
 		// recurse straight back here.
-		return dimStyle.Render("Terminal too narrow for side-by-side — press s for unified.")
+		msg := "Terminal too narrow for side-by-side."
+		if k, ok := keyName(v.km, stackDiff, "layout", v.keyOpts()); ok {
+			msg = "Terminal too narrow for side-by-side — press " + k + " for unified."
+		}
+		return dimStyle.Render(msg)
 	}
 
 	// Pair with the column width so comments wrap inside their own column

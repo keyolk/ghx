@@ -365,3 +365,14 @@ func footerStyle() keys.FooterStyle {
 		Names: keyNames, GroupSeparator: "/",
 	}
 }
+
+// keyName is the key that runs action in stack right now, as the footer
+// names it, so prose that tells the user what to press follows their
+// overrides. ok is false when no key reaches it; the caller drops the advice.
+func keyName(km keys.Keymap, stack []keys.Ctx, action string, o keys.Opts) (string, bool) {
+	k, ok := km.Or(defaultKeymap).KeyFor(stack, action, o)
+	if !ok {
+		return "", false
+	}
+	return keyNames.Name(k), true
+}

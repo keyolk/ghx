@@ -265,8 +265,11 @@ func (c *commentsView) render(width, height int) string {
 		// started this: the tab was telling the truth about threads and the
 		// wrong thing about the PR.
 		if len(c.threads) > 0 {
-			return dimStyle.Render(fmt.Sprintf(
-				"All %d threads are resolved — press t to show them.", len(c.threads)))
+			msg := fmt.Sprintf("All %d threads are resolved.", len(c.threads))
+			if k, ok := keyName(c.km, stackComments, "resolvedfilter", c.keyOpts()); ok {
+				msg = fmt.Sprintf("All %d threads are resolved — press %s to show them.", len(c.threads), k)
+			}
+			return dimStyle.Render(msg)
 		}
 		return dimStyle.Render("No comments on this PR.")
 	}

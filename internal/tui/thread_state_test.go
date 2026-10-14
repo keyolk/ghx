@@ -230,3 +230,21 @@ func TestLegendIsDroppedRatherThanTruncated(t *testing.T) {
 		t.Errorf("the legend was dropped despite fitting: %q", got)
 	}
 }
+
+// The empty-tab advice names the key that shows resolved threads now, so a
+// user who rebound it is not told to press a key that does nothing.
+func TestAllResolvedAdviceNamesTheBoundKey(t *testing.T) {
+	c := newCommentsView()
+	c.threads = threeThreads()[1:2] // the resolved one; hidden by default
+	if got := stripANSISeqs(c.render(80, 10)); !strings.Contains(got, "press t to show them") {
+		t.Errorf("default advice: %q", got)
+	}
+	km, err := DefaultKeymap().Override(map[string][]string{"resolvedfilter": {"T"}}, allStacks...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.km = km
+	if got := stripANSISeqs(c.render(80, 10)); !strings.Contains(got, "press T to show them") {
+		t.Errorf("advice after rebinding t to T: %q", got)
+	}
+}
