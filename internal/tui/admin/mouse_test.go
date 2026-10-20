@@ -99,6 +99,29 @@ func TestSecondClickOnATeamDrillsIn(t *testing.T) {
 	}
 }
 
+// A key between two clicks breaks the pair. Click a team, j, k back to it,
+// click again inside the double-click window: that is a fresh first click,
+// so it selects and must not drill into the team.
+func TestKeyBetweenClicksBreaksTheDoubleClick(t *testing.T) {
+	a := teamApp(t, []gh.Team{{Slug: "core", Permission: "push"}, {Slug: "infra", Permission: "admin"}, {Slug: "web", Permission: "pull"}})
+	clockAt(a)
+	x, y := at(t, a, "infra")
+	click(a, x, y)
+	a.Update(keyMsg("j"))
+	a.Update(keyMsg("k"))
+	if a.pane.Cursor != 1 {
+		t.Fatalf("cursor = %d after j, k; want back on 1 (infra)", a.pane.Cursor)
+	}
+	a.View()
+	click(a, x, y)
+	if a.teamSlug != "" {
+		t.Fatalf("teamSlug = %q: a key between the clicks must break the double click", a.teamSlug)
+	}
+	if a.pane.Cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 (infra) still selected", a.pane.Cursor)
+	}
+}
+
 func TestSecondClickWhileLoadingDoesNotDrillIn(t *testing.T) {
 	a := teamApp(t, []gh.Team{{Slug: "core"}, {Slug: "infra"}})
 	clockAt(a)

@@ -85,6 +85,28 @@ func TestClickSelectsARowAndASecondClickOpensItsLogs(t *testing.T) {
 	}
 }
 
+// A key between two clicks breaks the pair. Click a run, j, k back to it,
+// click again inside the double-click window: that is a fresh first click,
+// so it selects and must not fetch the run's logs.
+func TestKeyBetweenClicksBreaksTheDoubleClick(t *testing.T) {
+	a := mouseApp(t)
+	x, y := at(t, a, "build-004")
+	click(a, x, y)
+	a.Update(keyMsg("j"))
+	a.Update(keyMsg("k"))
+	if a.pane.Cursor != 4 {
+		t.Fatalf("cursor = %d after j, k; want back on 4", a.pane.Cursor)
+	}
+	a.View()
+	click(a, x, y)
+	if a.logBusy {
+		t.Fatal("a key between the clicks must break the double click; logs were fetched")
+	}
+	if a.pane.Cursor != 4 {
+		t.Fatalf("cursor = %d, want 4 still selected", a.pane.Cursor)
+	}
+}
+
 func TestSecondClickOnAWorkflowDoesNothing(t *testing.T) {
 	a := mouseApp(t)
 	a.run("tab", 1)

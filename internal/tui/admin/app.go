@@ -243,6 +243,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.handleMouse(msg)
 
 	case tea.KeyMsg:
+		// A key between two clicks breaks the pair: click, move away and back
+		// by keyboard, click again must not count as a double click.
+		a.clicks = mouse.Clicks{}
 		a.toast.Ack()
 		return a, a.handleKey(msg)
 
