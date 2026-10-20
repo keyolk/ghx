@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -163,6 +164,29 @@ func TestLabelPickerClickSelectsAndSecondClickToggles(t *testing.T) {
 	}
 }
 
+// The label picker scrolls too; a click must land on the row drawn there.
+func TestLabelPickerClickOnAScrolledListHitsTheRowDrawn(t *testing.T) {
+	a := labelApp(t)
+	a.labels.all = nil
+	for i := range 80 {
+		a.labels.all = append(a.labels.all, gh.RepoLabel{Name: fmt.Sprintf("lbl%02d", i)})
+	}
+	a.View()
+	for range 70 {
+		a.labels.cursor++
+		a.View()
+	}
+	if a.labels.offset == 0 {
+		t.Fatal("test setup: the picker did not scroll")
+	}
+	want := a.labels.visible()[a.labels.offset+1].Name
+	x, y := at(t, a, want)
+	click(a, x, y)
+	if got := a.labels.visible()[a.labels.cursor].Name; got != want {
+		t.Fatalf("clicked %s, selected %s", want, got)
+	}
+}
+
 func TestLabelPickerOutsideCancelsAndInsideNeverTypes(t *testing.T) {
 	a := labelApp(t)
 	x, y := at(t, a, "filter:")
@@ -198,6 +222,31 @@ func TestRepoPickerClickSelectsAndSecondClickOpens(t *testing.T) {
 	}
 	if len(a.list.sources) != tabs+1 || a.list.sources[a.list.curTab].Repo != "acme/beta" {
 		t.Fatalf("sources = %v, want a tab for acme/beta", a.list.sources)
+	}
+}
+
+// A picker longer than its box scrolls; the row under the pointer is then
+// offset+N, not N. Without the offset a click selects a row scrolled away.
+func TestRepoPickerClickOnAScrolledListHitsTheRowDrawn(t *testing.T) {
+	a := mouseApp(t)
+	var all []repoCandidate
+	for i := range 80 {
+		all = append(all, repoCandidate{Slug: fmt.Sprintf("acme/r%02d", i), Visits: 80 - i})
+	}
+	a.repos = &repoPicker{all: all}
+	a.View()
+	for range 70 {
+		a.repos.cursor++
+		a.View() // the picker re-fits its offset while drawing
+	}
+	if a.repos.offset == 0 {
+		t.Fatal("test setup: the picker did not scroll")
+	}
+	want := a.repos.visible()[a.repos.offset+1].Slug
+	x, y := at(t, a, want)
+	click(a, x, y)
+	if got := a.repos.visible()[a.repos.cursor].Slug; got != want {
+		t.Fatalf("clicked %s, selected %s", want, got)
 	}
 }
 
