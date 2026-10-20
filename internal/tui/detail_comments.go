@@ -274,10 +274,18 @@ func (c *commentsView) render(width, height int) string {
 		return dimStyle.Render("No comments on this PR.")
 	}
 
-	// Build display lines first, tracking which line each row starts on so the
-	// cursor can be kept visible even when a row spans several lines.
-	var lines []string
-	starts := make([]int, 0, c.rowCount())
+	lines, starts := c.layoutLines(width)
+	c.clampOffsetLines(starts, len(lines), height)
+	end := min(c.offset+height, len(lines))
+	return strings.Join(lines[c.offset:end], "\n")
+}
+
+// layoutLines is every display line of the tab and the line each row starts
+// on, so the cursor can be kept visible even when a row spans several lines.
+// render draws from it and the mouse hit test measures it.
+func (c *commentsView) layoutLines(width int) (lines []string, starts []int) {
+	v := c.visible()
+	starts = make([]int, 0, c.rowCount())
 	for i, t := range v {
 		starts = append(starts, len(lines))
 		lines = append(lines, c.threadHeader(t, i == c.cursor, width))
@@ -304,9 +312,7 @@ func (c *commentsView) render(width, height int) string {
 		}
 	}
 
-	c.clampOffsetLines(starts, len(lines), height)
-	end := min(c.offset+height, len(lines))
-	return strings.Join(lines[c.offset:end], "\n")
+	return lines, starts
 }
 
 // conversationHeader draws one PR-level comment as a single row, matching the

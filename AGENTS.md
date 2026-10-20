@@ -55,6 +55,11 @@ actions.
   table이고, 각자 `keys-admin.yaml`/`keys-actions.yaml`을 읽는다(`keys.ConfigPath("ghx", sub)`)
 - `internal/tui/ui_state.go` — 탭·필터·split·상세 탭을 `$XDG_STATE_HOME/ghx/ui.json`에 보존
   (tuikit `prefs.Saver`, debounce + quit 시 Flush). 감지된 repo가 있으면 저장된 탭보다 우선
+- `internal/tui/mouse.go`, `mouse_overlay.go`, `detail_diff_mouse.go` — 마우스(keyboard-first, tuikit `mouse`).
+  제스처는 전부 키가 부르는 함수로 간다(탭 클릭=`selectTab`/`setTab`, 두 번째 클릭=Enter 액션, 휠=down/up ×3).
+  오버레이는 열려 있는 동안 마우스를 소유하고 바깥 클릭은 그 오버레이의 Esc 액션이다. 지오메트리는
+  View가 그리는 값을 그대로 읽는다(`tabCells`, `SplitPane.geometry`, `overlayRect`, `commentsView.layoutLines`).
+  `admin`/`actions`는 각자 `mouse.go`
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
 ## Conventions

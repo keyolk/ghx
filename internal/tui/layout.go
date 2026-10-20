@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/keyolk/tuikit/mouse"
 )
 
 // layout.go holds the layout primitives shared across views: paneBox,
@@ -129,6 +130,34 @@ func overlayBody(base, overlay string, w, h int) string {
 	}
 	return strings.Join(baseLines, "\n")
 }
+
+// overlayRect is where overlayBody puts overlay in a body h rows tall, in body
+// coordinates (row 0 is the body's first row, not the screen's). It follows
+// overlayBody's own rules — clipped from the top when taller than h, anchored
+// to the bottom — so the mouse tests the box that was drawn. clipped is how
+// many of the overlay's own top lines that clip cut off. X is 0 because an
+// overlay line replaces the whole base line it lands on.
+func overlayRect(overlay string, h int) (r mouse.Rect, clipped int) {
+	if overlay == "" || h <= 0 {
+		return mouse.Rect{}, 0
+	}
+	lines := strings.Split(overlay, "\n")
+	if len(lines) > h {
+		clipped = len(lines) - h
+		lines = lines[clipped:]
+	}
+	w := 0
+	for _, l := range lines {
+		w = max(w, lipgloss.Width(l))
+	}
+	return mouse.Rect{X: 0, Y: h - len(lines), W: w, H: len(lines)}, clipped
+}
+
+// pickerRows is how many option rows a list picker's box of height boxH has
+// room for: its two border rows, the prompt line, the blank line and the hints
+// take the rest. The label and repo pickers draw with it and the mouse hit
+// test reads it.
+func pickerRows(boxH int) int { return max(boxH-5, 1) }
 
 func intToStr(n int) string {
 	if n == 0 {

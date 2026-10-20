@@ -245,20 +245,30 @@ func (a *App) renderMergePrompt(width, height int) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("Merge #%d into %s?\n", num, base))
 	b.WriteString(checkFailStyle.Render("This cannot be undone.") + "\n\n")
-	b.WriteString("Strategy: " + strategyChoice(p.strategy) + "\n\n")
+	b.WriteString(strategyLabel + strategyChoice(p.strategy) + "\n\n")
 	b.WriteString(a.modalHints(stackMerge, min(width-4, 70)-4))
 	return decoratedPane("confirm merge", b.String(), min(width-4, 70), 9, true)
 }
 
-func strategyChoice(cur string) string {
-	opts := []string{"squash", "merge", "rebase"}
-	parts := make([]string, 0, len(opts))
-	for _, o := range opts {
+// mergeStrategies are the choices the merge prompt offers, in drawing order.
+var mergeStrategies = []string{"squash", "merge", "rebase"}
+
+// strategyParts is the choice line's pieces, one per strategy.
+func strategyParts(cur string) []string {
+	parts := make([]string, 0, len(mergeStrategies))
+	for _, o := range mergeStrategies {
 		if o == cur {
 			parts = append(parts, tabActiveStyle.Render("["+o+"]"))
 		} else {
 			parts = append(parts, dimStyle.Render(" "+o+" "))
 		}
 	}
-	return strings.Join(parts, " ")
+	return parts
+}
+
+// strategyLabel prefixes the choice line; the mouse hit test measures it.
+const strategyLabel = "Strategy: "
+
+func strategyChoice(cur string) string {
+	return strings.Join(strategyParts(cur), " ")
 }

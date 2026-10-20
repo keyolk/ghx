@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 	ansi "github.com/charmbracelet/x/ansi"
+	"github.com/keyolk/tuikit/mouse"
 )
 
 // SplitPane manages a list + viewport split layout with focus toggling.
@@ -132,35 +133,56 @@ func (sp *SplitPane) listView(contentH int) string {
 	return strings.Join(headerLines, "\n") + "\n" + sp.List.View()
 }
 
+// paneGeom is where Render draws the split, in cells relative to the pane's
+// top-left corner. Render and the mouse hit test both read it, so a click can
+// only land on what was drawn.
+type paneGeom struct {
+	split   bool // the preview is drawn beside the list
+	list    mouse.Rect
+	preview mouse.Rect // zero when the list is drawn alone
+	// contentH is the pane height, listH the list's share of it below any
+	// header rows.
+	contentH, listH int
+}
+
+func (sp *SplitPane) geometry(totalW, totalH, splitRatio int) paneGeom {
+	contentH := ContentHeight(totalH)
+	listW := sp.ListWidth(totalW, splitRatio)
+	listH := sp.listContentHeight(contentH)
+	g := paneGeom{
+		list:     mouse.Rect{X: 0, Y: sp.headerInset, W: listW, H: listH},
+		contentH: contentH, listH: listH,
+	}
+	// List-only when narrow (<40w or <10h).
+	if !sp.Show || totalW < 40 || totalH < 10 {
+		return g
+	}
+	g.split = true
+	g.preview = mouse.Rect{X: listW + 1, Y: 0, W: sp.PreviewWidth(totalW, splitRatio), H: contentH}
+	return g
+}
+
 // Render draws the split layout. List-only when narrow (<40w or <10h).
 func (sp *SplitPane) Render(totalW, totalH, splitRatio int) string {
-	contentH := ContentHeight(totalH)
-	if !sp.Show || totalW < 40 || totalH < 10 {
-		listW := sp.ListWidth(totalW, splitRatio)
-		listH := sp.listContentHeight(contentH)
-		if sp.List.Width() > 0 && (sp.List.Width() != listW || sp.List.Height() != listH) {
-			sp.List.SetSize(listW, listH)
-		}
-		return sp.listView(contentH)
+	g := sp.geometry(totalW, totalH, splitRatio)
+	if sp.List.Width() > 0 && (sp.List.Width() != g.list.W || sp.List.Height() != g.listH) {
+		sp.List.SetSize(g.list.W, g.listH)
 	}
-	listW := sp.ListWidth(totalW, splitRatio)
-	previewW := sp.PreviewWidth(totalW, splitRatio)
-	listH := sp.listContentHeight(contentH)
-	if sp.List.Width() > 0 && (sp.List.Width() != listW || sp.List.Height() != listH) {
-		sp.List.SetSize(listW, listH)
+	if !g.split {
+		return sp.listView(g.contentH)
 	}
-	if sp.Preview.Width != previewW || sp.Preview.Height != contentH {
-		sp.Preview.Width = previewW
-		sp.Preview.Height = max(contentH, 1)
+	if sp.Preview.Width != g.preview.W || sp.Preview.Height != g.contentH {
+		sp.Preview.Width = g.preview.W
+		sp.Preview.Height = max(g.contentH, 1)
 		sp.CacheKey = ""
 	}
 	border := paneBorderStyle
 	if sp.Focus {
 		border = paneBorderFocusedStyle
 	}
-	left := sp.listView(contentH)
+	left := sp.listView(g.contentH)
 	right := sp.Preview.View()
-	return renderFixedSplit(left, right, listW, previewW, contentH, border)
+	return renderFixedSplit(left, right, g.list.W, g.preview.W, g.contentH, border)
 }
 
 // Resize adjusts dimensions after terminal resize, preserving selection.

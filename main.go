@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/mouse"
 
 	"github.com/keyolk/ghx/internal/config"
 	"github.com/keyolk/ghx/internal/gh"
@@ -133,10 +134,12 @@ func run() (err error) {
 	// not on screen. A terminal that does not support it simply never sends the
 	// message, and the poll behaves as it did before.
 	//
-	// No mouse reporting: nothing handles tea.MouseMsg, and capturing the mouse
-	// only takes drag-to-select away from the terminal — the way people copy a
-	// branch name or an error out of the screen.
-	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithReportFocus())
+	// Mouse reporting is cell motion only (clicks, wheel, drag), and the app
+	// acts on presses and the wheel alone — see internal/tui/mouse.go. Capturing
+	// the mouse takes plain drag-to-select away from the terminal; terminals
+	// give it back with a modifier (shift in most, option in iTerm2 and Ghostty).
+	opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithReportFocus()}
+	p := tea.NewProgram(app, append(opts, mouse.ProgramOptions()...)...)
 	if _, runErr := p.Run(); runErr != nil {
 		return fmt.Errorf("run: %w", runErr)
 	}

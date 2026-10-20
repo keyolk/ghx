@@ -7,9 +7,11 @@ package admin
 import (
 	"context"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/mouse"
 
 	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/tui"
@@ -88,6 +90,12 @@ type App struct {
 	// it is still the truth about who has access — so this only gates the
 	// footer and a second keypress.
 	busy bool
+
+	// clicks remembers the last click, so a second one on the same selected
+	// row can be told from clicks on different rows; now is the clock it
+	// reads, replaceable in tests.
+	clicks mouse.Clicks
+	now    func() time.Time
 }
 
 // permissionSet is the levels offered in the permission prompt, weakest first.
@@ -231,6 +239,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width, a.height = msg.Width, msg.Height
 		return a, nil
 
+	case tea.MouseMsg:
+		return a, a.handleMouse(msg)
+
 	case tea.KeyMsg:
 		a.toast.Ack()
 		return a, a.handleKey(msg)
@@ -355,7 +366,15 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	switch b.Action {
+	return a.dispatch(b.Action, b.KeyIndex(msg))
+}
+
+// dispatch runs a binding of the current stack. key is the position of the
+// pressed key in the binding's key list, which picks the category for the
+// number keys. A mouse gesture calls it with the action it stands for, so a
+// click takes the path the key takes.
+func (a *App) dispatch(action string, key int) tea.Cmd {
+	switch action {
 	case "quit":
 		return tea.Quit
 	case "search":
@@ -385,9 +404,8 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "category":
 		// The position of the pressed key picks the category, so a rebound
 		// key still means "the third".
-		idx := b.KeyIndex(msg)
-		if idx >= 0 && idx < len(categoryNames) {
-			a.active = category(idx)
+		if key >= 0 && key < len(categoryNames) {
+			a.active = category(key)
 			a.teamSlug = ""
 			a.query = ""
 			a.pane.Reset()
@@ -396,7 +414,7 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "members":
 		return a.onEnter()
 	default:
-		cmd, _ := a.handleWriteKey(b.Action)
+		cmd, _ := a.handleWriteKey(action)
 		return cmd
 	}
 	return nil

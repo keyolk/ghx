@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.6
-	github.com/keyolk/tuikit v0.0.0-20261014182304-74b15dc0eda3
+	github.com/keyolk/tuikit v0.0.0-20261020003136-c905dce1f2ed
 	github.com/muesli/termenv v0.16.0
 	gopkg.in/yaml.v3 v3.0.1
 )
