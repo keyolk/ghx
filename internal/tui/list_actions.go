@@ -724,7 +724,7 @@ func (a *App) renderLabelPicker(width, height int) string {
 	prompt := helpKeyStyle.Render("filter: ") + p.query + blockCursor()
 	b.WriteString(prompt + "\n")
 
-	rows := max(boxH-5, 1)
+	rows := pickerRows(boxH)
 	if p.cursor < p.offset {
 		p.offset = p.cursor
 	}

@@ -96,18 +96,27 @@ func (p prompt) render(width int, km keys.Keymap) string {
 		// value that changes as tab is pressed. Five options fit in a line, and
 		// seeing them is what makes "which of these is narrower" answerable
 		// without leaving the prompt.
-		parts := make([]string, 0, len(p.choices))
-		for i, c := range p.choices {
-			if i == p.choice {
-				parts = append(parts, tui.TabActiveStyle.Render("["+c+"]"))
-				continue
-			}
-			parts = append(parts, tui.DimStyle.Render(" "+c+" "))
-		}
-		line := tui.HelpKeyStyle.Render(p.label()+": ") + strings.Join(parts, "")
+		line := p.permissionPrefix() + strings.Join(p.permissionParts(), "")
 		return tui.TruncateFooter(line+"  "+hints(km, stackPermission, max(width-tui.LipglossWidth(line)-2, 1)), width)
 	}
 	return ""
+}
+
+// permissionPrefix is the label before the choices; permissionParts the
+// choices themselves, one string each. render joins them and the mouse hit
+// test measures them.
+func (p prompt) permissionPrefix() string { return tui.HelpKeyStyle.Render(p.label() + ": ") }
+
+func (p prompt) permissionParts() []string {
+	parts := make([]string, 0, len(p.choices))
+	for i, c := range p.choices {
+		if i == p.choice {
+			parts = append(parts, tui.TabActiveStyle.Render("["+c+"]"))
+			continue
+		}
+		parts = append(parts, tui.DimStyle.Render(" "+c+" "))
+	}
+	return parts
 }
 
 // handlePromptKey edits the open prompt and commits it.

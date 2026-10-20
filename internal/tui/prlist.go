@@ -713,9 +713,16 @@ func (m *prListModel) view(w, h int) string {
 // right — which drops the highest-numbered tabs entirely — each tab shrinks
 // toward its index, so the 1-9 jump keys always have something to land on.
 func (m *prListModel) renderTabs(w int) string {
+	return strings.Join(m.tabCells(w), "")
+}
+
+// tabCells is the strip's pieces left to right: one string per tab, then the
+// "stale" marker when there is one. renderTabs joins them and the mouse hit
+// test measures them, so both read the same layout.
+func (m *prListModel) tabCells(w int) []string {
 	tabs := m.tabLabels()
 	if len(tabs) == 0 {
-		return ""
+		return nil
 	}
 
 	widths := make([]int, len(tabs))
@@ -725,19 +732,15 @@ func (m *prListModel) renderTabs(w int) string {
 		total += widths[i]
 	}
 
-	stale := ""
+	var stale []string
 	if m.stale {
-		stale = checkFailStyle.Render(" stale")
-		total += lipglossWidth(stale)
+		s := checkFailStyle.Render(" stale")
+		stale = []string{s}
+		total += lipglossWidth(s)
 	}
 
 	if total <= w {
-		var b strings.Builder
-		for _, t := range tabs {
-			b.WriteString(t)
-		}
-		b.WriteString(stale)
-		return b.String()
+		return append(tabs, stale...)
 	}
 
 	// Drop per-tab decorations (counts, spinner) first; the index stays.
@@ -748,14 +751,12 @@ func (m *prListModel) renderTabs(w int) string {
 		tabs[i] = m.renderTab(i, m.sources[i], false)
 		widths[i] = lipglossWidth(tabs[i])
 	}
-	total = sumWidths(widths) + lipglossWidth(stale)
+	total = sumWidths(widths)
+	if m.stale {
+		total += lipglossWidth(stale[0])
+	}
 	if total <= w {
-		var b strings.Builder
-		for _, t := range tabs {
-			b.WriteString(t)
-		}
-		b.WriteString(stale)
-		return b.String()
+		return append(tabs, stale...)
 	}
 
 	// Still too wide: cap each tab at an equal share. This is what keeps tabs
@@ -765,10 +766,10 @@ func (m *prListModel) renderTabs(w int) string {
 	if per < 3 {
 		per = 3
 	}
-	var b strings.Builder
+	out := make([]string, 0, len(tabs)+1)
 	for i, t := range tabs {
 		if widths[i] <= per {
-			b.WriteString(t)
+			out = append(out, t)
 			continue
 		}
 		trunc, _ := truncateExact(t, per)
@@ -777,10 +778,9 @@ func (m *prListModel) renderTabs(w int) string {
 		if i != m.curTab && per > 3 && lipglossWidth(trunc) < per {
 			trunc += " "
 		}
-		b.WriteString(trunc)
+		out = append(out, trunc)
 	}
-	b.WriteString(stale)
-	return b.String()
+	return append(out, stale...)
 }
 
 func sumWidths(ws []int) int {

@@ -66,7 +66,7 @@ func (d *prDetailModel) renderOverview(w, h int) string {
 			b.WriteString("  " + seg + "\n")
 		}
 	}
-	return scrollBlock(b.String(), d.overviewOff, h)
+	return scrollBlock(b.String(), &d.overviewOff, h)
 }
 
 func field(label, value string) string {
@@ -166,13 +166,16 @@ func (d *prDetailModel) renderCommits(w, h int) string {
 			dimStyle.Render(c.AuthoredDate.Format("01-02")),
 			c.MessageHeadline))
 	}
-	return scrollBlock(b.String(), d.commitsOff, h)
+	return scrollBlock(b.String(), &d.commitsOff, h)
 }
 
-// scrollBlock renders a plain text block at a scroll offset.
-func scrollBlock(s string, offset, height int) string {
+// scrollBlock renders a plain text block at a scroll offset, and stores the
+// clamped offset back. Writing it back is what keeps a wheel from banking
+// scroll past the end: the key handlers only count up, so without it a few
+// quick notches would leave an offset that takes as many notches to undo.
+func scrollBlock(s string, offset *int, height int) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	offset = clamp(offset, 0, max(len(lines)-1, 0))
-	end := min(offset+height, len(lines))
-	return strings.Join(lines[offset:end], "\n")
+	*offset = clamp(*offset, 0, max(len(lines)-1, 0))
+	end := min(*offset+height, len(lines))
+	return strings.Join(lines[*offset:end], "\n")
 }

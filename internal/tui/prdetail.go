@@ -488,6 +488,12 @@ func (d *prDetailModel) view(w, h int) string {
 // the terminal narrows — same per-tab shrinking strategy as the PR list's
 // renderTabs, so detail tabs 4-6 don't vanish off the right edge.
 func (d *prDetailModel) renderTabs(w int) string {
+	return strings.Join(d.tabCells(w), "")
+}
+
+// tabCells is the strip's pieces left to right, one string per tab. renderTabs
+// joins them and the mouse hit test measures them, so both read one layout.
+func (d *prDetailModel) tabCells(w int) []string {
 	tabs := make([]string, len(d.tabs))
 	widths := make([]int, len(d.tabs))
 	total := 0
@@ -506,11 +512,7 @@ func (d *prDetailModel) renderTabs(w int) string {
 	}
 
 	if total <= w {
-		var b strings.Builder
-		for _, t := range tabs {
-			b.WriteString(t)
-		}
-		return b.String()
+		return tabs
 	}
 
 	// Drop per-tab counts first; the index and name stay.
@@ -526,16 +528,9 @@ func (d *prDetailModel) renderTabs(w int) string {
 		}
 		widths[i] = lipglossWidth(tabs[i])
 	}
-	total = 0
-	for _, w := range widths {
-		total += w
-	}
+	total = sumWidths(widths)
 	if total <= w {
-		var b strings.Builder
-		for _, t := range tabs {
-			b.WriteString(t)
-		}
-		return b.String()
+		return tabs
 	}
 
 	// Cap each tab at an equal share, preserving at least the index.
@@ -543,19 +538,19 @@ func (d *prDetailModel) renderTabs(w int) string {
 	if per < 3 {
 		per = 3
 	}
-	var b strings.Builder
+	out := make([]string, len(tabs))
 	for i, t := range tabs {
 		if widths[i] <= per {
-			b.WriteString(t)
+			out[i] = t
 			continue
 		}
 		trunc, _ := truncateExact(t, per)
-		if i != int(d.activeTabIndex()) && per > 3 && lipglossWidth(trunc) < per {
+		if i != d.activeTabIndex() && per > 3 && lipglossWidth(trunc) < per {
 			trunc += " "
 		}
-		b.WriteString(trunc)
+		out[i] = trunc
 	}
-	return b.String()
+	return out
 }
 
 // activeTabIndex returns the position of the active tab within d.tabs, for the

@@ -7,10 +7,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/mouse"
 
 	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/tui"
@@ -63,6 +65,12 @@ type App struct {
 	// query filters the active list; searching is true while it is being typed.
 	query     string
 	searching bool
+
+	// clicks remembers the last click, so a second one on the same selected
+	// row can be told from clicks on different rows; now is the clock it
+	// reads, replaceable in tests.
+	clicks mouse.Clicks
+	now    func() time.Time
 }
 
 // NewApp constructs the actions TUI.
@@ -127,6 +135,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
 		return a, nil
+
+	case tea.MouseMsg:
+		return a, a.handleMouse(msg)
 
 	case tea.KeyMsg:
 		a.toast.Ack()
@@ -496,11 +507,7 @@ func (a *App) renderHeader() string {
 	if a.searching {
 		return tui.RenderSearchBar(a.query, a.width)
 	}
-	tabs := make([]tui.TabLabel, len(tabNames))
-	for i, name := range tabNames {
-		tabs[i] = tui.TabLabel{Name: name, Active: tab(i) == a.active}
-	}
-	strip := tui.RenderTabStrip(tabs, a.width)
+	strip := tui.RenderTabStrip(a.tabLabels(), a.width)
 	// Both markers ride after the strip; they are state toggles, not tabs.
 	if a.failedOnly && a.active == tabRuns {
 		strip += " " + tui.TabActiveStyle.Render("[failed only]")
@@ -509,6 +516,15 @@ func (a *App) renderHeader() string {
 		strip += " " + tui.TabActiveStyle.Render("["+a.query+"]")
 	}
 	return strip
+}
+
+// tabLabels is the tab strip, read by the renderer and the mouse hit test.
+func (a *App) tabLabels() []tui.TabLabel {
+	tabs := make([]tui.TabLabel, len(tabNames))
+	for i, name := range tabNames {
+		tabs[i] = tui.TabLabel{Name: name, Active: tab(i) == a.active}
+	}
+	return tabs
 }
 
 func (a *App) renderContent() string {

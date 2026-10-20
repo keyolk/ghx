@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/prefs"
 
 	"github.com/keyolk/ghx/internal/config"
@@ -154,6 +155,10 @@ type App struct {
 	verifyAccounts func(context.Context) error
 
 	spinnerFrame int
+
+	// clicks remembers the last click so a second one on the same, already
+	// selected item can be told from two clicks on different ones.
+	clicks mouse.Clicks
 }
 
 // mergePrompt holds the two-step merge confirmation.
@@ -463,6 +468,9 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ToastExpiredMsg:
 		a.toast.Expire(msg)
 		return a, nil
+
+	case tea.MouseMsg:
+		return a, a.handleMouse(msg)
 
 	case tea.KeyMsg:
 		// A key is the acknowledgement an error toast waits for. Cleared before

@@ -56,15 +56,20 @@ func (a *App) renderHeader() string {
 	if a.searching {
 		return tui.RenderSearchBar(a.query, a.width)
 	}
-	tabs := make([]tui.TabLabel, len(categoryNames))
-	for i, name := range categoryNames {
-		tabs[i] = tui.TabLabel{Name: name, Active: category(i) == a.active}
-	}
-	strip := tui.RenderTabStrip(tabs, a.width)
+	strip := tui.RenderTabStrip(a.tabLabels(), a.width)
 	if a.query != "" {
 		strip += " " + tui.TabActiveStyle.Render("["+a.query+"]")
 	}
 	return strip
+}
+
+// tabLabels is the category strip, read by the renderer and the mouse hit test.
+func (a *App) tabLabels() []tui.TabLabel {
+	tabs := make([]tui.TabLabel, len(categoryNames))
+	for i, name := range categoryNames {
+		tabs[i] = tui.TabLabel{Name: name, Active: category(i) == a.active}
+	}
+	return tabs
 }
 
 func (a *App) renderContent() string {

@@ -195,6 +195,12 @@ func (v *diffView) threadText(r diffRow) string {
 	return r.text
 }
 
+// sideDivider separates the two columns; sideHalfWidth is the width of each.
+// The renderer and the mouse hit test both read them.
+const sideDivider = " │ "
+
+func sideHalfWidth(width int) int { return (width - lipglossWidth(sideDivider)) / 2 }
+
 // renderSideBySide draws the paired layout. The gutter columns and a divider
 // take fixed width; the rest is split evenly between the two halves.
 func (v *diffView) renderSideBySide(width, height int) string {
@@ -207,8 +213,8 @@ func (v *diffView) renderSideBySide(width, height int) string {
 	cursorPair := v.cursorPairIndex(pairs)
 	v.clampSideOffset(cursorPair, len(pairs), height)
 
-	const divider = " │ "
-	half := (width - lipglossWidth(divider)) / 2
+	const divider = sideDivider
+	half := sideHalfWidth(width)
 	if half < 12 {
 		// Callers gate on width before choosing this layout, so reaching here
 		// means the terminal shrank mid-render. Say so instead of drawing

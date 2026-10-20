@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/mouse"
 
 	"github.com/keyolk/ghx/internal/config"
 	"github.com/keyolk/ghx/internal/gh"
@@ -97,9 +98,10 @@ func runSubcommand(args []string, kind string) error {
 		}
 	}()
 
-	// No mouse reporting, as in the main TUI: no subcommand handles mouse
-	// events, and capturing them disables the terminal's own text selection.
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	// Mouse reporting as in the main TUI: cell motion only, with presses and
+	// the wheel handled by each subcommand's handleMouse.
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	p := tea.NewProgram(model, append(opts, mouse.ProgramOptions()...)...)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("run: %w", err)
 	}

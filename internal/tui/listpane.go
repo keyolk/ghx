@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/mouse"
 )
 
 // Shared scrolling list for the subcommand TUIs (admin, actions). They each
@@ -87,6 +89,14 @@ func (p *ListPane) RenderList(rows []string, w, h int) string {
 		out = append(out, "")
 	}
 	return strings.Join(out, "\n")
+}
+
+// RowAt is the row under a mouse event when the pane's rows are drawn one per
+// line in r, from the scroll offset the last render settled on. It reports
+// false for a point outside r or on the blank lines below a short list.
+func (p *ListPane) RowAt(r mouse.Rect, count int, msg tea.MouseMsg) (int, bool) {
+	hit := mouse.RowHit(r, p.Offset, count, msg)
+	return hit.Index, hit.HasItem
 }
 
 // ScrollHint describes the position in a list too long to show at once, for the

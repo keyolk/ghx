@@ -152,7 +152,7 @@ func (a *App) renderRepoPicker(width, height int) string {
 	b.WriteString(helpKeyStyle.Render("repo: ") + p.query + blockCursor() + "\n")
 
 	vis := p.visible()
-	rows := max(boxH-5, 1)
+	rows := pickerRows(boxH)
 	if p.cursor < p.offset {
 		p.offset = p.cursor
 	}
