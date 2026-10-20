@@ -132,6 +132,32 @@ func TestClicksOnTwoRowsAreNotADoubleClick(t *testing.T) {
 	}
 }
 
+// A key between two clicks breaks the pair. Click a row, j, k back to it,
+// click again inside the double-click window: that is a fresh first click,
+// so it selects and must not open the PR.
+func TestKeyBetweenClicksBreaksTheDoubleClick(t *testing.T) {
+	a := mouseApp(t)
+	x, y := at(t, a, "pull request 4")
+	click(a, x, y)
+	a.Update(keyMsg("j"))
+	a.Update(keyMsg("k"))
+	if got := cursorNumber(t, a); got != 4 {
+		t.Fatalf("selected #%d after j, k; want back on #4", got)
+	}
+	a.View()
+	if cmd := click(a, x, y); cmd != nil {
+		if _, ok := cmd().(openDetailMsg); ok {
+			t.Fatal("a key between the clicks must break the double click; the PR opened")
+		}
+	}
+	if a.state != viewPRList {
+		t.Fatal("a key between the clicks must break the double click; the list was left")
+	}
+	if got := cursorNumber(t, a); got != 4 {
+		t.Fatalf("selected #%d, want #4 still selected", got)
+	}
+}
+
 func TestSlowSecondClickIsNotADoubleClick(t *testing.T) {
 	a := mouseApp(t)
 	x, y := at(t, a, "pull request 2")

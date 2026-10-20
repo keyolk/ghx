@@ -115,6 +115,29 @@ func TestStatusFilterClickSelectsAndSecondClickToggles(t *testing.T) {
 	}
 }
 
+// Overlays share the list's detector, so a key between two clicks on an
+// overlay row breaks the pair too: the second click only selects.
+func TestStatusFilterKeyBetweenClicksBreaksTheDoubleClick(t *testing.T) {
+	a := mouseApp(t)
+	a.handleKey(keyMsg("f"))
+	a.View()
+	x, y := at(t, a, "approved")
+	click(a, x, y)
+	a.Update(tea.KeyMsg{Type: tea.KeyDown})
+	a.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if a.statusFilter == nil || a.statusFilter.cursor != 2 {
+		t.Fatalf("cursor = %v after down, up; want back on 2 (approved)", a.statusFilter)
+	}
+	a.View()
+	click(a, x, y)
+	if a.statusFilter.pending[statusApproved] {
+		t.Fatal("a key between the clicks must break the double click; the row toggled")
+	}
+	if a.statusFilter.cursor != 2 {
+		t.Fatalf("cursor = %d, want 2 (approved) still selected", a.statusFilter.cursor)
+	}
+}
+
 func TestStatusFilterWheelMovesAndOutsideCancels(t *testing.T) {
 	a := mouseApp(t)
 	a.handleKey(keyMsg("f"))
