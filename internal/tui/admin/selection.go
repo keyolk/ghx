@@ -36,17 +36,12 @@ func (a *App) panes() []selection.Pane {
 	return []selection.Pane{{ID: "content", Kind: kind, Rect: mouse.Rect{X: 0, Y: listTop, W: a.width, H: a.listRows()}}}
 }
 
-// selectMouse feeds the event to the selection before click handling; handled
-// means it was a drag (or a word pick) and is not also a click.
-func (a *App) selectMouse(msg tea.MouseMsg) (cmd tea.Cmd, handled bool) {
-	// The frame before Render, so the highlight never reaches a copy.
-	r := a.sel.Mouse(msg, a.panes(), a.view(), a.clock())
-	if r.Copy != "" {
-		cmd = copySelection(r.Copy)
-	}
+// selectMouse feeds a mouse event to the selection before click handling;
+// handled means it was a drag (or a word pick) and is not also a click. No
+// admin pane hands over Lines, so nothing here scrolls and no auto-scroll
+// tick is ever scheduled. The frame is View before Render, so the highlight
+// never reaches a copy.
+func (a *App) selectMouse(msg tea.Msg) (cmd tea.Cmd, handled bool) {
+	r, cmd := a.sel.Update(msg, a.panes, a.view, a.clock())
 	return cmd, r.Consumed
 }
-
-// copySelection builds the clipboard command for a finished selection. Tests
-// swap it to capture the text without ever writing the real clipboard.
-var copySelection = selection.Copy

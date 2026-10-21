@@ -242,7 +242,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width, a.height = msg.Width, msg.Height
 		return a, nil
 
-	case tea.MouseMsg:
+	case tea.MouseMsg, selection.AutoScrollMsg:
 		return a, a.handleMouse(msg)
 
 	case tea.KeyMsg:

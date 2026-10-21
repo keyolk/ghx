@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 )
 
 // detail_footer.go derives the detail view's footer from the binding table.
@@ -190,7 +191,7 @@ func (v *diffView) helpLine(width int) string {
 
 func (c *commentsView) keyOpts() keys.Opts {
 	return keys.Opts{
-		Visible: offering("down", "up", "reply", "resolve", "jumpdiff", "resolvedfilter", "back"),
+		Visible: offering("down", "up", "reply", "resolve", "jumpdiff", "resolvedfilter", link.Action, "back"),
 		State: func(action string) string {
 			if action != "resolvedfilter" {
 				return ""
@@ -226,7 +227,7 @@ func (c *checksView) keyOpts() keys.Opts {
 	if c.showingLogs() {
 		return keys.Opts{Visible: offering("down", "up", "closelogs")}
 	}
-	return keys.Opts{Visible: offering("down", "up", "logs", "browser", "back")}
+	return keys.Opts{Visible: offering("down", "up", "logs", link.Action, "back")}
 }
 
 func (c *checksView) helpLine(width int) string {

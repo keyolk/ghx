@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 
 	"github.com/keyolk/ghx/internal/config"
 	"github.com/keyolk/ghx/internal/gh"
@@ -832,7 +833,7 @@ func (m *prListModel) renderPreview() {
 	}
 	p := it.pr
 	var b strings.Builder
-	b.WriteString(prTitleStyle.Render(p.Title) + "\n\n")
+	b.WriteString(prTitleStyle.Render(link.Wrap(p.URL, p.Title)) + "\n\n")
 	b.WriteString(field("PR", prNumberStyle.Render(fmt.Sprintf("#%d", p.Number))))
 	if p.Repo != "" {
 		b.WriteString(field("Repo", p.Repo))

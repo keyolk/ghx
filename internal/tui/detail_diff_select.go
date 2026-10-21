@@ -38,19 +38,37 @@ func (v *diffView) sideLines(width int) (left, right []string, offset int) {
 	return left, right, max(v.sideOffset, 0)
 }
 
-// scrollLines moves the window delta rows (negative is up) without leaving the
-// cursor behind: render pulls the window back to the cursor, so the cursor
-// moves along whenever the window would leave it. It is what a drag past the
-// top or bottom edge of the diff asks for.
-func (v *diffView) scrollLines(delta, width, height int) {
-	if len(v.rows) == 0 || delta == 0 {
+// setLineOffset puts screen line off (an index into unifiedLines or
+// sideLines) at the top of the window without leaving the cursor behind:
+// render pulls the window back to the cursor, so the cursor moves along
+// whenever the window would leave it. It is what a drag past the top or
+// bottom edge of the diff asks for, with the offset the selection computed.
+//
+// The unified window starts at a row, and a row can be several screen lines
+// (a thread, a wrapped line). An offset inside a row rounds in the drag's
+// direction (dir), so every step of a drag moves the window: rounding down
+// on the way down would land on the same row forever.
+func (v *diffView) setLineOffset(off, dir, width, height int) {
+	if len(v.rows) == 0 {
 		return
 	}
 	if v.sideBySide && width >= 80 {
-		v.scrollSide(delta, width, height)
+		v.setSideOffset(off, width, height)
 		return
 	}
-	v.offset = clamp(max(v.offset, 0)+delta, 0, len(v.rows)-1)
+	row, start := len(v.rows)-1, 0
+	for i := range v.rows {
+		n := v.screenLines(i, width)
+		if off < start+n {
+			row = i
+			if off > start && dir > 0 && i+1 < len(v.rows) {
+				row = i + 1
+			}
+			break
+		}
+		start += n
+	}
+	v.offset = row
 	if v.cursor < v.offset {
 		v.clickRow(v.offset)
 		return
@@ -70,12 +88,12 @@ func (v *diffView) scrollLines(delta, width, height int) {
 	}
 }
 
-func (v *diffView) scrollSide(delta, width, height int) {
+func (v *diffView) setSideOffset(off, width, height int) {
 	pairs := v.sideRowsWidth(sideHalfWidth(width))
 	if len(pairs) == 0 {
 		return
 	}
-	v.sideOffset = clamp(max(v.sideOffset, 0)+delta, 0, max(len(pairs)-height, 0))
+	v.sideOffset = clamp(off, 0, max(len(pairs)-height, 0))
 	cur := v.cursorPairIndex(pairs)
 	switch {
 	case cur < v.sideOffset:

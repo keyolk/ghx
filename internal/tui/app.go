@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/prefs"
 	"github.com/keyolk/tuikit/selection"
@@ -474,7 +475,7 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.toast.Expire(msg)
 		return a, nil
 
-	case tea.MouseMsg:
+	case tea.MouseMsg, selection.AutoScrollMsg:
 		return a, a.handleMouse(msg)
 
 	case tea.KeyMsg:
@@ -515,6 +516,16 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case selection.CopiedMsg:
 		a.toast.Copied(msg)
+		return a, nil
+
+	case link.OpenedMsg:
+		// A failure stays until a key, as a failed copy does: "opened" that
+		// silently did not would leave the user waiting on a browser.
+		if msg.Err != nil {
+			a.setErrorToast(msg.Note())
+			return a, nil
+		}
+		a.setToast(msg.Note())
 		return a, nil
 
 	case threadResolvedMsg:

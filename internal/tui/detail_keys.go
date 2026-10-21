@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 
 	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/pr"
@@ -21,6 +22,9 @@ import (
 // runTab runs a binding of the active tab's context. Everything a tab does is
 // named by an action (keymap.go); the tab handlers below switch on it.
 func (d *prDetailModel) runTab(b keys.Binding, _ tea.KeyMsg) (tea.Cmd, bool) {
+	if b.Action == link.Action {
+		return openLinkCmd(d.selectedLink()), true
+	}
 	switch b.Ctx {
 	case ctxOverview:
 		return d.updateOverview(b.Action)

@@ -10,13 +10,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/keyolk/tuikit/selection"
+	"github.com/keyolk/tuikit/tuitest"
 
 	"github.com/keyolk/ghx/internal/tui"
 )
 
 // Coordinates come from where View drew text (at), never from the pane
-// arithmetic under test. The Cmd a release returns is never run: it would
-// write the developer's clipboard.
+// arithmetic under test. The Cmd a release returns runs against a clipboard
+// stub (captureCopies), never the developer's clipboard.
 
 func mouseAt(a *App, x, y int, act tea.MouseAction) tea.Cmd {
 	b := tea.MouseButtonLeft
@@ -24,6 +25,10 @@ func mouseAt(a *App, x, y int, act tea.MouseAction) tea.Cmd {
 		b = tea.MouseButtonNone
 	}
 	_, cmd := a.Update(tea.MouseMsg{X: x, Y: y, Button: b, Action: act})
+	if act == tea.MouseActionRelease {
+		// Run the copy the way Bubble Tea would, into the clipboard stub.
+		tuitest.Drain(cmd, 0)
+	}
 	return cmd
 }
 
@@ -145,17 +150,18 @@ func TestCopiedMsgShowsAToast(t *testing.T) {
 	}
 }
 
-// captureCopies swaps the clipboard command for one that records the text, so
-// a test asserts what a release would copy and never touches the clipboard.
+// captureCopies replaces the clipboard with a recorder, so a test asserts
+// what a release copied, through the same command the app returns, and never
+// touches the real clipboard.
 func captureCopies(t *testing.T) *[]string {
 	t.Helper()
 	var got []string
-	old := copySelection
-	copySelection = func(s string) tea.Cmd {
+	old := selection.Clipboard
+	selection.Clipboard = func(s string) error {
 		got = append(got, s)
-		return func() tea.Msg { return nil }
+		return nil
 	}
-	t.Cleanup(func() { copySelection = old })
+	t.Cleanup(func() { selection.Clipboard = old })
 	return &got
 }
 

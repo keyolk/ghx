@@ -1,10 +1,14 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/keyolk/tuikit/link"
+	"github.com/keyolk/tuikit/selection"
 )
 
 // TestMain gives the whole package one empty home directory.
@@ -45,6 +49,11 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	// Fail closed on the real clipboard and browser: a test that means to copy
+	// or open installs its own recorder; one that forgets gets an error toast
+	// instead of writing the developer's clipboard or opening a browser tab.
+	selection.Clipboard = func(string) error { return errors.New("test: clipboard not stubbed") }
+	link.Launcher = func(string) error { return errors.New("test: launcher not stubbed") }
 	code := m.Run()
 	if err := os.RemoveAll(home); err != nil {
 		fmt.Fprintln(os.Stderr, "remove test home:", err)

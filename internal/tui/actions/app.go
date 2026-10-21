@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/selection"
 
@@ -139,7 +140,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width, a.height = msg.Width, msg.Height
 		return a, nil
 
-	case tea.MouseMsg:
+	case tea.MouseMsg, selection.AutoScrollMsg:
 		return a, a.handleMouse(msg)
 
 	case tea.KeyMsg:
@@ -152,6 +153,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case selection.CopiedMsg:
 		a.toast.Copied(msg)
+		return a, a.toast.Expiry()
+
+	case link.OpenedMsg:
+		// A failure stays until a key, as a failed copy does.
+		if msg.Err != nil {
+			a.toast.SetError(msg.Note())
+			return a, nil
+		}
+		a.toast.Set(msg.Note())
 		return a, a.toast.Expiry()
 
 	case tui.ToastExpiredMsg:
@@ -284,6 +294,8 @@ func (a *App) run(action string, key int) tea.Cmd {
 		a.pane.Reset()
 	case "logs":
 		return a.onEnter()
+	case link.Action:
+		return a.openRun()
 	case "rerun":
 		return a.rerun(false)
 	case "rerunfailed":
@@ -296,6 +308,19 @@ func (a *App) run(action string, key int) tea.Cmd {
 		return a.toggleWorkflow(false)
 	}
 	return nil
+}
+
+// openRun opens the selected run's page. A run without a URL (gh omits it
+// for some event kinds) says so instead of doing nothing.
+func (a *App) openRun() tea.Cmd {
+	items := a.visibleRuns()
+	if a.pane.Cursor >= len(items) {
+		return nil
+	}
+	if u := items[a.pane.Cursor].URL; u != "" {
+		return link.Open(u)
+	}
+	return func() tea.Msg { return toastMsg{text: "no link for this run"} }
 }
 
 func (a *App) onEnter() tea.Cmd {
@@ -582,8 +607,10 @@ func (a *App) renderRuns() string {
 	rows := make([]string, 0, len(items))
 	for _, r := range items {
 		icon, style := runStyle(r.Status, r.Conclusion)
-		rows = append(rows, fmt.Sprintf("  %s %-30s %-10s %-12s %s",
-			style.Render(icon), r.WorkflowName, r.Conclusion, r.Event, r.HeadBranch))
+		// The workflow name links to the run's page; its padding does not.
+		name := link.Wrap(r.URL, r.WorkflowName) + strings.Repeat(" ", max(30-lipgloss.Width(r.WorkflowName), 0))
+		rows = append(rows, fmt.Sprintf("  %s %s %-10s %-12s %s",
+			style.Render(icon), name, r.Conclusion, r.Event, r.HeadBranch))
 	}
 	empty := "No workflow runs."
 	if a.failedOnly {
