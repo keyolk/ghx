@@ -1,11 +1,7 @@
 package tui
 
 import (
-	"fmt"
-	"unicode/utf8"
-
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/selection"
 )
@@ -33,8 +29,9 @@ const (
 )
 
 // SelectionStyle draws a drag selection, here and in the subcommand TUIs. It
-// survives NO_COLOR: reverse video needs no color.
-var SelectionStyle = lipgloss.NewStyle().Reverse(true)
+// survives NO_COLOR: the kit's reverse video is pinned to a profile that
+// keeps it, and reverse is not a color. Tests swap it to see the cells.
+var SelectionStyle = selection.DefaultStyle()
 
 // selectionPanes lists what a drag can select, from the numbers View and the
 // mouse hit tests draw with: SplitPane.geometry, the detail body rect, and
@@ -51,10 +48,10 @@ func (a *App) selectionPanes(full bool) []selection.Pane {
 	// beneath it.
 	if box := a.overlayBox(); box != "" {
 		r, clipped := a.boxRect(box)
-		inner := mouse.Rect{X: r.X + 1, Y: r.Y + 1, W: r.W - 2, H: r.H - 2}
+		inner := r.Inset(1, 1, 1, 1)
 		if clipped > 0 {
 			// The top border was clipped off; the first drawn line is content.
-			inner.Y, inner.H = r.Y, r.H-1
+			inner = r.Inset(0, 1, 1, 1)
 		}
 		return []selection.Pane{{ID: paneOverlay, Rect: inner, Kind: a.overlayKind()}}
 	}
@@ -194,52 +191,56 @@ func (a *App) overlayKind() selection.Kind {
 	return selection.Text
 }
 
-// selectMouse feeds the event to the selection before any click handling.
-// handled means the selection consumed it and the app must not also treat it
-// as a click.
-func (a *App) selectMouse(msg tea.MouseMsg) (cmd tea.Cmd, handled bool) {
+// selectMouse feeds a mouse event or an auto-scroll tick to the selection
+// before any click handling. handled means the selection consumed it and the
+// app must not also treat it as a click.
+func (a *App) selectMouse(msg tea.Msg) (cmd tea.Cmd, handled bool) {
 	// view settles the scroll offsets the panes read, and is the frame panes
 	// without full content are read from (before Render, so the highlight
 	// never reaches a copy). It is pure apart from those clamps, which the next
-	// render would apply anyway.
-	frame := a.view()
-	r := a.sel.Mouse(msg, a.selectionPanes(true), frame, a.now())
-	if r.Scroll != 0 {
-		a.scrollPane(r.Scroll)
+	// render would apply anyway. Built at most once per event, and only when
+	// the selection asks.
+	var frame string
+	built := false
+	view := func() string {
+		if !built {
+			frame, built = a.view(), true
+		}
+		return frame
 	}
-	if r.Copy != "" {
-		cmd = copySelection(r.Copy)
+	panes := func() []selection.Pane {
+		view()
+		return a.selectionPanes(true)
+	}
+	r, cmd := a.sel.Update(msg, panes, view, a.now())
+	if r.Scroll != 0 {
+		a.setPaneOffset(r.Offset, r.Scroll)
 	}
 	return cmd, r.Consumed
 }
 
-// scrollPane scrolls a text pane by n lines through the path its keys take.
+// setPaneOffset puts line off of the scrolled text pane at its top. The kit
+// computes off from the offset the pane reported, so it is set, not added:
+// the keys leave overviewOff unclamped past the end (render clamps it), and
+// adding -1 to such a value would not move the pane at all.
 //
 // Every scrollable pane is the active tab's body (the diff's two columns
-// scroll together), so the pane ID does not pick what scrolls.
-func (a *App) scrollPane(n int) {
+// scroll together), so the pane ID does not pick what scrolls. dir is the
+// drag's direction, which the unified diff needs to round a line to a row.
+func (a *App) setPaneOffset(off, dir int) {
 	if a.state != viewPRDetail || a.detail == nil {
 		return
 	}
 	d := a.detail
-	act := "down"
-	if n < 0 {
-		act = "up"
-	}
-	steps := max(n, -n)
 	switch d.activeTab {
 	case tabOverview:
-		for range steps {
-			d.updateOverview(act)
-		}
+		d.overviewOff = off
 	case tabCommits:
-		for range steps {
-			d.updateCommits(act)
-		}
+		d.commitsOff = off
 	case tabChecks:
-		d.checks.scrollLogs(n)
+		d.checks.logOff = clamp(off, 0, max(len(d.checks.logs)-1, 0))
 	case tabDiff:
-		d.diff.scrollLines(n, a.width, d.contentHeight())
+		d.diff.setLineOffset(off, dir, a.width, d.contentHeight())
 	}
 }
 
@@ -248,12 +249,8 @@ func (a *App) scrollPane(n int) {
 // the clipboard held before). The caller returns Expiry, as after Set.
 func (t *Toast) Copied(msg selection.CopiedMsg) {
 	if msg.Err != nil {
-		t.SetError("copy failed: " + msg.Err.Error())
+		t.SetError(msg.Note())
 		return
 	}
-	t.Set(fmt.Sprintf("copied %d chars", utf8.RuneCountInString(msg.Text)))
+	t.Set(msg.Note())
 }
-
-// copySelection builds the clipboard command for a finished selection. Tests
-// swap it to capture the text without ever writing the real clipboard.
-var copySelection = selection.Copy

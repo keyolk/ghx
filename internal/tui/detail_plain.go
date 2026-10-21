@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/keyolk/tuikit/link"
 )
 
 // Rendering for the plain (non-interactive) detail tabs: Overview, Files, and
@@ -22,7 +24,7 @@ func (d *prDetailModel) renderOverview(w, h int) string {
 func (d *prDetailModel) overviewText(w int) string {
 	dt := d.detail
 	var b strings.Builder
-	b.WriteString(prTitleStyle.Render(dt.Title) + "\n\n")
+	b.WriteString(prTitleStyle.Render(link.Wrap(dt.URL, dt.Title)) + "\n\n")
 	b.WriteString(field("Author", prAuthorStyle.Render(dt.Author.Login)))
 	state := dt.State
 	if dt.IsDraft {

@@ -34,15 +34,16 @@ const (
 	listTop   = 2
 )
 
-func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
+func (a *App) handleMouse(in tea.Msg) tea.Cmd {
 	if a.width < 40 || a.height < 8 {
 		return nil // View draws a notice instead of the panel
 	}
 	// The selection sees every event first; a press that does not move stays
 	// the click below.
-	copyCmd, consumed := a.selectMouse(msg)
-	if consumed {
-		return copyCmd
+	selCmd, consumed := a.selectMouse(in)
+	msg, isMouse := in.(tea.MouseMsg)
+	if consumed || !isMouse {
+		return selCmd
 	}
 	d := mouse.Delta(msg)
 	if d == 0 && !mouse.IsPress(msg) {

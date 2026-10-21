@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/keyolk/tuikit/selection"
+	"github.com/keyolk/tuikit/tuitest"
 )
 
 // Every coordinate below comes from where View drew some text (at, atNth),
@@ -23,8 +24,12 @@ func motion(a *App, x, y int) tea.Cmd {
 	return send(a, tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
 }
 
+// release ends a drag and runs the command it returned, so the copy reaches
+// the clipboard stub (captureCopies) the way Bubble Tea would run it.
 func release(a *App, x, y int) tea.Cmd {
-	return send(a, tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonNone, Action: tea.MouseActionRelease})
+	cmd := send(a, tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonNone, Action: tea.MouseActionRelease})
+	tuitest.Drain(cmd, 0)
+	return cmd
 }
 
 // drag presses at (x0, y0), moves to (x1, y1) and releases there, returning
@@ -199,6 +204,7 @@ func TestDoubleClickInTheDiffSelectsAWordNotTheRowAction(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("a double click in a text pane copies the word")
 	}
+	tuitest.Drain(cmd, 0)
 	if got := lastCopy(c); got != "this" {
 		t.Fatalf("word = %q, want %q", got, "this")
 	}
@@ -207,6 +213,7 @@ func TestDoubleClickInTheDiffSelectsAWordNotTheRowAction(t *testing.T) {
 	}
 	release(a, x, y)
 	cmd = press(a, x, y)
+	tuitest.Drain(cmd, 0)
 	if cmd == nil || !strings.Contains(lastCopy(c), "this finding is long") {
 		t.Fatalf("a triple click selects the line, got %q", lastCopy(c))
 	}
@@ -325,17 +332,18 @@ func TestDragPastTheBottomOfTheDiffScrollsAndKeepsTheLinesThatLeft(t *testing.T)
 	}
 }
 
-// captureCopies swaps the clipboard command for one that records the text, so
-// a test asserts what a release would copy and never touches the clipboard.
+// captureCopies replaces the clipboard with a recorder, so a test asserts
+// what a release copied, through the same command the app returns, and never
+// touches the real clipboard.
 func captureCopies(t *testing.T) *[]string {
 	t.Helper()
 	var got []string
-	old := copySelection
-	copySelection = func(s string) tea.Cmd {
+	old := selection.Clipboard
+	selection.Clipboard = func(s string) error {
 		got = append(got, s)
-		return func() tea.Msg { return nil }
+		return nil
 	}
-	t.Cleanup(func() { copySelection = old })
+	t.Cleanup(func() { selection.Clipboard = old })
 	return &got
 }
 

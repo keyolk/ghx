@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/link"
 
 	"github.com/keyolk/ghx/internal/gh"
 )
@@ -146,8 +147,13 @@ func (a *App) handleMergePromptKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// openURL hands one URL to the configured opener.
+// openURL hands one URL to the configured opener. Only http(s) URLs go to
+// it (E11): the URL is API data, and a file: or custom-scheme URL is not
+// something a key in a TUI should launch.
 func (a *App) openURL(ctx context.Context, url string) error {
+	if !link.Valid(url) {
+		return fmt.Errorf("open %q: %w", url, link.ErrInvalid)
+	}
 	c, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := exec.CommandContext(c, a.cfg.BrowserCommand(), url).Run(); err != nil {

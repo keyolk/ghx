@@ -41,8 +41,9 @@ import (
 // Drag, and the release that ends one, belong to the text selection
 // (drag_select.go); plain release and motion are ignored.
 
-// handleMouse is the entry point from Update.
-func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
+// handleMouse is the entry point from Update, for mouse events and the
+// selection's auto-scroll ticks.
+func (a *App) handleMouse(in tea.Msg) tea.Cmd {
 	// Below the size View draws a notice instead of the app, so there is
 	// nothing under the pointer to act on.
 	if a.quitting || a.width < 30 || a.height < 8 {
@@ -51,13 +52,14 @@ func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
 	// The selection sees every event first, release and motion included: a
 	// drag is only a drag to it. A press that does not move stays the click
 	// below (Consumed is false for it).
-	copyCmd, consumed := a.selectMouse(msg)
-	if consumed {
-		return copyCmd
+	selCmd, consumed := a.selectMouse(in)
+	msg, isMouse := in.(tea.MouseMsg)
+	if consumed || !isMouse {
+		return selCmd
 	}
 	d := mouse.Delta(msg)
 	if d == 0 && !mouse.IsPress(msg) {
-		return copyCmd
+		return selCmd
 	}
 	if mouse.IsPress(msg) {
 		// A click is the acknowledgement an error toast waits for, as a key is.
@@ -66,7 +68,7 @@ func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
 	// The pointer proves someone is here, as a key does: the poll leaves its
 	// idle cadence and a stale list refreshes.
 	wake := a.noteActivity()
-	return tea.Batch(wake, copyCmd, a.routeMouse(msg, d))
+	return tea.Batch(wake, selCmd, a.routeMouse(msg, d))
 }
 
 func (a *App) routeMouse(msg tea.MouseMsg, d int) tea.Cmd {

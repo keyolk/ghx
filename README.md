@@ -294,7 +294,7 @@ Press `?` inside the TUI for the full list. Highlights:
 | `v` | visual range for multi-line comment |
 | `s` | toggle unified / side-by-side diff |
 | `h` / `l` | switch diff column (side-by-side) |
-| `o` | fold file (diff tab) / open selected PRs in browser |
+| `o` | fold file (diff tab) / open the selected check's page (Checks tab) or PR comment (Comments tab) / open selected PRs in browser |
 | `y` / `:copy` | copy the selected PRs' URLs to the clipboard (one per line) |
 | `J` / `K` | next / previous hunk (diff tab) |
 | `H` / `L` | previous / next file (diff tab; `{` `}` also) |

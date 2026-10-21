@@ -247,6 +247,7 @@ func DefaultKeymap() keys.Keymap {
 		keys.Binding{Action: "resolvedfilter", Keys: []string{"t"}, Ctx: ctxComments, Group: grpReview,
 			Help: "show / hide resolved threads (○ open · ✓ resolved · ? unknown)", Labels: map[string]string{"hiding": "show all", "showing": "hide done"}, Footer: 5},
 		keys.Binding{Action: "expand", Keys: []string{"enter"}, Ctx: ctxComments, Group: grpReview, Help: "expand the thread"},
+		linkBinding(ctxComments, 6),
 	)
 
 	// commits
@@ -255,6 +256,7 @@ func DefaultKeymap() keys.Keymap {
 	// checks
 	add(nav(ctxChecks, "check", 1, false)...)
 	add(keys.Binding{Action: "logs", Keys: []string{"enter"}, Ctx: ctxChecks, Group: grpViews, Help: "open the check's log", Short: "logs", Footer: 2})
+	add(linkBinding(ctxChecks, 3))
 	add(nav(ctxLogs, "scroll", 1, false)...)
 	add(
 		keys.Binding{Action: "pagedown", Keys: []string{"ctrl+f", "pgdown"}, Ctx: ctxLogs, Group: grpNav, Help: "page down"},

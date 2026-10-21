@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 
 	"github.com/keyolk/ghx/internal/tui"
 )
@@ -43,6 +44,9 @@ func defaultKeymap() keys.Keymap {
 		keys.Binding{Action: "cancel", Keys: []string{"c"}, Ctx: ctxRuns, Help: "cancel", Footer: 7},
 		keys.Binding{Action: "failed", Keys: []string{"f"}, Ctx: ctxRuns, Help: "failed only",
 			Labels: map[string]string{"on": "all runs"}, Short: "failed", Footer: 8},
+		// o opens the selected run's page (E11). Workflows have no URL in the
+		// data gh returns, so the binding is runs-only.
+		runsLink(),
 
 		keys.Binding{Action: "enable", Keys: []string{"e"}, Ctx: ctxWorkflows, Help: "enable", Footer: 4},
 		keys.Binding{Action: "disable", Keys: []string{"d"}, Ctx: ctxWorkflows, Help: "disable", Footer: 5},
@@ -53,6 +57,12 @@ func defaultKeymap() keys.Keymap {
 		keys.Binding{Action: "quit", Keys: []string{"q", "ctrl+c"}, Ctx: ctxLogs, Help: "quit", Pinned: true, Footer: 99},
 	)
 	return keys.New(bs...)
+}
+
+func runsLink() keys.Binding {
+	b := link.Binding(ctxRuns)
+	b.Short, b.Footer = "open", 9
+	return b
 }
 
 // defaultKeys is the built-in table; an App without a loaded one uses it.

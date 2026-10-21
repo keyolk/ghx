@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/link"
 )
 
 // Row rendering for the PR list. Cells are padded as plain text and styled
@@ -72,7 +73,9 @@ func (d prListDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	}
 	numCell := padCell("#"+itoa(p.Number), numW)
 	repoCell := padCell(fitCell(shortRepo(p.Repo), repoW), repoW)
-	titleCell := padCell(fitCell(p.Title, titleW), titleW)
+	// Only the title text is the link (E11): the padding after it is not, so
+	// cmd+click on the gap between columns opens nothing.
+	titleCell := padCell(link.Wrap(p.URL, fitCell(p.Title, titleW)), titleW)
 	authorCell := padCell(fitCell(p.Author.Login, authorW), authorW)
 	ageCell := leftPadCell(relTime(p.UpdatedAt), ageW)
 

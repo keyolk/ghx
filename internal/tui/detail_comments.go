@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 
 	"github.com/keyolk/ghx/internal/pr"
 )
@@ -327,7 +328,8 @@ func (c *commentsView) conversationHeader(cv pr.Conversation, selected bool, wid
 	if author == "" {
 		author = "unknown"
 	}
-	head := fmt.Sprintf("%s %s  %s", fold, conversationKindLabel(cv.Kind), author)
+	// The kind label ("comment", "approved") links to the comment's page.
+	head := fmt.Sprintf("%s %s  %s", fold, link.Wrap(cv.URL, conversationKindLabel(cv.Kind)), author)
 
 	body := head
 	// The glyph cell threads occupy is left blank rather than filled: a

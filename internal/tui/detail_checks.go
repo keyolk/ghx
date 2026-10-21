@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 
 	"github.com/keyolk/ghx/internal/pr"
 )
@@ -192,7 +193,8 @@ func checkCells(ck pr.Check, width int) (icon, name, dur, workflow string) {
 	nameW := clamp(width-2-durW-4-min(workflowW, 24), 12, nameMaxW)
 
 	icon, _ = checkStyleFor(ck.Bucket)
-	name = padCell(fitCell(ck.Name, nameW), nameW)
+	// The name is the link to the check's page; the padding after it is not.
+	name = padCell(link.Wrap(ck.Link, fitCell(ck.Name, nameW)), nameW)
 	dur = leftPadCell(checkDuration(ck), durW)
 	if workflowW > 6 && ck.Workflow != "" {
 		workflow = fitCell(ck.Workflow, workflowW)

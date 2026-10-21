@@ -46,29 +46,31 @@ func (a *App) logLines() []string {
 	return strings.Split(strings.TrimRight(a.logView, "\n"), "\n")
 }
 
-// selectMouse feeds the event to the selection before click handling; handled
-// means it was a drag (or a word pick) and is not also a click.
-func (a *App) selectMouse(msg tea.MouseMsg) (cmd tea.Cmd, handled bool) {
+// selectMouse feeds a mouse event or an auto-scroll tick to the selection
+// before click handling; handled means it was a drag (or a word pick) and is
+// not also a click.
+func (a *App) selectMouse(msg tea.Msg) (cmd tea.Cmd, handled bool) {
 	// view clamps logOff the way the panes need it read, and is the frame
-	// before Render, so the highlight never reaches a copy.
-	frame := a.view()
-	r := a.sel.Mouse(msg, a.panes(), frame, a.clock())
-	if r.Scroll != 0 {
-		// The only scrollable pane is the log, scrolled the way its keys do.
-		act := "down"
-		if r.Scroll < 0 {
-			act = "up"
+	// before Render, so the highlight never reaches a copy. Built at most once
+	// per event, and only when the selection asks.
+	var frame string
+	built := false
+	view := func() string {
+		if !built {
+			frame, built = a.view(), true
 		}
-		for range max(r.Scroll, -r.Scroll) {
-			a.run(act, 0)
-		}
+		return frame
 	}
-	if r.Copy != "" {
-		cmd = copySelection(r.Copy)
+	panes := func() []selection.Pane {
+		view()
+		return a.panes()
+	}
+	r, cmd := a.sel.Update(msg, panes, view, a.clock())
+	if r.Scroll != 0 {
+		// The only scrollable pane is the log. The kit's offset is set, not
+		// added: the keys leave logOff unclamped past the end (render clamps
+		// it), and adding -1 to such a value would not move the log.
+		a.logOff = r.Offset
 	}
 	return cmd, r.Consumed
 }
-
-// copySelection builds the clipboard command for a finished selection. Tests
-// swap it to capture the text without ever writing the real clipboard.
-var copySelection = selection.Copy
