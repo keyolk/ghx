@@ -144,7 +144,8 @@ browser: ""
 # How often to refresh the visible source.
 poll_interval: "30s"
 
-# List width as a percentage of the terminal, in the list/preview split.
+# List width as a percentage of the terminal, in the list/preview split: the
+# initial ratio and what = resets to. < > [ ] and a divider drag resize it.
 diff_split_ratio: 40
 `
 

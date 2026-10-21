@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"math"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -58,14 +59,14 @@ func TestUIStateSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Source != "reviews" || s.Query != "flaky" || s.SplitRatio != 45 {
-		t.Fatalf("saved %+v, want reviews / flaky / 45", s)
+	if s.Source != "reviews" || s.Query != "flaky" || math.Abs(s.Split.Ratio-0.45) > 1e-9 || s.SplitRatio != 0 {
+		t.Fatalf("saved %+v, want reviews / flaky / split 0.45 and no legacy percent", s)
 	}
 
 	b := twoSourceApp(t)
 	b.RestoreUIState(s)
-	if b.list.curTab != 1 || b.list.query != "flaky" || b.cfg.DiffSplitRatio != 45 {
-		t.Errorf("restored tab %d query %q ratio %d", b.list.curTab, b.list.query, b.cfg.DiffSplitRatio)
+	if b.list.curTab != 1 || b.list.query != "flaky" || b.list.pane.Split.Ratio() != s.Split.Ratio {
+		t.Errorf("restored tab %d query %q ratio %v", b.list.curTab, b.list.query, b.list.pane.Split.Ratio())
 	}
 }
 

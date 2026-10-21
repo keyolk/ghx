@@ -49,7 +49,14 @@ func (a *App) handleMouse(in tea.Msg) tea.Cmd {
 	if a.quitting || a.width < 30 || a.height < 8 {
 		return nil
 	}
-	// The selection sees every event first, release and motion included: a
+	// The split sees a mouse event before the selection: a press on the
+	// divider is a resize drag, never the start of a text selection.
+	if msg, ok := in.(tea.MouseMsg); ok {
+		if cmd, consumed := a.splitMouse(msg); consumed {
+			return cmd
+		}
+	}
+	// The selection sees every event next, release and motion included: a
 	// drag is only a drag to it. A press that does not move stays the click
 	// below (Consumed is false for it).
 	selCmd, consumed := a.selectMouse(in)
@@ -116,7 +123,7 @@ func (a *App) listMouse(msg tea.MouseMsg, d int) tea.Cmd {
 		return nil
 	}
 
-	g := m.pane.geometry(a.width, a.height-1, m.cfg.DiffSplitRatio)
+	g := m.pane.geometry(a.width, a.height-1)
 	listR := offsetRect(g.list, 0, bodyTop)
 	prevR := offsetRect(g.preview, 0, bodyTop)
 

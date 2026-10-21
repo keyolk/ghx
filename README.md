@@ -243,7 +243,9 @@ browser: ""
 # then wl-copy, then "xclip -selection clipboard"
 clipboard: ""
 
-# List/preview split ratio
+# List/preview split: the list's initial width in percent (25-75). In the
+# list, < and > (or [ and ]) resize it, = resets it to this value, and the
+# divider can be dragged with the mouse; the result is kept in ui.json.
 diff_split_ratio: 40
 
 # Background refresh of the current tab.

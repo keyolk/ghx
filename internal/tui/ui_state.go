@@ -4,7 +4,9 @@ import (
 	"slices"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/prefs"
+	"github.com/keyolk/tuikit/split"
 )
 
 // ui_state.go keeps the layout a reviewer set up across restarts: the source
@@ -18,11 +20,16 @@ const prefsApp = "ghx"
 // tabs are led by whatever repositories detection found this time, so "tab 3"
 // would point at a different queue on the next launch.
 type UIState struct {
-	Source     string   `json:"source,omitempty"`
-	Query      string   `json:"query,omitempty"`
-	Status     []string `json:"status,omitempty"`
-	SplitRatio int      `json:"split_ratio,omitempty"`
-	DetailTab  string   `json:"detail_tab,omitempty"`
+	Source    string   `json:"source,omitempty"`
+	Query     string   `json:"query,omitempty"`
+	Status    []string `json:"status,omitempty"`
+	DetailTab string   `json:"detail_tab,omitempty"`
+	// Split is the PR list|preview boundary, a fraction (split_list.go).
+	Split split.State `json:"split"`
+	// SplitRatio is the list width in percent that ghx saved before Split
+	// existed. RestoreUIState reads it once when Split is missing; it is never
+	// written again, so the next save replaces it with Split.
+	SplitRatio int `json:"split_ratio,omitempty"`
 }
 
 // LoadUIState reads the saved UI state. A missing file is the zero state; a
@@ -32,8 +39,9 @@ func LoadUIState() (UIState, error) { return prefs.Load(prefsApp, UIState{}) }
 // currentUIState reads the state off the models.
 func (a *App) currentUIState() UIState {
 	s := a.lastUI // keeps the detail tab while no PR is open
-	s.SplitRatio = a.cfg.DiffSplitRatio
+	s.SplitRatio = 0
 	if a.list != nil {
+		s.Split = a.list.pane.Split.State()
 		s.Source = ""
 		if a.list.curTab < len(a.list.sources) {
 			s.Source = a.list.sources[a.list.curTab].Name
@@ -71,7 +79,7 @@ func (a *App) saveUIState() tea.Cmd {
 
 func uiStateEqual(x, y UIState) bool {
 	return x.Source == y.Source && x.Query == y.Query && slices.Equal(x.Status, y.Status) &&
-		x.SplitRatio == y.SplitRatio && x.DetailTab == y.DetailTab
+		x.Split == y.Split && x.SplitRatio == y.SplitRatio && x.DetailTab == y.DetailTab
 }
 
 // RestoreUIState applies a saved state before the program starts.
@@ -80,10 +88,15 @@ func uiStateEqual(x, y UIState) bool {
 // inside a checkout opens on that repository's PRs on purpose, and a tab saved
 // from yesterday's session must not override where the user is now.
 func (a *App) RestoreUIState(s UIState) {
-	if s.SplitRatio > 0 {
-		a.cfg.DiffSplitRatio = clamp(s.SplitRatio, 25, 75)
-	}
 	if a.list != nil {
+		// split.Restore rejects anything that is not a fraction (a hand-edited
+		// 40, a negative), which leaves the configured default in place.
+		sp, ok := a.list.pane.Split.Restore(s.Split)
+		if !ok && s.SplitRatio > 0 {
+			// Migration from the percentage: 40 is 0.4, clamped as before.
+			sp = sp.Set(float64(s.SplitRatio)/100, mouse.Rect{})
+		}
+		a.list.pane.Split = sp
 		if len(a.list.detectedRepos) == 0 && s.Source != "" {
 			for i, src := range a.list.sources {
 				if src.Name == s.Source {
@@ -105,6 +118,10 @@ func (a *App) RestoreUIState(s UIState) {
 	// write that changes nothing.
 	a.lastUI = a.currentUIState()
 	a.lastUI.DetailTab = s.DetailTab
+	// A file still holding the old percentage differs from the current state
+	// in that field alone, so the first save rewrites it as Split: the
+	// migration happens once.
+	a.lastUI.SplitRatio = s.SplitRatio
 }
 
 // preferredDetailTab is the tab a newly opened PR starts on.

@@ -280,7 +280,7 @@ func TestPreviewClickFocusesItAndListClickTakesFocusBack(t *testing.T) {
 	a := mouseApp(t)
 	a.list.pane.Show = true
 	a.View()
-	g := a.list.pane.geometry(a.width, a.height-1, a.cfg.DiffSplitRatio)
+	g := a.list.pane.geometry(a.width, a.height-1)
 	if !g.split {
 		t.Fatal("setup: the preview should be drawn at this size")
 	}
@@ -305,7 +305,7 @@ func TestWheelOverThePreviewDoesNotMoveTheList(t *testing.T) {
 	a := mouseApp(t)
 	a.list.pane.Show = true
 	a.View()
-	g := a.list.pane.geometry(a.width, a.height-1, a.cfg.DiffSplitRatio)
+	g := a.list.pane.geometry(a.width, a.height-1)
 	wheel(a, g.preview.X+2, bodyTop+1, tea.MouseButtonWheelDown)
 	if got := cursorNumber(t, a); got != 1 {
 		t.Fatalf("a wheel over the preview moved the list to #%d", got)
@@ -318,7 +318,7 @@ func TestNarrowListHasNoPreviewAndStillTakesClicks(t *testing.T) {
 	a.list.resize(38, 30)
 	a.list.pane.Show = true
 	a.View()
-	if a.list.pane.geometry(a.width, a.height-1, a.cfg.DiffSplitRatio).split {
+	if a.list.pane.geometry(a.width, a.height-1).split {
 		t.Fatal("setup: the narrow layout should be list-only")
 	}
 	x, y := at(t, a, "#3")

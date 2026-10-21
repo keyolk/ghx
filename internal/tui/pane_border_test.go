@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/keyolk/tuikit/mouse"
+	"github.com/keyolk/tuikit/split"
 )
 
 // Pane frames were painted with hand-built truecolor escapes, which ignore the
@@ -33,7 +35,7 @@ func TestPaneFramesHonourNoColor(t *testing.T) {
 		"focused pane": decoratedPane("label", "body", 20, 4, true),
 		"dim pane":     decoratedPane("label", "body", 20, 4, false),
 		"failure box":  borderedPane("merge failed", "body", 30, 4, paneBorderErrorStyle),
-		"split":        renderFixedSplit("left", "right", 10, 10, 2, paneBorderFocusedStyle),
+		"split":        split.Divider(split.Horizontal, mouse.Rect{W: 1, H: 2}, paneBorderFocusedStyle, false),
 	}
 	for name, out := range renders {
 		if strings.Contains(out, "\x1b[38;") {
