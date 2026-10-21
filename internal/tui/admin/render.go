@@ -27,6 +27,11 @@ func (a *App) contentRows() int { return max(a.height-3, 1) }
 func (a *App) listRows() int { return a.contentRows() }
 
 func (a *App) View() string {
+	// The selection is drawn last, over the panes the mouse used.
+	return a.sel.Render(a.view(), a.panes(), tui.SelectionStyle)
+}
+
+func (a *App) view() string {
 	if a.width == 0 || a.height == 0 {
 		return "Loading ghx admin…"
 	}

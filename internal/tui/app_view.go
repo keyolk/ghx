@@ -14,6 +14,14 @@ import (
 // --- render ---
 
 func (a *App) View() string {
+	// The selection is drawn last, over everything, with the panes the mouse
+	// used. Only a drawn selection needs the diff's full content.
+	return a.sel.Render(a.view(), a.selectionPanes(a.sel.Active()), SelectionStyle)
+}
+
+// view is the frame without the selection: what a selection reads its text
+// from, so a highlight style never leaks into a copy.
+func (a *App) view() string {
 	if a.width == 0 || a.height == 0 {
 		return "Starting ghx…"
 	}

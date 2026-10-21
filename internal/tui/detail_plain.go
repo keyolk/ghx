@@ -13,6 +13,13 @@ func (d *prDetailModel) renderOverview(w, h int) string {
 	if d.detail == nil {
 		return dimStyle.Render("No detail loaded.")
 	}
+	return scrollBlock(d.overviewText(w), &d.overviewOff, h)
+}
+
+// overviewText is the whole Overview tab before scrolling. renderOverview
+// draws a window of it and drag selection reads all of it, so a drag that
+// scrolls the tab copies the lines that left the screen.
+func (d *prDetailModel) overviewText(w int) string {
 	dt := d.detail
 	var b strings.Builder
 	b.WriteString(prTitleStyle.Render(dt.Title) + "\n\n")
@@ -66,7 +73,7 @@ func (d *prDetailModel) renderOverview(w, h int) string {
 			b.WriteString("  " + seg + "\n")
 		}
 	}
-	return scrollBlock(b.String(), &d.overviewOff, h)
+	return b.String()
 }
 
 func field(label, value string) string {
@@ -155,6 +162,12 @@ func (d *prDetailModel) renderCommits(w, h int) string {
 	if d.detail == nil || len(d.detail.Commits) == 0 {
 		return dimStyle.Render("No commits.")
 	}
+	return scrollBlock(d.commitsText(), &d.commitsOff, h)
+}
+
+// commitsText is the whole Commits tab before scrolling, for the same reason
+// as overviewText.
+func (d *prDetailModel) commitsText() string {
 	var b strings.Builder
 	for _, c := range d.detail.Commits {
 		sha := c.OID
@@ -166,7 +179,7 @@ func (d *prDetailModel) renderCommits(w, h int) string {
 			dimStyle.Render(c.AuthoredDate.Format("01-02")),
 			c.MessageHeadline))
 	}
-	return scrollBlock(b.String(), &d.commitsOff, h)
+	return b.String()
 }
 
 // scrollBlock renders a plain text block at a scroll offset, and stores the
@@ -174,8 +187,13 @@ func (d *prDetailModel) renderCommits(w, h int) string {
 // scroll past the end: the key handlers only count up, so without it a few
 // quick notches would leave an offset that takes as many notches to undo.
 func scrollBlock(s string, offset *int, height int) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	lines := blockLines(s)
 	*offset = clamp(*offset, 0, max(len(lines)-1, 0))
 	end := min(*offset+height, len(lines))
 	return strings.Join(lines[*offset:end], "\n")
+}
+
+// blockLines splits a text block into the lines scrollBlock draws.
+func blockLines(s string) []string {
+	return strings.Split(strings.TrimRight(s, "\n"), "\n")
 }

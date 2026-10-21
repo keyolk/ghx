@@ -26,8 +26,11 @@ import (
 //
 // PR detail
 //   - tab: switch to that tab (detailtab).
-//   - Files / Diff / Comments / Checks rows: select; a second click is that
-//     tab's Enter (openfile, thread, expand, logs).
+//   - Files / Comments / Checks rows: select; a second click is that tab's
+//     Enter (openfile, expand, logs).
+//   - Diff rows: a click selects. The diff is a text pane, so a double click
+//     selects a word and a triple click a line (drag_select.go); the thread
+//     action stays on its key.
 //   - wheel: three steps of the tab's own down/up. Overview, Commits and the
 //     check log scroll; the others move their cursor.
 //
@@ -35,8 +38,8 @@ import (
 // beneath, a click outside closes the overlay with the action its Esc runs,
 // and rows are selected the way the overlay's own keys select them.
 //
-// Release, motion and drag are ignored, so selecting text with shift-drag or a
-// terminal's own modifier keeps working where the terminal offers one.
+// Drag, and the release that ends one, belong to the text selection
+// (drag_select.go); plain release and motion are ignored.
 
 // handleMouse is the entry point from Update.
 func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
@@ -45,9 +48,16 @@ func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
 	if a.quitting || a.width < 30 || a.height < 8 {
 		return nil
 	}
+	// The selection sees every event first, release and motion included: a
+	// drag is only a drag to it. A press that does not move stays the click
+	// below (Consumed is false for it).
+	copyCmd, consumed := a.selectMouse(msg)
+	if consumed {
+		return copyCmd
+	}
 	d := mouse.Delta(msg)
 	if d == 0 && !mouse.IsPress(msg) {
-		return nil
+		return copyCmd
 	}
 	if mouse.IsPress(msg) {
 		// A click is the acknowledgement an error toast waits for, as a key is.
@@ -56,7 +66,7 @@ func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
 	// The pointer proves someone is here, as a key does: the poll leaves its
 	// idle cadence and a stale list refreshes.
 	wake := a.noteActivity()
-	return tea.Batch(wake, a.routeMouse(msg, d))
+	return tea.Batch(wake, copyCmd, a.routeMouse(msg, d))
 }
 
 func (a *App) routeMouse(msg tea.MouseMsg, d int) tea.Cmd {
