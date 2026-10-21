@@ -303,7 +303,11 @@ func (a *App) quit() tea.Cmd {
 	}
 	a.quitting = true
 	var cmd tea.Cmd
-	a.saver, cmd = a.saver.Flush()
+	// FlushWith, not Flush: the last debounced Save may predate this
+	// message's changes (a divider drag released right before q).
+	s := a.currentUIState()
+	a.lastUI = s
+	a.saver, cmd = a.saver.FlushWith(s)
 	return cmd
 }
 

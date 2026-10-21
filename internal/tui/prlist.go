@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/link"
+	"github.com/keyolk/tuikit/split"
 
 	"github.com/keyolk/ghx/internal/config"
 	"github.com/keyolk/ghx/internal/gh"
@@ -177,7 +178,7 @@ func newPRListModelWithRepo(cfg *config.Config, client *gh.Client, km keys.Keyma
 	initListBase(&l)
 	configureListSearch(&l)
 	m.list = &l
-	m.pane = &SplitPane{List: m.list, ItemHeight: 1}
+	m.pane = &SplitPane{List: m.list, ItemHeight: 1, Split: newListSplit(cfg)}
 	// Push the seeded rows (if any) into the list so the first frame shows them
 	// rather than a blank pane waiting for the fetch.
 	m.syncListItems()
@@ -268,7 +269,7 @@ func (m *prListModel) loading() bool {
 func (m *prListModel) resize(w, h int) {
 	m.width, m.height = w, h
 	// One row goes to the tab strip.
-	m.pane.Resize(w, h-1, m.cfg.DiffSplitRatio)
+	m.pane.Resize(w, h-1)
 }
 
 func (m *prListModel) setSpinnerFrame(f int) { m.spinner = f }
@@ -559,7 +560,7 @@ func (m *prListModel) runAction(b keys.Binding, msg tea.KeyMsg) (tea.Cmd, bool) 
 	case "showpreview":
 		m.pane.Show = true
 		m.pane.Focus = true
-		m.pane.Resize(m.width, m.height-1, m.cfg.DiffSplitRatio)
+		m.pane.Resize(m.width, m.height-1)
 		return nil, true
 	case "hidepreview":
 		if m.pane.Focus {
@@ -567,7 +568,7 @@ func (m *prListModel) runAction(b keys.Binding, msg tea.KeyMsg) (tea.Cmd, bool) 
 		} else {
 			m.pane.Show = false
 		}
-		m.pane.Resize(m.width, m.height-1, m.cfg.DiffSplitRatio)
+		m.pane.Resize(m.width, m.height-1)
 		return nil, true
 	case "select":
 		m.toggleSelected()
@@ -581,11 +582,8 @@ func (m *prListModel) runAction(b keys.Binding, msg tea.KeyMsg) (tea.Cmd, bool) 
 		return m.selectTab((m.curTab + 1) % len(m.sources)), true
 	case "prevsource":
 		return m.selectTab((m.curTab - 1 + len(m.sources)) % len(m.sources)), true
-	case "narrower":
-		m.adjustRatio(-5)
-		return nil, true
-	case "wider":
-		m.adjustRatio(5)
+	case split.ActionGrow, split.ActionShrink, split.ActionReset:
+		m.handleSplit(b.Action)
 		return nil, true
 	case "source":
 		if i := b.KeyIndex(msg); i >= 0 {
@@ -620,13 +618,6 @@ func navKeyMsg(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyPgDown}
 	}
 	return tea.KeyMsg{}
-}
-
-func (m *prListModel) adjustRatio(delta int) {
-	r := m.cfg.DiffSplitRatio + delta
-	// Keep both panes usable; a 10% pane shows nothing worth reading.
-	m.cfg.DiffSplitRatio = clamp(r, 25, 75)
-	m.pane.Resize(m.width, m.height-1, m.cfg.DiffSplitRatio)
 }
 
 func (m *prListModel) selectedItem() (prListItem, bool) {
@@ -706,7 +697,7 @@ func (m *prListModel) view(w, h int) string {
 		}
 		return joinVertical(tabs, body)
 	}
-	return joinVertical(tabs, m.pane.Render(w, h-1, m.cfg.DiffSplitRatio))
+	return joinVertical(tabs, m.pane.Render(w, h-1))
 }
 
 // renderTabs draws the source strip, keeping every tab's index visible even
@@ -827,8 +818,7 @@ func (m *prListModel) renderTab(i int, s config.SourceDef, withCount bool) strin
 func (m *prListModel) renderPreview() {
 	it, ok := m.selectedItem()
 	if !ok {
-		m.pane.SetPreviewContent(dimStyle.Render("No selection."),
-			m.width, m.height-1, m.cfg.DiffSplitRatio)
+		m.pane.SetPreviewContent(dimStyle.Render("No selection."), m.width, m.height-1)
 		return
 	}
 	p := it.pr
@@ -849,7 +839,7 @@ func (m *prListModel) renderPreview() {
 	b.WriteString(field("Branch", p.HeadRefName))
 	b.WriteString(field("Updated", relTime(p.UpdatedAt)+" ago"))
 	b.WriteString("\n" + dimStyle.Render("enter opens the full PR"))
-	m.pane.SetPreviewContent(b.String(), m.width, m.height-1, m.cfg.DiffSplitRatio)
+	m.pane.SetPreviewContent(b.String(), m.width, m.height-1)
 }
 
 func conversationStatusLabel(p prSummary) string {

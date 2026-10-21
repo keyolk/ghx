@@ -58,6 +58,7 @@ const (
 	grpViews   = "Views"
 	grpFilters = "Filters & status"
 	grpOther   = "Other"
+	grpLayout  = "Layout"
 	grpPrompt  = "Prompts"
 )
 
@@ -160,8 +161,6 @@ func DefaultKeymap() keys.Keymap {
 		keys.Binding{Action: "selectall", Keys: []string{"A"}, LatinOnly: true, Ctx: ctxList, Group: grpPR, Help: "toggle every visible row", Short: "all", Footer: 2},
 		keys.Binding{Action: "showpreview", Keys: []string{"l", "right"}, Ctx: ctxList, Group: grpNav, Help: "show / focus the preview"},
 		keys.Binding{Action: "hidepreview", Keys: []string{"h", "left"}, Ctx: ctxList, Group: grpNav, Help: "unfocus / hide the preview"},
-		keys.Binding{Action: "narrower", Keys: []string{"["}, Ctx: ctxList, Group: grpNav, Help: "shrink the list pane"},
-		keys.Binding{Action: "wider", Keys: []string{"]"}, Ctx: ctxList, Group: grpNav, Help: "grow the list pane"},
 		keys.Binding{Action: "nextsource", Keys: []string{"tab"}, Ctx: ctxList, Group: grpNav, Help: "next source tab"},
 		keys.Binding{Action: "prevsource", Keys: []string{"shift+tab"}, Ctx: ctxList, Group: grpNav, Help: "previous source tab"},
 		// The digit jumps go by position in Keys (KeyIndex), so a user who
@@ -174,6 +173,8 @@ func DefaultKeymap() keys.Keymap {
 		keys.Binding{Action: "repo", Keys: []string{"e"}, Ctx: ctxList, Group: grpOther, Help: "open a repository's PRs as a tab", Short: "repo", Footer: 21},
 		keys.Binding{Action: "refresh", Keys: []string{"R"}, Ctx: ctxList, Group: grpOther, Help: "refresh", Footer: 8},
 	)
+	// The list|preview split: < > = and the old [ ] (split_list.go).
+	add(splitBindings()...)
 
 	// detail — shared by every tab
 	add(

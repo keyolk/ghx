@@ -71,7 +71,7 @@ func (a *App) listPanes() []selection.Pane {
 	if m == nil || len(m.list.VisibleItems()) == 0 {
 		return nil
 	}
-	g := m.pane.geometry(a.width, a.height-1, m.cfg.DiffSplitRatio)
+	g := m.pane.geometry(a.width, a.height-1)
 	panes := []selection.Pane{{ID: paneList, Rect: offsetRect(g.list, 0, bodyTop), Kind: selection.List}}
 	if g.split {
 		// The preview is rebuilt every frame and no key scrolls it, so it is
