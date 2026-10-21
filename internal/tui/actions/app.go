@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/mouse"
+	"github.com/keyolk/tuikit/selection"
 
 	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/tui"
@@ -70,7 +71,9 @@ type App struct {
 	// row can be told from clicks on different rows; now is the clock it
 	// reads, replaceable in tests.
 	clicks mouse.Clicks
-	now    func() time.Time
+	// sel is the drag selection (selection.go), cleared where clicks is.
+	sel selection.Selection
+	now func() time.Time
 }
 
 // NewApp constructs the actions TUI.
@@ -143,8 +146,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A key between two clicks breaks the pair: click, move away and back
 		// by keyboard, click again must not count as a double click.
 		a.clicks = mouse.Clicks{}
+		a.sel.Clear()
 		a.toast.Ack()
 		return a, a.handleKey(msg)
+
+	case selection.CopiedMsg:
+		a.toast.Copied(msg)
+		return a, a.toast.Expiry()
 
 	case tui.ToastExpiredMsg:
 		a.toast.Expire(msg)
@@ -482,6 +490,11 @@ func (a *App) contentRows() int { return max(a.height-3, 1) }
 func (a *App) listRows() int { return a.contentRows() }
 
 func (a *App) View() string {
+	// The selection is drawn last, over the panes the mouse used.
+	return a.sel.Render(a.view(), a.panes(), tui.SelectionStyle)
+}
+
+func (a *App) view() string {
 	if a.width == 0 || a.height == 0 {
 		return "Loading ghx actions…"
 	}

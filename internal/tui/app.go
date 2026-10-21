@@ -11,6 +11,7 @@ import (
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/prefs"
+	"github.com/keyolk/tuikit/selection"
 
 	"github.com/keyolk/ghx/internal/config"
 	"github.com/keyolk/ghx/internal/gh"
@@ -159,6 +160,10 @@ type App struct {
 	// clicks remembers the last click so a second one on the same, already
 	// selected item can be told from two clicks on different ones.
 	clicks mouse.Clicks
+
+	// sel is the drag selection (drag_select.go). It is cleared where clicks
+	// is reset: a key ends it, as it ends a double click.
+	sel selection.Selection
 }
 
 // mergePrompt holds the two-step merge confirmation.
@@ -476,6 +481,7 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A key between two clicks breaks the pair: click, move away and back
 		// by keyboard, click again must not count as a double click.
 		a.clicks = mouse.Clicks{}
+		a.sel.Clear()
 		// A key is the acknowledgement an error toast waits for. Cleared before
 		// the key is handled so that a toast the key itself raises survives.
 		a.toast.Ack()
@@ -505,6 +511,10 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case toastMsg:
 		a.setToast(msg.text)
+		return a, nil
+
+	case selection.CopiedMsg:
+		a.toast.Copied(msg)
 		return a, nil
 
 	case threadResolvedMsg:

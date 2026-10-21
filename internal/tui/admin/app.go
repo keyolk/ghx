@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/mouse"
+	"github.com/keyolk/tuikit/selection"
 
 	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/tui"
@@ -95,7 +96,9 @@ type App struct {
 	// row can be told from clicks on different rows; now is the clock it
 	// reads, replaceable in tests.
 	clicks mouse.Clicks
-	now    func() time.Time
+	// sel is the drag selection (selection.go), cleared where clicks is.
+	sel selection.Selection
+	now func() time.Time
 }
 
 // permissionSet is the levels offered in the permission prompt, weakest first.
@@ -246,8 +249,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A key between two clicks breaks the pair: click, move away and back
 		// by keyboard, click again must not count as a double click.
 		a.clicks = mouse.Clicks{}
+		a.sel.Clear()
 		a.toast.Ack()
 		return a, a.handleKey(msg)
+
+	case selection.CopiedMsg:
+		a.toast.Copied(msg)
+		return a, a.toast.Expiry()
 
 	case tui.ToastExpiredMsg:
 		a.toast.Expire(msg)

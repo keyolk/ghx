@@ -23,8 +23,9 @@ import (
 //     nothing reaches the list, and a click outside the bar is the bar's Esc.
 //     The permission prompt's choices are clickable the way tab cycles them.
 //
-// Release, motion, drag and the right and middle buttons are ignored: the
-// panel has no mark or toggle action for them to stand for.
+// A drag selects text (selection.go). Plain release and motion, and the right
+// and middle buttons, are ignored: the panel has no mark or toggle action for
+// them to stand for.
 
 // Screen rows: title, then the tab strip (or the search/prompt bar in its
 // place), then the list. The footer is the last row.
@@ -36,6 +37,12 @@ const (
 func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
 	if a.width < 40 || a.height < 8 {
 		return nil // View draws a notice instead of the panel
+	}
+	// The selection sees every event first; a press that does not move stays
+	// the click below.
+	copyCmd, consumed := a.selectMouse(msg)
+	if consumed {
+		return copyCmd
 	}
 	d := mouse.Delta(msg)
 	if d == 0 && !mouse.IsPress(msg) {
