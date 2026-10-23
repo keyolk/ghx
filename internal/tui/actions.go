@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/link"
 
 	"github.com/keyolk/ghx/internal/gh"
 )
@@ -121,20 +122,21 @@ func (a *App) startMerge() tea.Cmd {
 
 func (a *App) handleMergePromptKey(msg tea.KeyMsg) tea.Cmd {
 	p := a.mergePrompt
-	switch msg.String() {
-	case "esc", "n", "q":
+	action, _ := a.resolveIn(stackMerge, msg, false)
+	switch action {
+	case "no":
 		a.mergePrompt = nil
 		return nil
-	case "s":
+	case "squash":
 		p.strategy = "squash"
 		return nil
-	case "m":
+	case "mergecommit":
 		p.strategy = "merge"
 		return nil
-	case "b":
+	case "rebase":
 		p.strategy = "rebase"
 		return nil
-	case "y":
+	case "yes":
 		n, strategy, client := a.detail.number, p.strategy, a.detail.client
 		return func() tea.Msg {
 			c, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -145,8 +147,13 @@ func (a *App) handleMergePromptKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// openURL hands one URL to the configured opener.
+// openURL hands one URL to the configured opener. Only http(s) URLs go to
+// it (E11): the URL is API data, and a file: or custom-scheme URL is not
+// something a key in a TUI should launch.
 func (a *App) openURL(ctx context.Context, url string) error {
+	if !link.Valid(url) {
+		return fmt.Errorf("open %q: %w", url, link.ErrInvalid)
+	}
 	c, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := exec.CommandContext(c, a.cfg.BrowserCommand(), url).Run(); err != nil {
@@ -221,6 +228,12 @@ func (a *App) openEditor(draft string) tea.Cmd {
 	// The editor needs the real terminal, so hand it over via ExecProcess and
 	// read the file back when it exits.
 	parts := strings.Fields(editor)
+	if len(parts) == 0 {
+		// EditorCommand never returns a blank command, but an empty argv here
+		// is an index panic that takes the TUI down, so refuse it explicitly.
+		os.Remove(name)
+		return errCmd(fmt.Errorf("no editor configured"))
+	}
 	args := append(parts[1:], name)
 	cmd := exec.Command(parts[0], args...)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {

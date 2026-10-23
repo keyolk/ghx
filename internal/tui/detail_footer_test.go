@@ -27,7 +27,7 @@ func TestDetailFooterAdvertisesTheKeysThatWork(t *testing.T) {
 	// Files delegate to their own tab, which owns a different vocabulary.
 	for _, tab := range []detailTabKind{tabOverview, tabCommits} {
 		a.detail.activeTab = tab
-		footer := a.detail.helpLine()
+		footer := a.detail.helpLine(a.width)
 		for _, key := range []string{"M", "y", "a", "r", "o"} {
 			if !strings.Contains(footer, key) {
 				t.Errorf("%s footer does not mention %q: %q",
@@ -66,9 +66,36 @@ func TestDetailFooterFitsACommonTerminal(t *testing.T) {
 
 	for _, tab := range a.detail.tabs {
 		a.detail.activeTab = tab
-		if w := lipglossWidth(a.detail.helpLine()); w > 100 {
+		if w := lipglossWidth(a.detail.helpLine(footerBudget)); w > 100 {
 			t.Errorf("%s footer is %d cells — a 100-column terminal truncates it",
 				detailTabNames[tab], w)
 		}
+	}
+}
+
+// On a file header h/l fold, and in a visual range j/k extend it: the same
+// actions as on a diff line, so only the footer label follows the cursor.
+func TestDiffFooterLabelsFollowTheCursor(t *testing.T) {
+	v := newDiffView()
+	if err := v.setContent(twoHunkDiff, nil); err != nil {
+		t.Fatalf("setContent: %v", err)
+	}
+	v.sideBySide = true
+	v.cursor = 0
+	if !v.onHeader() {
+		t.Fatal("row 0 is not the file header")
+	}
+	if got := stripANSI(v.helpLine(200)); !strings.Contains(got, " fold") || strings.Contains(got, "column") {
+		t.Errorf("header footer does not say h/l fold: %q", got)
+	}
+
+	cursorToLine(t, v, "RIGHT", 11)
+	if got := stripANSI(v.helpLine(200)); !strings.Contains(got, "column") || !strings.Contains(got, " line") {
+		t.Errorf("line footer lost its column / line labels: %q", got)
+	}
+	v.visual = true
+	v.visualStart = v.cursor
+	if got := stripANSI(v.helpLine(200)); !strings.Contains(got, " extend") {
+		t.Errorf("visual footer does not say j/k extend: %q", got)
 	}
 }

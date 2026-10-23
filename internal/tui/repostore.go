@@ -1,12 +1,18 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/keyolk/ghx/internal/cachefile"
 )
 
 // A queue is not the only way people navigate. "Open sendbird/ops-k8s" is a
@@ -29,9 +35,10 @@ type repoVisit struct {
 // repoStore records which repositories the user actually works in, persisted to
 // ~/.config/ghx/repos.json.
 //
-// It is best-effort in both directions: an unreadable file is an empty history,
-// and a failed write is a lost visit. Neither is worth an error on screen —
-// the picker still lists everything visible in the loaded queues.
+// An unreadable file is an empty history — the picker still lists everything
+// visible in the loaded queues. A failed write is reported, though: it means
+// every later visit will be lost too, and silence would leave the ranking
+// mysteriously frozen.
 type repoStore struct {
 	path   string
 	visits map[string]repoVisit
@@ -67,39 +74,74 @@ func newRepoStoreAt(path string) *repoStore {
 	return s
 }
 
-// record counts a visit to slug and persists immediately.
+// record counts a visit to slug and returns the command that persists it.
 //
 // Writing on every visit rather than at exit is deliberate: ghx is a TUI people
 // close with ^C and terminal windows people close outright, so there is no
 // shutdown path reliable enough to hold the only copy of this.
-func (s *repoStore) record(slug string, at time.Time) {
+//
+// The in-memory count moves now, so the picker reflects the visit at once; the
+// disk write runs as a tea.Cmd because record is called from Update, and file
+// IO there stalls every frame behind the filesystem.
+func (s *repoStore) record(slug string, at time.Time) tea.Cmd {
 	if s == nil {
-		return
+		return nil
 	}
 	key := strings.ToLower(strings.TrimSpace(slug))
 	if !validRepoSlug(key) {
-		return
+		return nil
 	}
 	v := s.visits[key]
 	v.Visits++
 	v.LastAt = at
 	s.visits[key] = v
-	s.save()
+	if s.path == "" {
+		return nil
+	}
+	path := s.path
+	return func() tea.Msg {
+		if err := persistVisit(path, key, at); err != nil {
+			return errMsg{err: fmt.Errorf("save repo history: %w", err)}
+		}
+		return nil
+	}
 }
 
-func (s *repoStore) save() {
-	if s.path == "" {
-		return
+// persistVisit adds one visit to the file at path.
+//
+// The file is shared by every ghx window, so it re-reads and merges under a
+// cross-process lock rather than writing this process's map: a snapshot write
+// would drop whatever visits the other windows recorded since this one
+// started. The write itself goes through cachefile so a reader never sees a
+// half-written file — a torn file reads as an empty history.
+func persistVisit(path, key string, at time.Time) error {
+	ctx, cancel := context.WithTimeout(context.Background(), repoStoreLockWait)
+	defer cancel()
+	release := cachefile.Lock(ctx, path+".lock")
+	defer release()
+
+	var file repoStoreFile
+	if err := cachefile.ReadJSON(path, &file); err != nil {
+		// A missing or corrupt file is an empty history, as on load. Reset
+		// rather than keep whatever a partial decode left behind.
+		file = repoStoreFile{}
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return
+	if file.Repos == nil {
+		file.Repos = map[string]repoVisit{}
 	}
-	data, err := json.Marshal(repoStoreFile{Repos: s.visits})
-	if err != nil {
-		return
+	v := file.Repos[key]
+	v.Visits++
+	if at.After(v.LastAt) {
+		v.LastAt = at
 	}
-	_ = os.WriteFile(s.path, data, 0o644)
+	file.Repos[key] = v
+	return cachefile.WriteJSON(path, file)
 }
+
+// repoStoreLockWait bounds how long a visit waits for another window's write.
+// The holder only reads and rewrites a small JSON file, so anything longer is a
+// wedged process, and proceeding unlocked beats never recording the visit.
+const repoStoreLockWait = 2 * time.Second
 
 // score ranks a repository by how much it is used and how recently.
 //

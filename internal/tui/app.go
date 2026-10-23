@@ -8,6 +8,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
+	"github.com/keyolk/tuikit/mouse"
+	"github.com/keyolk/tuikit/prefs"
+	"github.com/keyolk/tuikit/selection"
 
 	"github.com/keyolk/ghx/internal/config"
 	"github.com/keyolk/ghx/internal/gh"
@@ -37,7 +42,7 @@ const (
 type App struct {
 	cfg    *config.Config
 	client *gh.Client
-	km     *Keymap
+	km     keys.Keymap
 
 	width  int
 	height int
@@ -51,6 +56,19 @@ type App struct {
 	palette  *palette
 	search   *search
 	helpOpen bool
+	// helpOff is the help overlay's scroll offset, clamped where it is stored
+	// (clampHelp). helpStack and helpOpts are the view the overlay documents,
+	// captured when it opened.
+	helpOff   int
+	helpStack []keys.Ctx
+	helpOpts  keys.Opts
+
+	// saver writes the UI state worth keeping across restarts (ui_state.go);
+	// lastUI is what it last saved, so only a change is written. quitting is
+	// set once the final write is under way.
+	saver    prefs.Saver[UIState]
+	lastUI   UIState
+	quitting bool
 
 	// merge confirmation state; nil when no prompt is showing
 	mergePrompt *mergePrompt
@@ -72,6 +90,8 @@ type App struct {
 	// someone actually works in. It outlives the process — the ranking is only
 	// useful once it has watched a few sessions.
 	repoStore *repoStore
+	// startupSave persists the launch directory's visit; Init runs it.
+	startupSave tea.Cmd
 
 	// suggestion gates applying a review suggestion — the only action in the
 	// diff view that writes a commit to someone's branch.
@@ -81,8 +101,7 @@ type App struct {
 	// pendingAction for why the gap it fills was worth closing.
 	pending *pendingAction
 
-	toast   string
-	toastAt time.Time
+	toast Toast
 
 	// lastKeyAt is when the user last pressed a key, which is what decides
 	// whether the background poll runs at the active or the idle cadence. It is
@@ -138,6 +157,14 @@ type App struct {
 	verifyAccounts func(context.Context) error
 
 	spinnerFrame int
+
+	// clicks remembers the last click so a second one on the same, already
+	// selected item can be told from two clicks on different ones.
+	clicks mouse.Clicks
+
+	// sel is the drag selection (drag_select.go). It is cleared where clicks
+	// is reset: a key ends it, as it ends a double click.
+	sel selection.Selection
 }
 
 // mergePrompt holds the two-step merge confirmation.
@@ -145,14 +172,14 @@ type mergePrompt struct {
 	strategy string // squash | merge | rebase
 }
 
-func NewApp(cfg *config.Config, km *Keymap, client *gh.Client) *App {
+func NewApp(cfg *config.Config, km keys.Keymap, client *gh.Client) *App {
 	return NewAppWithRepo(cfg, km, client, nil)
 }
 
 // NewAppWithRepo builds the app with detectedRepos leading the PR list, so
 // starting ghx inside a checkout — or beside one in the same tmux window —
 // opens on those repositories' pull requests.
-func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedRepos []string) *App {
+func NewAppWithRepo(cfg *config.Config, km keys.Keymap, client *gh.Client, detectedRepos []string) *App {
 	a := &App{
 		cfg:       cfg,
 		client:    client,
@@ -164,6 +191,7 @@ func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedR
 		repoStore: newRepoStore(),
 		workspace: newWorkspace(),
 		nowFunc:   time.Now,
+		saver:     prefs.NewSaver[UIState](prefsApp, 0),
 	}
 	// Startup counts as activity: opening ghx is the most deliberate keypress
 	// there is, and an app that began life idle would poll at the slow cadence
@@ -179,12 +207,17 @@ func NewAppWithRepo(cfg *config.Config, km *Keymap, client *gh.Client, detectedR
 	// evidence that anyone opened them: counting a wide window as eight visits
 	// would let whatever happened to be split beside the work outrank the repo
 	// ghx was actually started in.
+	//
+	// The write is held for Init: NewApp runs before the program starts, and
+	// a failure reported from here would have nowhere to be shown.
 	if len(detectedRepos) > 0 {
-		a.repoStore.record(detectedRepos[0], a.lastKeyAt)
+		a.startupSave = a.repoStore.record(detectedRepos[0], a.lastKeyAt)
 	}
 	// Startup detection is the baseline: these repos already have tabs, so the
 	// first sweep must not announce them as newly appeared.
 	a.workspace.seed(detectedRepos)
+	// The state the app starts in is the baseline: only a change is written.
+	a.lastUI = a.currentUIState()
 	return a
 }
 
@@ -385,6 +418,7 @@ func (a *App) Init() tea.Cmd {
 		spinnerTickCmd(),
 		a.armPoll(),
 		a.armWorkspace(),
+		a.startupSave,
 	}
 	// Account verification is a `gh auth status` round trip per account. Running
 	// it here rather than before tea.NewProgram keeps it off the path to the
@@ -403,6 +437,23 @@ func (a *App) Init() tea.Cmd {
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	seq := a.toast.Seq()
+	m, cmd := a.update(msg)
+	// Every change to the persisted state starts from a message, so comparing
+	// once here catches all of them without a save call at each mutation.
+	if save := a.saveUIState(); save != nil {
+		cmd = tea.Batch(cmd, save)
+	}
+	// Scheduled here rather than at every setToast call: there are a dozen of
+	// those, and one that forgot to return the tick would leave its toast on
+	// screen until some unrelated event happened to redraw.
+	if a.toast.Seq() != seq {
+		cmd = tea.Batch(cmd, a.toast.Expiry())
+	}
+	return m, cmd
+}
+
+func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
@@ -420,7 +471,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.blur()
 		return a, nil
 
+	case ToastExpiredMsg:
+		a.toast.Expire(msg)
+		return a, nil
+
+	case tea.MouseMsg, selection.AutoScrollMsg:
+		return a, a.handleMouse(msg)
+
 	case tea.KeyMsg:
+		// A key between two clicks breaks the pair: click, move away and back
+		// by keyboard, click again must not count as a double click.
+		a.clicks = mouse.Clicks{}
+		a.sel.Clear()
+		// A key is the acknowledgement an error toast waits for. Cleared before
+		// the key is handled so that a toast the key itself raises survives.
+		a.toast.Ack()
 		// Recorded before the key is handled: the handler can quit, and a key that
 		// ends an idle stretch should refresh even if it also does something else.
 		wake := a.noteActivity()
@@ -449,6 +514,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.setToast(msg.text)
 		return a, nil
 
+	case selection.CopiedMsg:
+		a.toast.Copied(msg)
+		return a, nil
+
+	case link.OpenedMsg:
+		// A failure stays until a key, as a failed copy does: "opened" that
+		// silently did not would leave the user waiting on a browser.
+		if msg.Err != nil {
+			a.setErrorToast(msg.Note())
+			return a, nil
+		}
+		a.setToast(msg.Note())
+		return a, nil
+
 	case threadResolvedMsg:
 		a.setToast("thread resolved")
 		if a.detail != nil {
@@ -460,7 +539,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case errMsg:
-		a.setToast(errorStyle.Render("error: ") + msg.err.Error())
+		a.setErrorToast(errorStyle.Render("error: ") + msg.err.Error())
 		return a, nil
 
 	case prListMsg:
@@ -640,7 +719,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if msg.err == nil {
 			a.setToast(msg.label)
 		} else if len(msg.completed) > 0 {
-			a.setToast(fmt.Sprintf("%s; some failed: %v", msg.label, msg.err))
+			a.setErrorToast(fmt.Sprintf("%s; some failed: %v", msg.label, msg.err))
 		} else {
 			return a, errCmd(msg.err)
 		}
@@ -718,251 +797,29 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case paletteRunMsg:
+		if msg.action != "" {
+			return a, a.runByAction(msg.action)
+		}
 		return a, a.runPalette(msg.line)
 
 	case quitMsg:
-		return a, tea.Quit
+		return a, a.quit()
+
+	case prefs.SaveTick:
+		var cmd tea.Cmd
+		a.saver, cmd = a.saver.Update(msg)
+		return a, cmd
+
+	case prefs.Saved:
+		if msg.Final {
+			return a, tea.Quit // the flushed state is on disk (or failed to be)
+		}
+		if msg.Err != nil {
+			a.setToast("could not save the UI state: " + msg.Err.Error())
+		}
+		return a, nil
 	}
 	return a, nil
-}
-
-// handleKey enforces the modal order: composer → merge prompt → search →
-// palette → help → globals → active view. Whoever is on top owns the keyboard.
-// isInTextInput reports whether a text field currently owns the keyboard. Used
-// to gate CJK normalization: there the jamo IS the intended input, so a Korean
-// review comment or a Korean search term must survive verbatim.
-func (a *App) isInTextInput() bool {
-	return (a.composer != nil && a.composer.active) ||
-		(a.search != nil && a.search.active) ||
-		(a.palette != nil && a.palette.active) ||
-		a.labels != nil || a.repos != nil
-}
-
-func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
-	// ctrl+c quits from anywhere, ahead of the composer and every prompt. A
-	// half-written review comment is discarded, which is what ctrl+c means --
-	// nothing has been posted.
-	if msg.Type == tea.KeyCtrlC {
-		return tea.Quit
-	}
-
-	// Under a Korean input source the shortcut keys arrive as jamo (`q` -> `ㅂ`).
-	// Rewrite them to the Latin key at the same physical position so shortcuts
-	// fire without switching the input source back.
-	if !a.isInTextInput() {
-		msg = NormalizeCJKKey(msg)
-	}
-
-	// The failure box arrives on its own, possibly over a prompt opened while
-	// the merge ran; it is drawn on top, so it takes the keys first.
-	if a.mergeFailure != nil {
-		return a.handleMergeFailureKey(msg)
-	}
-	if cmd, handled := a.composer.update(msg); handled {
-		return cmd
-	}
-	if a.confirm != nil {
-		return a.handleConfirmKey(msg)
-	}
-	if a.suggestion != nil {
-		return a.handleSuggestionKey(msg)
-	}
-	if a.statusFilter != nil {
-		return a.handleStatusFilterKey(msg)
-	}
-	if a.labels != nil {
-		return a.handleLabelKey(msg)
-	}
-	if a.repos != nil {
-		return a.handleRepoPickerKey(msg)
-	}
-	if a.mergePrompt != nil {
-		return a.handleMergePromptKey(msg)
-	}
-	if cmd, handled := a.search.update(msg); handled {
-		return cmd
-	}
-	if cmd, handled := a.palette.update(msg); handled {
-		return cmd
-	}
-	if a.helpOpen {
-		// Help swallows everything so no key does double duty behind it.
-		switch msg.String() {
-		case "?", "esc", "q":
-			a.helpOpen = false
-		}
-		return nil
-	}
-
-	switch msg.String() {
-	case "?":
-		a.helpOpen = true
-		return nil
-	case ":":
-		a.palette.open()
-		return nil
-	case "/":
-		if a.state == viewPRList {
-			a.search.open(a.list.query)
-		}
-		return nil
-	case "f":
-		if a.state == viewPRList {
-			return a.openStatusFilter()
-		}
-	case "e":
-		// Only from the list: the detail view is one PR, and switching the tab
-		// underneath it would leave the open PR belonging to a queue nobody is
-		// looking at.
-		if a.state == viewPRList {
-			return a.openRepoPicker()
-		}
-	case "q":
-		return tea.Quit
-	}
-
-	// PR actions work from either view: the detail view acts on the open PR, the
-	// list on the selected row.
-	//
-	// Inside the detail view the active tab is asked first, because a tab may own
-	// a key that also names an action — `o` folds a file in the diff, and taking
-	// it away for "open in browser" would break folding.
-	if a.state == viewPRDetail && a.detail != nil {
-		if cmd, handled := a.detailActionKey(msg); handled {
-			return cmd
-		}
-		if cmd, handled := a.detail.update(msg); handled {
-			return cmd
-		}
-		if cmd, handled := a.prActionKey(msg); handled {
-			return cmd
-		}
-		return nil
-	}
-
-	if cmd, handled := a.prActionKey(msg); handled {
-		return cmd
-	}
-	if a.state == viewPRList {
-		return a.list.update(msg)
-	}
-	return nil
-}
-
-// detailActionKey handles keys that only make sense with a PR open. The
-// PR-level actions shared with the list live in prActionKey; `c` is excluded
-// from both because the diff tab owns it ("comment on this line").
-func (a *App) detailActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
-	switch msg.String() {
-	case "C":
-		return func() tea.Msg {
-			return openComposerMsg{target: composerTarget{issue: true}}
-		}, true
-	case "M":
-		return a.startMerge(), true
-	case "R":
-		// Explicitly asking to refresh must not be answered from disk.
-		return a.detail.reload(), true
-	}
-	return nil, false
-}
-
-// prActionKey handles the actions that work on whichever PR is in focus — the
-// open one in the detail view, or the selected row in the list. Acting from the
-// list is the point: triaging a queue should not require opening every PR.
-//
-// `y` sits here rather than in a per-view handler for the same reason `o` does:
-// the URL you want to copy is the URL of the PR you are looking at, whichever
-// screen you are looking at it from.
-//
-// The irreversible-ish ones (approve, close, ready) go through a confirmation,
-// because in the list the cursor moves under the same fingers that press them.
-func (a *App) prActionKey(msg tea.KeyMsg) (tea.Cmd, bool) {
-	key := msg.String()
-	switch key {
-	// L rather than l: lowercase l is the vim "right" alias, which opens the
-	// preview pane in the list and cycles tabs in the detail view.
-	case "a", "x", "L", "r", "M", "d", "o", "y":
-		// fall through to the target lookup below
-	default:
-		return nil, false
-	}
-
-	switch key {
-	case "a":
-		targets, ok := a.actionTargets()
-		if !ok {
-			return errCmd(fmt.Errorf("no pull request selected")), true
-		}
-		return a.askConfirmTargets(confirmApprove, targets), true
-	case "x":
-		targets, ok := a.actionTargets()
-		if !ok {
-			return errCmd(fmt.Errorf("no pull request selected")), true
-		}
-		// Visible marks, not every mark: an off-screen selection resolved to the
-		// focused row above, and that row belongs on the single-PR path.
-		if a.state == viewPRList && a.list != nil && a.list.visibleSelectedCount() > 0 {
-			kind := confirmClose
-			if len(targets) > 1 {
-				kind = confirmToggleState
-			} else if targets[0].state == "CLOSED" {
-				kind = confirmReopen
-			}
-			return a.askConfirmTargets(kind, targets), true
-		}
-		if targets[0].state == "CLOSED" {
-			return a.askConfirm(confirmReopen, targets[0]), true
-		}
-		return a.askConfirm(confirmClose, targets[0]), true
-	case "M":
-		targets, ok := a.actionTargets()
-		if !ok {
-			return errCmd(fmt.Errorf("no pull request selected")), true
-		}
-		return a.askConfirmTargets(confirmMerge, targets), true
-	case "L":
-		targets, ok := a.actionTargets()
-		if !ok {
-			return errCmd(fmt.Errorf("no pull request selected")), true
-		}
-		return a.openLabelPickerTargets(targets), true
-	case "d":
-		targets, ok := a.actionTargets()
-		if !ok {
-			return errCmd(fmt.Errorf("no pull request selected")), true
-		}
-		return a.askConfirmTargets(confirmReady, targets), true
-	case "o":
-		targets, ok := a.actionTargets()
-		if !ok {
-			return errCmd(fmt.Errorf("no pull request selected")), true
-		}
-		return a.openTargetsInBrowser(targets), true
-	case "y":
-		targets, ok := a.actionTargets()
-		if !ok {
-			return errCmd(fmt.Errorf("no pull request selected")), true
-		}
-		return a.copyTargets(targets), true
-	}
-
-	t, ok := a.currentTarget()
-	if !ok {
-		return errCmd(fmt.Errorf("no pull request selected")), true
-	}
-	switch key {
-	case "r":
-		// Requesting changes without saying why isn't useful, so this opens the
-		// composer and submits the review with its body.
-		return func() tea.Msg {
-			return openComposerMsg{target: composerTarget{
-				issue: true, review: "request-changes",
-				prNumber: t.number, repo: t.repo, credentialRepo: t.credentialRepo,
-			}}
-		}, true
-	}
-	return nil, false
 }
 
 // openTargetInBrowser opens the PR's web page, resolving the URL when the row
@@ -1044,11 +901,6 @@ func (a *App) showMergeFailure(f *mergeFailure) {
 	a.setToast(f.toast())
 }
 
-func (a *App) setToast(s string) {
-	a.toast = s
-	a.toastAt = time.Now()
-}
-
 // openSelected switches to the detail view for the list's selection.
 func (a *App) openSelected() tea.Cmd {
 	if a.list == nil {
@@ -1067,7 +919,13 @@ func (a *App) openSelected() tea.Cmd {
 	// stamped with the same value describes the same PR.
 	a.detail.updatedAt = item.pr.UpdatedAt
 	a.detail.resize(a.width, a.height)
-	return a.detail.load()
+	// Reopen on the tab the last PR was read in: a reviewer working through a
+	// queue in the Diff tab should not have to press 3 on every PR.
+	var tab tea.Cmd
+	if t, ok := a.preferredDetailTab(); ok {
+		tab = a.detail.setTab(t)
+	}
+	return tea.Batch(a.detail.load(), tab)
 }
 
 // --- actions ---

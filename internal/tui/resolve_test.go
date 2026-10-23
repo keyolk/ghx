@@ -70,7 +70,7 @@ func TestTKeyTogglesFilterNotThread(t *testing.T) {
 // The footer advertises X so it is discoverable.
 func TestCommentsFooterAdvertisesResolve(t *testing.T) {
 	v := newCommentsView()
-	got := v.helpLine()
+	got := v.helpLine(footerBudget)
 	if !strings.Contains(got, "X") || !strings.Contains(got, "resolve") {
 		t.Errorf("footer = %q, want it to mention X:resolve", got)
 	}

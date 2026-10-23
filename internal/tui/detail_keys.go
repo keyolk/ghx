@@ -3,56 +3,75 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 
 	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/pr"
 )
 
 // Key handling for the detail view, split per tab. Each handler reports whether
-// it consumed the key so app.go can fall through to its own bindings.
+// it knows the action; the binding table decides which handler is asked.
 
-// update routes keys to the active tab. Returns a cmd plus whether the key was
-// consumed, so app.go can fall through for keys the tab ignores.
-func (d *prDetailModel) update(msg tea.KeyMsg) (tea.Cmd, bool) {
-	key, _ := translateNav(msg)
-
-	// Tab switching and leaving the view apply everywhere.
-	switch key {
-	case "esc":
-		// In the checks tab, esc first closes the log pane rather than the view.
-		if d.activeTab == tabChecks && d.checks.showingLogs() {
-			d.checks.closeLogs()
-			return nil, true
-		}
-		return func() tea.Msg { return listReturnMsg{} }, true
-	case "1", "2", "3", "4", "5", "6":
-		idx := int(key[0] - '1')
-		if idx < len(d.tabs) {
-			d.setTab(d.tabs[idx])
-		}
-		return nil, true
+// runTab runs a binding of the active tab's context. Everything a tab does is
+// named by an action (keymap.go); the tab handlers below switch on it.
+func (d *prDetailModel) runTab(b keys.Binding, _ tea.KeyMsg) (tea.Cmd, bool) {
+	if b.Action == link.Action {
+		return openLinkCmd(d.selectedLink()), true
 	}
-
-	switch d.activeTab {
-	case tabOverview:
-		return d.updateOverview(key)
-	case tabFiles:
-		return d.updateFiles(key)
-	case tabDiff:
-		return d.updateDiff(key)
-	case tabComments:
-		return d.updateComments(key)
-	case tabCommits:
-		return d.updateCommits(key)
-	case tabChecks:
-		return d.updateChecks(key)
+	switch b.Ctx {
+	case ctxOverview:
+		return d.updateOverview(b.Action)
+	case ctxFiles:
+		return d.updateFiles(b.Action)
+	case ctxDiff:
+		return d.updateDiff(b.Action)
+	case ctxComments:
+		return d.updateComments(b.Action)
+	case ctxCommits:
+		return d.updateCommits(b.Action)
+	case ctxChecks:
+		return d.updateChecks(b.Action)
+	case ctxLogs:
+		return d.updateLogs(b.Action)
+	case ctxDetail:
+		return d.runDetail(b)
 	}
 	return nil, false
+}
+
+// runDetail runs the bindings every tab shares that need only this model.
+// The ones that open App-level prompts (merge, PR comment) are App's.
+func (d *prDetailModel) runDetail(b keys.Binding) (tea.Cmd, bool) {
+	switch b.Action {
+	case "back":
+		return func() tea.Msg { return listReturnMsg{} }, true
+	case "prevtab":
+		d.cycleTab(-1)
+		return nil, true
+	case "nexttab":
+		d.cycleTab(1)
+		return nil, true
+	}
+	return nil, false
+}
+
+// update reports whether the active tab itself consumes msg — not the
+// detail-wide or PR bindings behind it — and runs it if so.
+func (d *prDetailModel) update(msg tea.KeyMsg) (tea.Cmd, bool) {
+	stack := d.stack()
+	tab := stack[:slices.Index(stack, ctxDetail)]
+	b, ok := d.km.Or(defaultKeymap).Resolve(tab, msg, d.keyOpts())
+	if !ok {
+		return nil, false
+	}
+	return d.runTab(b, msg)
 }
 
 // setTab switches tabs and starts the checks poll when entering that tab.
@@ -76,39 +95,33 @@ func (d *prDetailModel) cycleTab(delta int) {
 	d.setTab(d.tabs[((cur+delta)%n+n)%n])
 }
 
-func (d *prDetailModel) updateOverview(key string) (tea.Cmd, bool) {
-	switch key {
+func (d *prDetailModel) updateOverview(action string) (tea.Cmd, bool) {
+	switch action {
 	case "down":
 		d.overviewOff++
 		return nil, true
 	case "up":
 		d.overviewOff = max(d.overviewOff-1, 0)
 		return nil, true
-	case "pgdown":
+	case "pagedown":
 		d.overviewOff += d.contentHeight()
 		return nil, true
-	case "pgup":
+	case "pageup":
 		d.overviewOff = max(d.overviewOff-d.contentHeight(), 0)
 		return nil, true
-	case "home":
+	case "top":
 		d.overviewOff = 0
-		return nil, true
-	case "left":
-		d.cycleTab(-1)
-		return nil, true
-	case "right":
-		d.cycleTab(1)
 		return nil, true
 	}
 	return nil, false
 }
 
-func (d *prDetailModel) updateFiles(key string) (tea.Cmd, bool) {
+func (d *prDetailModel) updateFiles(action string) (tea.Cmd, bool) {
 	n := 0
 	if d.detail != nil {
 		n = len(d.detail.Files)
 	}
-	switch key {
+	switch action {
 	case "down":
 		if n > 0 {
 			d.filesCursor = clamp(d.filesCursor+1, 0, n-1)
@@ -119,13 +132,13 @@ func (d *prDetailModel) updateFiles(key string) (tea.Cmd, bool) {
 			d.filesCursor = clamp(d.filesCursor-1, 0, n-1)
 		}
 		return nil, true
-	case "home":
+	case "top":
 		d.filesCursor = 0
 		return nil, true
-	case "end":
+	case "bottom":
 		d.filesCursor = max(n-1, 0)
 		return nil, true
-	case "enter", "right":
+	case "openfile":
 		// Jump into the diff at this file so Files acts as a table of contents.
 		if d.detail != nil && d.filesCursor < len(d.detail.Files) {
 			path := d.detail.Files[d.filesCursor].Path
@@ -133,15 +146,12 @@ func (d *prDetailModel) updateFiles(key string) (tea.Cmd, bool) {
 			d.diff.jumpTo(path, 0)
 		}
 		return nil, true
-	case "left":
-		d.cycleTab(-1)
-		return nil, true
 	}
 	return nil, false
 }
 
-func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
-	switch key {
+func (d *prDetailModel) updateDiff(action string) (tea.Cmd, bool) {
+	switch action {
 	case "down":
 		d.diff.moveDown(1)
 		return nil, true
@@ -153,44 +163,39 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 		// switch between — focusSide already refuses there — so this costs
 		// nothing the paired layout was using.
 		if path, ok := d.diff.foldPathForCursor(); ok {
-			if d.diff.setFold(path, true) {
-				return nil, true
-			}
-			// Already folded: fall through so h keeps cycling tabs, rather than
-			// swallowing a keypress that did nothing.
-			return nil, false
+			// An already-folded file stays folded. h has no other meaning in
+			// the diff's stack, so there is nothing for the key to fall to.
+			d.diff.setFold(path, true)
+			return nil, true
 		}
 		// In the paired layout the columns are two halves of one screen row, so
-		// h/l switch between them. Falling through when there is nothing to
-		// switch to keeps h available for cycling tabs.
-		if d.diff.sideBySide && d.diff.focusSide(sideLeft) {
-			return nil, true
+		// h/l switch between them.
+		if d.diff.sideBySide {
+			d.diff.focusSide(sideLeft)
 		}
-		return nil, false
+		return nil, true
 	case "right":
 		if path, ok := d.diff.foldPathForCursor(); ok {
-			if d.diff.setFold(path, false) {
-				return nil, true
-			}
-			return nil, false
-		}
-		if d.diff.sideBySide && d.diff.focusSide(sideRight) {
+			d.diff.setFold(path, false)
 			return nil, true
 		}
-		return nil, false
-	case "pgdown":
+		if d.diff.sideBySide {
+			d.diff.focusSide(sideRight)
+		}
+		return nil, true
+	case "pagedown":
 		d.diff.page(1, d.contentHeight())
 		return nil, true
-	case "pgup":
+	case "pageup":
 		d.diff.page(-1, d.contentHeight())
 		return nil, true
-	case "home":
+	case "top":
 		d.diff.toGutter(true)
 		return nil, true
-	case "end":
+	case "bottom":
 		d.diff.toGutter(false)
 		return nil, true
-	case "J", "K":
+	case "nexthunk", "prevhunk":
 		// Coarse navigation: one hunk per press rather than one line. Shifted so
 		// j/k keep their meaning — reading a hunk and finding the next one are
 		// different jobs and both need a key.
@@ -203,12 +208,12 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 			return nil, true
 		}
 		delta := 1
-		if key == "K" {
+		if action == "prevhunk" {
 			delta = -1
 		}
 		d.diff.jumpHunk(delta)
 		return nil, true
-	case "H", "L", "{", "}":
+	case "prevfile", "nextfile":
 		// File-level jumps, for the same reason and with the same restriction.
 		// H/L pairs with J/K — shifted for coarse movement, one letter apart for
 		// hunk versus file. { and } stay as aliases for the paragraph-motion
@@ -217,22 +222,22 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 			return nil, true
 		}
 		delta := 1
-		if key == "H" || key == "{" {
+		if action == "prevfile" {
 			delta = -1
 		}
 		d.diff.jumpFile(delta)
 		return nil, true
-	case "o":
+	case "fold":
 		d.diff.toggleFold()
 		return nil, true
-	case "s":
+	case "layout":
 		// Toggle unified / side-by-side. The cursor keeps pointing at the same
 		// diff row, so the comment target survives the switch; the focused column
 		// is derived from that row rather than left at whatever it was.
 		d.diff.sideBySide = !d.diff.sideBySide
 		d.diff.syncSideFocus()
 		return nil, true
-	case "v":
+	case "visual":
 		// Toggle visual range selection for a multi-line comment.
 		if d.diff.visual {
 			d.diff.visual = false
@@ -245,13 +250,13 @@ func (d *prDetailModel) updateDiff(key string) (tea.Cmd, bool) {
 			d.diff.syncSideFocus()
 		}
 		return nil, true
-	case "A":
+	case "apply":
 		// Apply the suggestion under the cursor. A is free here: the list's A
 		// (select all visible) has no meaning with a PR open.
 		return d.requestApplySuggestion(), true
-	case "c":
+	case "comment":
 		return d.composeInline(), true
-	case "enter":
+	case "thread":
 		// On a thread with replies, enter reveals them; a single-comment thread
 		// has nothing to expand, so enter goes straight to replying.
 		if d.diff.threadHasReplies() {
@@ -338,21 +343,21 @@ func (d *prDetailModel) resolveThread(thread pr.ReviewThread, resolve bool) tea.
 	}
 }
 
-func (d *prDetailModel) updateComments(key string) (tea.Cmd, bool) {
-	switch key {
+func (d *prDetailModel) updateComments(action string) (tea.Cmd, bool) {
+	switch action {
 	case "down":
 		d.comments.moveCursor(1)
 		return nil, true
 	case "up":
 		d.comments.moveCursor(-1)
 		return nil, true
-	case "enter":
+	case "expand":
 		d.comments.toggleExpand()
 		return nil, true
-	case "t":
+	case "resolvedfilter":
 		d.comments.toggleResolvedFilter()
 		return nil, true
-	case "X", "d":
+	case "resolve", "jumpdiff":
 		// The thread-only actions. A cursor on a PR-level comment has no thread
 		// to act on, and staying silent would read as the key being broken —
 		// which is worse than the key not applying, because it is the same
@@ -362,7 +367,7 @@ func (d *prDetailModel) updateComments(key string) (tea.Cmd, bool) {
 				"that is a PR comment, not a review thread — it has no line to " +
 					"jump to and nothing to resolve")), true
 		}
-		if key == "d" {
+		if action == "jumpdiff" {
 			// Jump to this thread's anchor in the diff.
 			if t, ok := d.comments.selected(); ok {
 				d.setTab(tabDiff)
@@ -385,7 +390,7 @@ func (d *prDetailModel) updateComments(key string) (tea.Cmd, bool) {
 			return nil, true
 		}
 		return d.resolveThread(thread, resolve), true
-	case "c":
+	case "reply":
 		if t, ok := d.comments.selected(); ok && len(t.Comments) > 0 {
 			return d.composeReply(t.ID), true
 		}
@@ -398,61 +403,55 @@ func (d *prDetailModel) updateComments(key string) (tea.Cmd, bool) {
 			}, true
 		}
 		return nil, true
-	case "left":
-		d.cycleTab(-1)
-		return nil, true
 	}
 	return nil, false
 }
 
-func (d *prDetailModel) updateCommits(key string) (tea.Cmd, bool) {
-	switch key {
+func (d *prDetailModel) updateCommits(action string) (tea.Cmd, bool) {
+	switch action {
 	case "down":
 		d.commitsOff++
 		return nil, true
 	case "up":
 		d.commitsOff = max(d.commitsOff-1, 0)
 		return nil, true
-	case "left":
-		d.cycleTab(-1)
+	}
+	return nil, false
+}
+
+// updateLogs runs the log pane's bindings; its context replaces the checks
+// list's while a log is open, so the list's keys never act behind it.
+func (d *prDetailModel) updateLogs(action string) (tea.Cmd, bool) {
+	switch action {
+	case "down":
+		d.checks.scrollLogs(1)
 		return nil, true
-	case "right":
-		d.cycleTab(1)
+	case "up":
+		d.checks.scrollLogs(-1)
+		return nil, true
+	case "pagedown":
+		d.checks.scrollLogs(d.contentHeight())
+		return nil, true
+	case "pageup":
+		d.checks.scrollLogs(-d.contentHeight())
+		return nil, true
+	case "closelogs":
+		d.checks.closeLogs()
 		return nil, true
 	}
 	return nil, false
 }
 
-func (d *prDetailModel) updateChecks(key string) (tea.Cmd, bool) {
-	if d.checks.showingLogs() {
-		switch key {
-		case "down":
-			d.checks.scrollLogs(1)
-			return nil, true
-		case "up":
-			d.checks.scrollLogs(-1)
-			return nil, true
-		case "pgdown":
-			d.checks.scrollLogs(d.contentHeight())
-			return nil, true
-		case "pgup":
-			d.checks.scrollLogs(-d.contentHeight())
-			return nil, true
-		}
-		return nil, false
-	}
-	switch key {
+func (d *prDetailModel) updateChecks(action string) (tea.Cmd, bool) {
+	switch action {
 	case "down":
 		d.checks.moveCursor(1)
 		return nil, true
 	case "up":
 		d.checks.moveCursor(-1)
 		return nil, true
-	case "enter":
+	case "logs":
 		return d.fetchSelectedLogs(), true
-	case "left":
-		d.cycleTab(-1)
-		return nil, true
 	}
 	return nil, false
 }

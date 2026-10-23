@@ -21,8 +21,37 @@ type TabLabel struct {
 // caller passes them already-styled, so this stage only shrinks names); then
 // cap each tab at an equal share, preserving at least the index.
 func RenderTabStrip(tabs []TabLabel, w int) string {
+	return strings.Join(tabStripCells(tabs, w), "")
+}
+
+// TabStripHit is the index of the tab drawn at column x of a strip rendered by
+// RenderTabStrip at width w, or -1. It reads the same cells the renderer
+// joins, so a click lands on the tab the user sees even after the strip has
+// shrunk its labels on a narrow terminal.
+func TabStripHit(tabs []TabLabel, w, x int) int {
+	return cellAt(tabStripCells(tabs, w), x)
+}
+
+// cellAt is the index of the cell covering column x when cells are laid out
+// left to right with no gaps, or -1.
+func cellAt(cells []string, x int) int {
+	if x < 0 {
+		return -1
+	}
+	left := 0
+	for i, c := range cells {
+		left += lipglossWidth(c)
+		if x < left {
+			return i
+		}
+	}
+	return -1
+}
+
+// tabStripCells is RenderTabStrip's per-tab strings, before they are joined.
+func tabStripCells(tabs []TabLabel, w int) []string {
 	if len(tabs) == 0 || w <= 0 {
-		return ""
+		return nil
 	}
 	rendered := make([]string, len(tabs))
 	widths := make([]int, len(tabs))
@@ -33,7 +62,7 @@ func RenderTabStrip(tabs []TabLabel, w int) string {
 		total += widths[i]
 	}
 	if total <= w {
-		return strings.Join(rendered, "")
+		return rendered
 	}
 
 	// Stage 2: drop the inter-tab spacing the styled form adds. The index and
@@ -50,7 +79,7 @@ func RenderTabStrip(tabs []TabLabel, w int) string {
 		total += w
 	}
 	if total <= w {
-		return strings.Join(rendered, "")
+		return rendered
 	}
 
 	// Stage 3: cap each tab at an equal share, preserving at least the index.
@@ -58,10 +87,10 @@ func RenderTabStrip(tabs []TabLabel, w int) string {
 	if per < 3 {
 		per = 3
 	}
-	var b strings.Builder
+	out := make([]string, len(tabs))
 	for i, t := range tabs {
 		if widths[i] <= per {
-			b.WriteString(rendered[i])
+			out[i] = rendered[i]
 			continue
 		}
 		trunc, _ := truncateExact(rendered[i], per)
@@ -69,9 +98,9 @@ func RenderTabStrip(tabs []TabLabel, w int) string {
 		if !t.Active && per > 3 && lipglossWidth(trunc) < per {
 			trunc += " "
 		}
-		b.WriteString(trunc)
+		out[i] = trunc
 	}
-	return b.String()
+	return out
 }
 
 // renderTabEntry produces one tab's styled string. spaced adds the padding the

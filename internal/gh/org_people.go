@@ -203,7 +203,7 @@ func (c *Client) fetchOrgPeople(ctx context.Context, org string) ([]OrgPerson, e
 				}
 			}
 		}
-		_ = eachJSON(saml, &page, func() {
+		if err := eachJSON(saml, &page, func() {
 			org := page.Data.Organization
 			if org == nil || org.SamlIdentityProvider == nil {
 				return
@@ -215,7 +215,9 @@ func (c *Client) fetchOrgPeople(ctx context.Context, org string) ([]OrgPerson, e
 					add(n.User.Login, n.User.Name, n.SamlIdentity.NameID)
 				}
 			}
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("decode organization SAML identities: %w", err)
+		}
 	}
 
 	out := make([]OrgPerson, 0, len(byLogin))

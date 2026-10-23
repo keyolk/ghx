@@ -1,13 +1,13 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/lipgloss"
 	ansi "github.com/charmbracelet/x/ansi"
+	"github.com/keyolk/tuikit/mouse"
+	"github.com/keyolk/tuikit/split"
 )
 
 // SplitPane manages a list + viewport split layout with focus toggling.
@@ -16,8 +16,8 @@ type SplitPane struct {
 	List    *list.Model
 	Preview viewport.Model
 
-	Show    bool // preview pane visible
-	Focus   bool // true = preview focused, false = list focused
+	Show     bool // preview pane visible
+	Focus    bool // true = preview focused, false = list focused
 	CacheKey string
 
 	ItemHeight int
@@ -26,19 +26,10 @@ type SplitPane struct {
 	HeaderHeight int
 
 	headerInset int
-}
 
-// ListWidth returns the list width given total width and split ratio.
-func (sp *SplitPane) ListWidth(totalW, splitRatio int) int {
-	if !sp.Show {
-		return totalW
-	}
-	return max(totalW*splitRatio/100, 30)
-}
-
-// PreviewWidth returns the preview width (totalW - listW - 1 for border).
-func (sp *SplitPane) PreviewWidth(totalW, splitRatio int) int {
-	return max(totalW-sp.ListWidth(totalW, splitRatio)-1, 1)
+	// Split is the list|preview boundary (split_list.go): its ratio, the
+	// divider drag and the keys that move it.
+	Split split.Model
 }
 
 // ContentHeight returns the usable content height (totalH - 3 for title+help).
@@ -59,58 +50,6 @@ func truncateExact(s string, targetW int) (string, int) {
 		w = ansi.StringWidthWc(s)
 	}
 	return s, w
-}
-
-// hexToRGB parses a "#RRGGBB" hex color string into RGB components.
-func hexToRGB(hex string) (uint8, uint8, uint8) {
-	hex = strings.TrimPrefix(hex, "#")
-	if len(hex) != 6 {
-		return 128, 128, 128
-	}
-	var r, g, b uint8
-	fmt.Sscanf(hex, "%02x%02x%02x", &r, &g, &b)
-	return r, g, b
-}
-
-// renderFixedSplit composes left|border|right with manual ANSI layout, CJK-aware.
-func renderFixedSplit(left, right string, listW, previewW, contentH int, borderColor lipgloss.Color) string {
-	leftLines := strings.Split(left, "\n")
-	rightLines := strings.Split(right, "\n")
-	br, bg, bb := hexToRGB(string(borderColor))
-	borderCell := fmt.Sprintf("\x1b[38;2;%d;%d;%dm│\x1b[0m", br, bg, bb)
-	const reset = "\x1b[0m"
-	borderCHA := fmt.Sprintf("\x1b[%dG", listW+1)
-	rightCHA := fmt.Sprintf("\x1b[%dG", listW+2)
-
-	var out strings.Builder
-	for i := 0; i < contentH; i++ {
-		var l, r string
-		if i < len(leftLines) {
-			l = leftLines[i]
-		}
-		if i < len(rightLines) {
-			r = rightLines[i]
-		}
-		l, lw := truncateExact(l, listW)
-		out.WriteString(l)
-		out.WriteString(reset)
-		if pad := listW - lw; pad > 0 {
-			out.WriteString(strings.Repeat(" ", pad))
-		}
-		out.WriteString(borderCHA)
-		out.WriteString(borderCell)
-		out.WriteString(rightCHA)
-		r, rw := truncateExact(r, previewW)
-		out.WriteString(r)
-		out.WriteString(reset)
-		if pad := previewW - rw; pad > 0 {
-			out.WriteString(strings.Repeat(" ", pad))
-		}
-		if i < contentH-1 {
-			out.WriteByte('\n')
-		}
-	}
-	return out.String()
 }
 
 func (sp *SplitPane) listHeaderInset(contentH int) int {
@@ -141,53 +80,90 @@ func (sp *SplitPane) listView(contentH int) string {
 	return strings.Join(headerLines, "\n") + "\n" + sp.List.View()
 }
 
-// Render draws the split layout. List-only when narrow (<40w or <10h).
-func (sp *SplitPane) Render(totalW, totalH, splitRatio int) string {
+// paneGeom is where Render draws the split, in cells relative to the pane's
+// top-left corner. Render and the mouse hit test both read it, so a click can
+// only land on what was drawn.
+type paneGeom struct {
+	split   bool // the preview is drawn beside the list
+	list    mouse.Rect
+	divider mouse.Rect // zero when the list is drawn alone
+	preview mouse.Rect // zero when the list is drawn alone
+	// contentH is the pane height, listH the list's share of it below any
+	// header rows.
+	contentH, listH int
+}
+
+// splitBody is the rect the list|preview split is laid out in, relative to
+// the pane's top-left corner, or the zero Rect while the preview is hidden or
+// the pane is too short for it (under 10 rows). The zero Rect makes the split
+// draw nothing and take no press, so the mouse and the keys see the same
+// geometry as Render.
+func (sp *SplitPane) splitBody(totalW, totalH int) mouse.Rect {
+	if !sp.Show || totalH < 10 || totalW <= 0 {
+		return mouse.Rect{}
+	}
+	return mouse.Rect{W: totalW, H: ContentHeight(totalH)}
+}
+
+func (sp *SplitPane) geometry(totalW, totalH int) paneGeom {
 	contentH := ContentHeight(totalH)
-	if !sp.Show || totalW < 40 || totalH < 10 {
-		listW := sp.ListWidth(totalW, splitRatio)
-		listH := sp.listContentHeight(contentH)
-		if sp.List.Width() > 0 && (sp.List.Width() != listW || sp.List.Height() != listH) {
-			sp.List.SetSize(listW, listH)
-		}
-		return sp.listView(contentH)
-	}
-	listW := sp.ListWidth(totalW, splitRatio)
-	previewW := sp.PreviewWidth(totalW, splitRatio)
 	listH := sp.listContentHeight(contentH)
-	if sp.List.Width() > 0 && (sp.List.Width() != listW || sp.List.Height() != listH) {
-		sp.List.SetSize(listW, listH)
+	g := paneGeom{
+		list:     mouse.Rect{X: 0, Y: sp.headerInset, W: totalW, H: listH},
+		contentH: contentH, listH: listH,
 	}
-	if sp.Preview.Width != previewW || sp.Preview.Height != contentH {
-		sp.Preview.Width = previewW
-		sp.Preview.Height = max(contentH, 1)
+	body := sp.splitBody(totalW, totalH)
+	if body.W == 0 {
+		return g
+	}
+	a, div, b := sp.Split.Layout(body)
+	if b.W <= 0 {
+		// Collapsed (under 40 columns): the list alone, full width.
+		return g
+	}
+	g.split = true
+	g.list.W = a.W
+	g.divider, g.preview = div, b
+	return g
+}
+
+// Render draws the split layout. List-only when narrow (<40w or <10h).
+func (sp *SplitPane) Render(totalW, totalH int) string {
+	g := sp.geometry(totalW, totalH)
+	if sp.List.Width() > 0 && (sp.List.Width() != g.list.W || sp.List.Height() != g.listH) {
+		sp.List.SetSize(g.list.W, g.listH)
+	}
+	if !g.split {
+		return sp.listView(g.contentH)
+	}
+	if sp.Preview.Width != g.preview.W || sp.Preview.Height != g.contentH {
+		sp.Preview.Width = g.preview.W
+		sp.Preview.Height = max(g.contentH, 1)
 		sp.CacheKey = ""
 	}
-	borderColor := colorBorderDim
+	border := paneBorderStyle
 	if sp.Focus {
-		borderColor = colorBorderFocused
+		border = paneBorderFocusedStyle
 	}
-	left := sp.listView(contentH)
-	right := sp.Preview.View()
-	return renderFixedSplit(left, right, listW, previewW, contentH, borderColor)
+	body := sp.splitBody(totalW, totalH)
+	return sp.Split.Join(body, sp.listView(g.contentH), sp.Split.DrawDivider(g.divider, border), sp.Preview.View())
 }
 
 // Resize adjusts dimensions after terminal resize, preserving selection.
-func (sp *SplitPane) Resize(totalW, totalH, splitRatio int) {
+func (sp *SplitPane) Resize(totalW, totalH int) {
 	if sp.List.Width() == 0 {
 		return
 	}
 	idx := sp.List.Index()
-	contentH := ContentHeight(totalH)
-	sp.List.SetSize(sp.ListWidth(totalW, splitRatio), sp.listContentHeight(contentH))
+	g := sp.geometry(totalW, totalH)
+	sp.List.SetSize(g.list.W, g.listH)
 	sp.List.Select(idx)
 }
 
 // SetPreviewContent sets the preview viewport content and sizes it to the
 // current split dimensions. Resets scroll to the top.
-func (sp *SplitPane) SetPreviewContent(content string, totalW, totalH, splitRatio int) {
-	previewW := sp.PreviewWidth(totalW, splitRatio)
-	contentH := ContentHeight(totalH)
-	sp.Preview = viewport.New(previewW, contentH)
+func (sp *SplitPane) SetPreviewContent(content string, totalW, totalH int) {
+	g := sp.geometry(totalW, totalH)
+	sp.Preview = viewport.New(max(g.preview.W, 1), g.contentH)
 	sp.Preview.SetContent(content)
 }

@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,7 +84,13 @@ func TestRepoStorePersistsEveryVisitImmediately(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "repos.json")
 	now := time.Now()
 
-	newRepoStoreAt(path).record("acme/one", now)
+	save := newRepoStoreAt(path).record("acme/one", now)
+	if save == nil {
+		t.Fatal("record returned no command to persist the visit")
+	}
+	if msg := save(); msg != nil {
+		t.Fatalf("persisting the visit reported %#v", msg)
+	}
 
 	reloaded := newRepoStoreAt(path)
 	if got := reloaded.visits["acme/one"].Visits; got != 1 {
@@ -150,5 +157,64 @@ func TestOnlyTheLaunchDirectoryCountsAsAVisit(t *testing.T) {
 	}
 	if got := a.repoStore.visits["acme/pane-one"].Visits; got != 0 {
 		t.Errorf("a tmux pane counted %d visits, want 0", got)
+	}
+	// The write is deferred to Init, off the constructor; it must still land.
+	if a.startupSave == nil {
+		t.Fatal("the launch visit has no command to persist it")
+	}
+	if msg := a.startupSave(); msg != nil {
+		t.Fatalf("persisting the launch visit reported %#v", msg)
+	}
+	if got := newRepoStore().visits["acme/launched"].Visits; got != 1 {
+		t.Errorf("launch visit on disk = %d, want 1", got)
+	}
+}
+
+// Every ghx window shares repos.json. Writing this process's snapshot would
+// erase the visits another window recorded since this one loaded the file, so
+// each visit is merged into what is on disk.
+func TestRepoStoreMergesVisitsFromOtherWindows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "repos.json")
+	now := time.Now()
+	first := newRepoStoreAt(path)
+	second := newRepoStoreAt(path) // loaded before first wrote anything
+
+	if msg := first.record("acme/one", now)(); msg != nil {
+		t.Fatal(msg)
+	}
+	if msg := second.record("acme/two", now)(); msg != nil {
+		t.Fatal(msg)
+	}
+
+	reloaded := newRepoStoreAt(path)
+	if got := reloaded.visits["acme/one"].Visits; got != 1 {
+		t.Errorf("acme/one visits = %d, want 1 — the second window's write erased it", got)
+	}
+	if got := reloaded.visits["acme/two"].Visits; got != 1 {
+		t.Errorf("acme/two visits = %d, want 1", got)
+	}
+}
+
+// A visit that cannot be written must say so: every later visit will fail the
+// same way, and a silently frozen ranking looks like a picker bug.
+func TestRepoStoreWriteFailureIsReported(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "not-a-dir")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := newRepoStoreAt(filepath.Join(blocker, "repos.json"))
+	msg := s.record("acme/one", time.Now())()
+	em, ok := msg.(errMsg)
+	if !ok {
+		t.Fatalf("a failed write produced %#v, want an errMsg", msg)
+	}
+	if !strings.Contains(em.err.Error(), "repo history") {
+		t.Errorf("error %q does not say what failed", em.err)
+	}
+	// The in-memory count still moved: the picker should reflect the visit even
+	// though it could not be kept.
+	if got := s.visits["acme/one"].Visits; got != 1 {
+		t.Errorf("in-memory visits = %d, want 1", got)
 	}
 }

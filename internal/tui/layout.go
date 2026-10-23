@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/keyolk/tuikit/mouse"
 )
 
 // layout.go holds the layout primitives shared across views: paneBox,
@@ -36,16 +37,20 @@ func paneBox(s string, w, h int) string {
 
 // decoratedPane draws a bordered box with a label, bright border when focused.
 func decoratedPane(label, body string, w, h int, focused bool) string {
-	border := colorBorderDim
+	border := paneBorderStyle
 	if focused {
-		border = colorBorderFocused
+		border = paneBorderFocusedStyle
 	}
 	return borderedPane(label, body, w, h, border)
 }
 
-// borderedPane is decoratedPane with the border color chosen by the caller, for
+// borderedPane is decoratedPane with the border style chosen by the caller, for
 // a box whose frame has to say something before its text is read (a failure).
-func borderedPane(label, body string, w, h int, border lipgloss.Color) string {
+//
+// The frame is painted through lipgloss styles from styles.go, not hand-built
+// escape sequences: raw truecolor codes ignore the terminal's colour profile
+// and survive SetNoColor, so NO_COLOR still got coloured boxes.
+func borderedPane(label, body string, w, h int, border lipgloss.Style) string {
 	if w < 6 || h < 3 {
 		return paneBox(body, w, h)
 	}
@@ -62,15 +67,11 @@ func borderedPane(label, body string, w, h int, border lipgloss.Color) string {
 	if dashAfter < 0 {
 		dashAfter = 0
 	}
-	br, bg, bb := hexToRGB(string(border))
-	bold := func(s string) string {
-		return "\x1b[1m" + s + "\x1b[0m"
-	}
-	col := func(s string) string {
-		return "\x1b[38;2;" + intToStr(int(br)) + ";" + intToStr(int(bg)) + ";" + intToStr(int(bb)) + "m" + s + "\x1b[0m"
-	}
-	top := col("╭") + col(strings.Repeat("─", dashBefore)) + bold(labelStr) + col(strings.Repeat("─", dashAfter)) + col("╮")
-	bottom := col("╰") + col(strings.Repeat("─", innerW)) + col("╯")
+	col := border.Render
+	top := col("╭"+strings.Repeat("─", dashBefore)) + paneLabelStyle.Render(labelStr) +
+		col(strings.Repeat("─", dashAfter)+"╮")
+	bottom := col("╰" + strings.Repeat("─", innerW) + "╯")
+	side := col("│")
 	// Body lines: wrap with side borders.
 	bodyLines := strings.Split(body, "\n")
 	for len(bodyLines) < h-2 {
@@ -86,10 +87,10 @@ func borderedPane(label, body string, w, h int, border lipgloss.Color) string {
 		if pad < 0 {
 			pad = 0
 		}
-		out.WriteString(col("│"))
+		out.WriteString(side)
 		out.WriteString(bl)
 		out.WriteString(strings.Repeat(" ", pad))
-		out.WriteString(col("│"))
+		out.WriteString(side)
 		out.WriteByte('\n')
 	}
 	out.WriteString(bottom)
@@ -129,6 +130,34 @@ func overlayBody(base, overlay string, w, h int) string {
 	}
 	return strings.Join(baseLines, "\n")
 }
+
+// overlayRect is where overlayBody puts overlay in a body h rows tall, in body
+// coordinates (row 0 is the body's first row, not the screen's). It follows
+// overlayBody's own rules — clipped from the top when taller than h, anchored
+// to the bottom — so the mouse tests the box that was drawn. clipped is how
+// many of the overlay's own top lines that clip cut off. X is 0 because an
+// overlay line replaces the whole base line it lands on.
+func overlayRect(overlay string, h int) (r mouse.Rect, clipped int) {
+	if overlay == "" || h <= 0 {
+		return mouse.Rect{}, 0
+	}
+	lines := strings.Split(overlay, "\n")
+	if len(lines) > h {
+		clipped = len(lines) - h
+		lines = lines[clipped:]
+	}
+	w := 0
+	for _, l := range lines {
+		w = max(w, lipgloss.Width(l))
+	}
+	return mouse.Rect{X: 0, Y: h - len(lines), W: w, H: len(lines)}, clipped
+}
+
+// pickerRows is how many option rows a list picker's box of height boxH has
+// room for: its two border rows, the prompt line, the blank line and the hints
+// take the rest. The label and repo pickers draw with it and the mouse hit
+// test reads it.
+func pickerRows(boxH int) int { return max(boxH-5, 1) }
 
 func intToStr(n int) string {
 	if n == 0 {

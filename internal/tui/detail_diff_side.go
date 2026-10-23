@@ -195,6 +195,12 @@ func (v *diffView) threadText(r diffRow) string {
 	return r.text
 }
 
+// sideDivider separates the two columns; sideHalfWidth is the width of each.
+// The renderer and the mouse hit test both read them.
+const sideDivider = " │ "
+
+func sideHalfWidth(width int) int { return (width - lipglossWidth(sideDivider)) / 2 }
+
 // renderSideBySide draws the paired layout. The gutter columns and a divider
 // take fixed width; the rest is split evenly between the two halves.
 func (v *diffView) renderSideBySide(width, height int) string {
@@ -207,14 +213,18 @@ func (v *diffView) renderSideBySide(width, height int) string {
 	cursorPair := v.cursorPairIndex(pairs)
 	v.clampSideOffset(cursorPair, len(pairs), height)
 
-	const divider = " │ "
-	half := (width - lipglossWidth(divider)) / 2
+	const divider = sideDivider
+	half := sideHalfWidth(width)
 	if half < 12 {
 		// Callers gate on width before choosing this layout, so reaching here
 		// means the terminal shrank mid-render. Say so instead of drawing
 		// unreadable slivers — and do not call back into render(), which would
 		// recurse straight back here.
-		return dimStyle.Render("Terminal too narrow for side-by-side — press s for unified.")
+		msg := "Terminal too narrow for side-by-side."
+		if k, ok := keyName(v.km, stackDiff, "layout", v.keyOpts()); ok {
+			msg = "Terminal too narrow for side-by-side — press " + k + " for unified."
+		}
+		return dimStyle.Render(msg)
 	}
 
 	// Pair with the column width so comments wrap inside their own column
@@ -472,25 +482,32 @@ func (v *diffView) landOnPair(p sidePair) {
 // Reports false when that half is blank, so the caller can leave the key to
 // whatever else claims it.
 func (v *diffView) focusSide(which halfSide) bool {
+	target, ok := v.sideTarget(which)
+	if !ok {
+		return false
+	}
+	v.sideFocus = which
+	v.cursor = target
+	return true
+}
+
+// sideTarget is the row focusSide would move to, without moving: the footer
+// and key dispatch ask whether h/l have a column to switch to.
+func (v *diffView) sideTarget(which halfSide) (int, bool) {
 	pairs := v.sideRows()
 	if len(pairs) == 0 {
-		return false
+		return 0, false
 	}
 	p := pairs[v.cursorPairIndex(pairs)]
 	target := p.right
 	if which == sideLeft {
 		target = p.left
 	}
-	if target < 0 {
-		return false
-	}
 	// A full-width row (header or thread) has no columns to switch between.
-	if p.left == p.right {
-		return false
+	if target < 0 || p.left == p.right {
+		return 0, false
 	}
-	v.sideFocus = which
-	v.cursor = target
-	return true
+	return target, true
 }
 
 func otherSide(s halfSide) halfSide {

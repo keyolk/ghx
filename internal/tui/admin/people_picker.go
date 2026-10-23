@@ -121,25 +121,6 @@ func (a *App) personLabel(login string) string {
 	return login
 }
 
-// handlePickerKey moves through the candidates and refreshes the roster. It
-// reports whether it consumed the key; typing falls through to the prompt.
-func (a *App) handlePickerKey(msg tea.KeyMsg) (tea.Cmd, bool) {
-	switch msg.Type {
-	case tea.KeyDown, tea.KeyCtrlN:
-		a.pickPane.Move(1, len(a.candidates()))
-		return nil, true
-	case tea.KeyUp, tea.KeyCtrlP:
-		a.pickPane.Move(-1, len(a.candidates()))
-		return nil, true
-	case tea.KeyCtrlR:
-		if a.peopleLoading {
-			return nil, true
-		}
-		return a.loadPeople(true), true
-	}
-	return nil, false
-}
-
 // alreadyHere is the set of logins the add would be a no-op for: the team's
 // members, or the repository's collaborators. Marked rather than hidden — the
 // reader looking for someone should see that they are found, and where.

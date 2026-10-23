@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
 )
 
 // A failed merge used to surface as a toast: one footer line, truncated to the
@@ -117,10 +118,11 @@ func mergeErrorDetail(err error) string {
 }
 
 func (a *App) handleMergeFailureKey(msg tea.KeyMsg) tea.Cmd {
-	switch msg.String() {
-	case "enter", "esc", "q", " ":
+	action, _ := a.resolveIn(stackFailure, msg, false)
+	switch action {
+	case "dismiss":
 		a.mergeFailure = nil
-	case "r":
+	case "rebase":
 		// The box names the PRs and says what r does, so the key is the
 		// consent; a second y/n prompt would only ask the same question again.
 		targets := a.mergeFailure.rebaseTargets()
@@ -214,21 +216,17 @@ func (a *App) renderMergeFailure(width, height int) string {
 			break
 		}
 	}
-	b.WriteString("\n" + f.hints())
+	b.WriteString("\n" + a.failureHints(inner))
 
 	body := strings.TrimRight(b.String(), "\n")
 	h := min(strings.Count(body, "\n")+3, max(height-1, 5))
-	return borderedPane(f.noun()+" failed", body, w, h, colorError)
+	return borderedPane(f.noun()+" failed", body, w, h, paneBorderErrorStyle)
 }
 
-// hints offers r only when some failure is one a rebase fixes; advertising it
-// on a conflict would promise an action that cannot help.
-func (f *mergeFailure) hints() string {
-	switch n := len(f.rebaseTargets()); {
-	case n == 1:
-		return fmtHints("r", "rebase onto base", "enter", "dismiss")
-	case n > 1:
-		return fmtHints("r", fmt.Sprintf("rebase %d onto base", n), "enter", "dismiss")
-	}
-	return fmtHints("enter", "dismiss")
+// failureHints offers r only when some failure is one a rebase fixes;
+// advertising it on a conflict would promise an action that cannot help.
+func (a *App) failureHints(width int) string {
+	n := len(a.mergeFailure.rebaseTargets())
+	enabled := func(action string) bool { return action != "rebase" || n > 0 }
+	return a.keymap().Footer(stackFailure, width, keys.Opts{Enabled: enabled}, footerStyle())
 }

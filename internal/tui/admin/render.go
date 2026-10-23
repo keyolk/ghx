@@ -3,7 +3,6 @@ package admin
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/tui"
@@ -28,6 +27,11 @@ func (a *App) contentRows() int { return max(a.height-3, 1) }
 func (a *App) listRows() int { return a.contentRows() }
 
 func (a *App) View() string {
+	// The selection is drawn last, over the panes the mouse used.
+	return a.sel.Render(a.view(), a.panes(), tui.SelectionStyle)
+}
+
+func (a *App) view() string {
 	if a.width == 0 || a.height == 0 {
 		return "Loading ghx admin…"
 	}
@@ -52,20 +56,25 @@ func (a *App) renderHeader() string {
 	// reason: an extra line would resize the list under the cursor while
 	// someone is typing into it.
 	if a.prompt.open() {
-		return a.prompt.render(a.width)
+		return a.prompt.render(a.width, a.keymap())
 	}
 	if a.searching {
 		return tui.RenderSearchBar(a.query, a.width)
 	}
-	tabs := make([]tui.TabLabel, len(categoryNames))
-	for i, name := range categoryNames {
-		tabs[i] = tui.TabLabel{Name: name, Active: category(i) == a.active}
-	}
-	strip := tui.RenderTabStrip(tabs, a.width)
+	strip := tui.RenderTabStrip(a.tabLabels(), a.width)
 	if a.query != "" {
 		strip += " " + tui.TabActiveStyle.Render("["+a.query+"]")
 	}
 	return strip
+}
+
+// tabLabels is the category strip, read by the renderer and the mouse hit test.
+func (a *App) tabLabels() []tui.TabLabel {
+	tabs := make([]tui.TabLabel, len(categoryNames))
+	for i, name := range categoryNames {
+		tabs[i] = tui.TabLabel{Name: name, Active: category(i) == a.active}
+	}
+	return tabs
 }
 
 func (a *App) renderContent() string {
@@ -231,17 +240,16 @@ func (a *App) renderWebhooks() string {
 }
 
 func (a *App) footer() string {
-	if a.toast != "" && time.Since(a.toastAt) < 4*time.Second {
-		return tui.TruncateFooter(a.toast, a.width)
+	if toast := a.toast.Text(); toast != "" {
+		return tui.TruncateFooter(toast, a.width)
 	}
 	if a.confirm != nil {
 		// The org-wide warning is the sentence's own first words rather than a
 		// marker prepended here. Both would say the same thing twice, and the
 		// footer truncates — so what has to lead is the part that must not be
 		// cut off, and that is the warning itself. See confirmAction.prompt.
-		return tui.TruncateFooter(
-			tui.ErrorStyle.Render(a.confirm.prompt(a.repo, a.org())+" y/n"),
-			a.width)
+		line := tui.ErrorStyle.Render(a.confirm.prompt(a.repo, a.org()))
+		return tui.TruncateFooter(line+"  "+hints(a.keymap(), stackConfirm, max(a.width-tui.LipglossWidth(line)-2, 1)), a.width)
 	}
 	if a.busy {
 		return tui.TruncateFooter(tui.DimStyle.Render("  working…"), a.width)
@@ -252,46 +260,20 @@ func (a *App) footer() string {
 		return tui.TruncateFooter(a.pickerStatus(), a.width)
 	}
 
-	hints := []string{"1-7", "category", "j/k", "move", "/", "search"}
-	// The write keys are listed only where they do something. A key advertised
-	// on a read-only category is a key someone presses and gets nothing from,
-	// which reads as a broken binding rather than an inapplicable one.
+	// The write keys are listed only where they do something (keymap.go): a
+	// key advertised on a read-only category, or over an error pane, is a key
+	// someone presses and gets nothing from — measured against
+	// sendbird/ops-k8s without admin rights, whose roster answers 403.
 	//
-	// Nor while the pane is showing an error or nothing at all — measured
-	// against sendbird/ops-k8s without admin rights, which answers the roster
-	// with HTTP 403: the pane said "Must have push access" and the footer went
-	// on offering `a:add · p:permission · d:remove`, keys that had no row to
-	// act on and no permission to act with. The footer describes what is on
-	// screen, and an error is not a list.
-	switch {
-	case a.loading || a.err != nil || a.memberBusy:
-		// Nothing added: navigation and quit still apply, and they are the only
-		// things that do. An *empty* list is not this case — a repository with
-		// no collaborators is exactly where `a` is wanted, and the row-based
-		// keys below are filtered by whether there is a row.
-	case a.teamSlug != "":
-		hints = append(hints, "a", "add member")
-		if a.itemCount() > 0 {
-			hints = append(hints, "d", "remove")
-		}
-		hints = append(hints, "esc", "back to teams")
-	case a.active == catTeams:
-		if a.itemCount() > 0 {
-			hints = append(hints,
-				"enter", "members", "p", "permission", "d", "revoke")
-		}
-	case a.active == catCollaborators:
-		hints = append(hints, "a", "add")
-		if a.itemCount() > 0 {
-			hints = append(hints, "p", "permission", "d", "remove")
-		}
-	}
-	hints = append(hints, "q", "quit")
-
-	line := tui.FmtHints(hints...)
 	// The position is only worth a footer slot when the list does not fit; a
 	// counter that always reads 1/1 is noise.
-	if pos := a.pane.ScrollHint(a.itemCount(), a.listRows()); pos != "" {
+	pos := a.pane.ScrollHint(a.itemCount(), a.listRows())
+	room := a.width
+	if pos != "" {
+		room -= tui.LipglossWidth(pos) + 2
+	}
+	line := a.keymap().Footer(a.stack(), max(room, 1), a.keyOpts(), tui.FooterStyle())
+	if pos != "" {
 		line += "  " + tui.DimStyle.Render(pos)
 	}
 	return tui.TruncateFooter(line, a.width)

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/mouse"
 
 	"github.com/keyolk/ghx/internal/config"
 	"github.com/keyolk/ghx/internal/gh"
@@ -84,9 +85,9 @@ func runSubcommand(args []string, kind string) error {
 	var model tea.Model
 	switch kind {
 	case "admin":
-		model = admin.NewApp(client, repo)
+		model = admin.NewApp(client, repo).UseKeymap(admin.LoadKeymap())
 	case "actions":
-		model = actions.NewApp(client, repo)
+		model = actions.NewApp(client, repo).UseKeymap(actions.LoadKeymap())
 	default:
 		return fmt.Errorf("unknown subcommand %q", kind)
 	}
@@ -97,7 +98,10 @@ func runSubcommand(args []string, kind string) error {
 		}
 	}()
 
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// Mouse reporting as in the main TUI: cell motion only, with presses and
+	// the wheel handled by each subcommand's handleMouse.
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	p := tea.NewProgram(model, append(opts, mouse.ProgramOptions()...)...)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("run: %w", err)
 	}

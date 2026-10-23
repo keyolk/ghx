@@ -206,8 +206,9 @@ func (a *App) askConfirmTargets(kind confirmKind, targets []actionTarget) tea.Cm
 // handleConfirmKey resolves the prompt. Only an explicit y proceeds.
 func (a *App) handleConfirmKey(msg tea.KeyMsg) tea.Cmd {
 	p := a.confirm
-	switch msg.String() {
-	case "y", "Y":
+	action, _ := a.resolveIn(stackConfirm, msg, false)
+	switch action {
+	case "yes":
 		a.confirm = nil
 		if p.bulk {
 			a.beginPending(p.kind, p.targets)
@@ -215,7 +216,7 @@ func (a *App) handleConfirmKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		a.beginPending(p.kind, []actionTarget{p.target})
 		return a.runConfirmed(p.kind, p.target)
-	case "n", "N", "esc", "q":
+	case "no":
 		a.confirm = nil
 		return nil
 	}
@@ -456,7 +457,7 @@ func (a *App) renderConfirm(width, height int) string {
 	if note != "" {
 		b.WriteString(dimStyle.Render(note) + "\n")
 	}
-	b.WriteString("\n" + fmtHints("y", "yes", "n", "no"))
+	b.WriteString("\n" + a.modalHints(stackConfirm, width-8))
 	boxHeight := min(max(8, 6+min(count, 5)), max(height-2, 8))
 	return decoratedPane("confirm", b.String(), min(width-4, 76), boxHeight, true)
 }
@@ -614,36 +615,37 @@ func (p *labelPicker) diff() (add, remove []string) {
 
 func (a *App) handleLabelKey(msg tea.KeyMsg) tea.Cmd {
 	p := a.labels
+	action, _ := a.resolveIn(stackLabels, msg, true)
 	if p.loading {
-		if msg.String() == "esc" {
+		if action == "cancel" {
 			a.labels = nil
 		}
 		return nil
 	}
-	switch msg.String() {
-	case "esc":
+	switch action {
+	case "cancel":
 		a.labels = nil
 		return nil
-	case "enter":
+	case "apply":
 		return a.submitLabels()
-	case "up", "k", "ctrl+p":
+	case "up":
 		if n := len(p.visible()); n > 0 {
 			p.cursor = clamp(p.cursor-1, 0, n-1)
 		}
 		return nil
-	case "down", "j", "ctrl+n":
+	case "down":
 		if n := len(p.visible()); n > 0 {
 			p.cursor = clamp(p.cursor+1, 0, n-1)
 		}
 		return nil
-	case " ", "tab":
+	case "toggle":
 		vis := p.visible()
 		if p.cursor < len(vis) {
 			name := vis[p.cursor].Name
 			p.pending[name] = !p.isOn(name)
 		}
 		return nil
-	case "backspace":
+	case "erase":
 		if r := []rune(p.query); len(r) > 0 {
 			p.query = string(r[:len(r)-1])
 			p.cursor = 0
@@ -713,7 +715,7 @@ func (a *App) renderLabelPicker(width, height int) string {
 	}
 	if p.err != nil {
 		return decoratedPane("labels",
-			errorStyle.Render(p.err.Error())+"\n\n"+fmtHints("esc", "close"),
+			errorStyle.Render(p.err.Error())+"\n\n"+a.modalHints(stackLabels, boxW-4, "cancel"),
 			boxW, 6, true)
 	}
 
@@ -722,7 +724,7 @@ func (a *App) renderLabelPicker(width, height int) string {
 	prompt := helpKeyStyle.Render("filter: ") + p.query + blockCursor()
 	b.WriteString(prompt + "\n")
 
-	rows := max(boxH-5, 1)
+	rows := pickerRows(boxH)
 	if p.cursor < p.offset {
 		p.offset = p.cursor
 	}
@@ -761,7 +763,7 @@ func (a *App) renderLabelPicker(width, height int) string {
 		b.WriteString(fitCell(line, boxW-4) + "\n")
 	}
 
-	hint := fmtHints("sp", "toggle", "enter", "apply", "esc", "cancel")
+	hint := a.modalHints(stackLabels, boxW-12)
 	if p.dirty() {
 		add, remove := p.diff()
 		hint = diffHunkStyle.Render(fmt.Sprintf("+%d -%d ", len(add), len(remove))) + hint

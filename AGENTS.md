@@ -19,7 +19,7 @@ actions.
 - `internal/pr` — domain types
 - `internal/diff` — unified diff parser with LEFT/RIGHT line mapping
 - `internal/config` — ~/.config/ghx/config.yaml
-- `internal/repodetect` — cwd/tmux repo detection
+- `internal/repodetect` — cwd/tmux repo detection. pane 목록은 tuikit `tmux.Client`로 읽는다(`Detector`); 테스트는 `tmux.Fake`만 쓰고 실제 tmux를 부르지 않는다
 - `internal/gh/credential.go` — repo별 Git credential 선택과 gh 인증 fallback
 - `internal/tui/account_search.go` — 복수 GitHub account 검색 병합과 중복 제거
 - `internal/gh/fallback.go` — GraphQL 거부/rate-limit 판별 (REST 재시도 여부)
@@ -40,12 +40,28 @@ actions.
 - `internal/repowatch` — 로컬 git 이벤트 감지 (commit/checkout/push/fetch), 요청 0건
 - `internal/tui/workspace.go` — tmux window 재탐지 + git 이벤트 기반 갱신
 - `internal/tui/repostore.go` — repo 사용 이력(방문수 × 최근성) 랭킹, `~/.config/ghx/repos.json`
+  (쓰기는 Cmd에서 `cachefile.Lock` 안에 디스크와 병합 후 원자적 쓰기 — 창 여러 개가 공유)
+- `internal/tui/toast.go` — footer toast (`tui.Toast`, main/admin/actions 공용). 만료는
+  `tea.Tick`으로 한다 — idle 상태에서는 render가 없어 View의 나이 검사만으로는 안 지워진다.
+  에러는 키 입력까지 유지
 - `internal/tui/repo_picker.go` — `e` / `:repo`, 임의 repo를 탭으로 여는 피커
 - `internal/tui/admin` — `ghx admin`: People/Teams/보호규칙/릴리스/브랜치/태그/웹훅
 - `internal/tui/admin/actions.go` — admin 쓰기(협업자·팀 권한·팀 멤버)와 확인 프롬프트
 - `internal/tui/admin/prompt.go` — 로그인 입력(타이핑) / 권한 선택(순환) 프롬프트
 - `internal/tui/admin/people_picker.go` — 로그인 프롬프트의 org 멤버 검색 (이름·SSO email → login)
 - `internal/gh/org_people.go` — org 명단 (membersWithRole + SAML nameId), 디스크 캐시 24h
+- `internal/tui/keymap.go` — 단일 binding table (tuikit `keys`). dispatch·footer·`?`·`:` 팔레트가
+  전부 여기서 파생된다. 핸들러는 키가 아니라 action 이름으로 switch한다(`app_keys.go`,
+  `detail_keys.go`, `detail_footer.go`). 사용자 재바인딩: config.yaml `keymap:` 또는
+  `~/.config/ghx/keys.yaml`. `ghx admin`/`ghx actions`는 `subkeys.go`의 공용 list 키 + 자체
+  table이고, 각자 `keys-admin.yaml`/`keys-actions.yaml`을 읽는다(`keys.ConfigPath("ghx", sub)`)
+- `internal/tui/ui_state.go` — 탭·필터·split·상세 탭을 `$XDG_STATE_HOME/ghx/ui.json`에 보존
+  (tuikit `prefs.Saver`, debounce + quit 시 Flush). 감지된 repo가 있으면 저장된 탭보다 우선
+- `internal/tui/mouse.go`, `mouse_overlay.go`, `detail_diff_mouse.go` — 마우스(keyboard-first, tuikit `mouse`).
+  제스처는 전부 키가 부르는 함수로 간다(탭 클릭=`selectTab`/`setTab`, 두 번째 클릭=Enter 액션, 휠=down/up ×3).
+  오버레이는 열려 있는 동안 마우스를 소유하고 바깥 클릭은 그 오버레이의 Esc 액션이다. 지오메트리는
+  View가 그리는 값을 그대로 읽는다(`tabCells`, `SplitPane.geometry`, `overlayRect`, `commentsView.layoutLines`).
+  `admin`/`actions`는 각자 `mouse.go`
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
 ## Conventions

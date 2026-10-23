@@ -2,8 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
-	"time"
+
+	"github.com/keyolk/tuikit/keys"
 )
 
 // Top-level composition: the title line, the footer, overlay stacking, and the
@@ -12,6 +14,14 @@ import (
 // --- render ---
 
 func (a *App) View() string {
+	// The selection is drawn last, over everything, with the panes the mouse
+	// used. Only a drawn selection needs the diff's full content.
+	return a.sel.Render(a.view(), a.selectionPanes(a.sel.Active()), SelectionStyle)
+}
+
+// view is the frame without the selection: what a selection reads its text
+// from, so a highlight style never leaks into a copy.
+func (a *App) view() string {
 	if a.width == 0 || a.height == 0 {
 		return "Starting ghx…"
 	}
@@ -43,13 +53,13 @@ func (a *App) View() string {
 
 	// Overlays are composited last, innermost first.
 	if a.helpOpen {
-		content = overlayBody(content, renderHelpOverlay(a.width, rows), a.width, rows)
+		content = overlayBody(content, a.renderHelpOverlay(a.width, rows), a.width, rows)
 	}
 	if a.palette.active {
 		content = overlayBody(content, a.palette.render(a.width, rows), a.width, rows)
 	}
 	if a.search.active {
-		content = overlayBody(content, a.search.render(a.width, rows), a.width, rows)
+		content = overlayBody(content, a.search.render(a.width, rows, a.modalHints(stackSearch, a.width-4)), a.width, rows)
 	}
 	if a.mergePrompt != nil {
 		content = overlayBody(content, a.renderMergePrompt(a.width, rows), a.width, rows)
@@ -72,7 +82,7 @@ func (a *App) View() string {
 		content = overlayBody(content, a.renderSuggestionPrompt(a.width, rows), a.width, rows)
 	}
 	if a.composer.active {
-		content = overlayBody(content, a.composer.render(a.width, rows), a.width, rows)
+		content = overlayBody(content, a.composer.render(a.width, rows, a.modalHints(stackComposer, a.width-4)), a.width, rows)
 	}
 	if a.mergeFailure != nil {
 		content = overlayBody(content, a.renderMergeFailure(a.width, rows), a.width, rows)
@@ -163,62 +173,70 @@ func (a *App) helpLine() string {
 	// The box owns the keyboard, so it owns the footer too: the toast it set
 	// would only repeat the box's headline.
 	if a.mergeFailure != nil {
-		return truncateFooter(a.mergeFailure.hints(), a.width)
+		return a.failureHints(a.width)
 	}
 	// A recent toast outranks hints: it's the answer to what the user just did.
-	if a.toast != "" && time.Since(a.toastAt) < 4*time.Second {
-		return truncateFooter(a.toast, a.width)
-	}
-	if a.helpOpen {
-		return truncateFooter(fmtHints("?", "close", "esc", "close", "q", "close"), a.width)
+	if toast := a.toast.Text(); toast != "" {
+		return truncateFooter(toast, a.width)
 	}
 	// Whichever overlay owns the keyboard also owns the hints; showing the
 	// underlying view's keys while a modal is up advertises keys that do nothing.
-	if a.composer.active {
-		return truncateFooter(fmtHints("enter", "post", "^e", "$EDITOR", "esc", "cancel"), a.width)
+	if a.suggestion != nil && a.suggestion.busy {
+		return truncateFooter(dimStyle.Render("committing…"), a.width)
 	}
-	if a.confirm != nil {
-		return truncateFooter(fmtHints("y", "yes", "n", "no"), a.width)
-	}
-	if a.suggestion != nil {
-		if a.suggestion.busy {
-			return truncateFooter(dimStyle.Render("committing…"), a.width)
-		}
-		return truncateFooter(fmtHints("y", "apply", "n", "cancel"), a.width)
-	}
-	if a.labels != nil {
-		return truncateFooter(
-			fmtHints("sp", "toggle", "enter", "apply", "esc", "cancel"), a.width)
-	}
-	if a.statusFilter != nil {
-		return truncateFooter(
-			fmtHints("sp", "toggle", "enter", "apply", "c", "clear", "esc", "cancel"), a.width)
-	}
-	if a.repos != nil {
-		return truncateFooter(
-			fmtHints("↑↓", "move", "enter", "open", "esc", "cancel"), a.width)
-	}
-	if a.mergePrompt != nil {
-		return truncateFooter(fmtHints("y", "merge", "s/m/b", "strategy", "esc", "cancel"), a.width)
-	}
-	if a.palette.active {
-		return truncateFooter(fmtHints("enter", "run", "esc", "cancel"), a.width)
-	}
-	if a.search.active {
-		return truncateFooter(fmtHints("enter", "apply", "esc", "clear"), a.width)
+	if stack := a.modalStack(); stack != nil {
+		return a.modalHints(stack, a.width)
 	}
 	var s string
 	switch a.state {
 	case viewPRList:
 		if a.list != nil {
-			s = a.list.helpLine()
+			s = a.list.helpLine(a.width)
 		}
 	case viewPRDetail:
 		if a.detail != nil {
-			s = a.detail.helpLine()
+			s = a.detail.helpLine(a.width)
 		}
 	}
 	return truncateFooter(s, a.width)
+}
+
+// modalStack is the stack of the modal that owns the keyboard, in the order
+// handleKey asks them, or nil when the view does.
+func (a *App) modalStack() []keys.Ctx {
+	switch {
+	case a.composer.active:
+		return stackComposer
+	case a.confirm != nil:
+		return stackConfirm
+	case a.suggestion != nil:
+		return stackSuggest
+	case a.statusFilter != nil:
+		return stackStatus
+	case a.labels != nil:
+		return stackLabels
+	case a.repos != nil:
+		return stackRepos
+	case a.mergePrompt != nil:
+		return stackMerge
+	case a.search.active:
+		return stackSearch
+	case a.palette.active:
+		return stackPalette
+	case a.helpOpen:
+		return stackHelp
+	}
+	return nil
+}
+
+// modalHints is a modal's hint line from the table, optionally narrowed to
+// some of its actions.
+func (a *App) modalHints(stack []keys.Ctx, width int, only ...string) string {
+	var o keys.Opts
+	if len(only) > 0 {
+		o.Visible = func(action string) bool { return slices.Contains(only, action) }
+	}
+	return a.keymap().Footer(stack, width, o, footerStyle())
 }
 
 // renderMergePrompt draws the confirmation, stating plainly that it can't be undone.
@@ -235,20 +253,30 @@ func (a *App) renderMergePrompt(width, height int) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("Merge #%d into %s?\n", num, base))
 	b.WriteString(checkFailStyle.Render("This cannot be undone.") + "\n\n")
-	b.WriteString("Strategy: " + strategyChoice(p.strategy) + "\n\n")
-	b.WriteString(fmtHints("y", "merge", "s", "squash", "m", "merge commit", "b", "rebase", "esc", "cancel"))
+	b.WriteString(strategyLabel + strategyChoice(p.strategy) + "\n\n")
+	b.WriteString(a.modalHints(stackMerge, min(width-4, 70)-4))
 	return decoratedPane("confirm merge", b.String(), min(width-4, 70), 9, true)
 }
 
-func strategyChoice(cur string) string {
-	opts := []string{"squash", "merge", "rebase"}
-	parts := make([]string, 0, len(opts))
-	for _, o := range opts {
+// mergeStrategies are the choices the merge prompt offers, in drawing order.
+var mergeStrategies = []string{"squash", "merge", "rebase"}
+
+// strategyParts is the choice line's pieces, one per strategy.
+func strategyParts(cur string) []string {
+	parts := make([]string, 0, len(mergeStrategies))
+	for _, o := range mergeStrategies {
 		if o == cur {
 			parts = append(parts, tabActiveStyle.Render("["+o+"]"))
 		} else {
 			parts = append(parts, dimStyle.Render(" "+o+" "))
 		}
 	}
-	return strings.Join(parts, " ")
+	return parts
+}
+
+// strategyLabel prefixes the choice line; the mouse hit test measures it.
+const strategyLabel = "Strategy: "
+
+func strategyChoice(cur string) string {
+	return strings.Join(strategyParts(cur), " ")
 }

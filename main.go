@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/mouse"
 
 	"github.com/keyolk/ghx/internal/config"
 	"github.com/keyolk/ghx/internal/gh"
@@ -71,7 +72,9 @@ func run() (err error) {
 		}()
 	}
 
-	km := tui.DefaultKeymap()
+	// A bad override keeps the defaults and is shown once the TUI is up.
+	km, keymapErr := tui.LoadKeymap(cfg.Keymap.Map())
+	uiState, uiStateErr := tui.LoadUIState()
 
 	// Lead the PR list with the repositories the user is working in. Detection is
 	// best-effort: outside a checkout, or with an unrelated remote, the list just
@@ -97,6 +100,12 @@ func run() (err error) {
 		}
 	}
 	app := tui.NewAppWithRepo(cfg, km, client, detected)
+	app.RestoreUIState(uiState)
+	for _, warn := range []error{keymapErr, uiStateErr} {
+		if warn != nil {
+			app.StartupWarning(warn)
+		}
+	}
 	if len(cfg.Accounts) > 0 {
 		// Verified after the first frame: two accounts cost ~1.5s of `gh auth
 		// status`, and the cached rows are useful long before that returns.
@@ -124,8 +133,13 @@ func run() (err error) {
 	// WithReportFocus is what lets the background poll stop while the window is
 	// not on screen. A terminal that does not support it simply never sends the
 	// message, and the poll behaves as it did before.
-	p := tea.NewProgram(app,
-		tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus())
+	//
+	// Mouse reporting is cell motion only (clicks, wheel, drag), and the app
+	// acts on presses and the wheel alone — see internal/tui/mouse.go. Capturing
+	// the mouse takes plain drag-to-select away from the terminal; terminals
+	// give it back with a modifier (shift in most, option in iTerm2 and Ghostty).
+	opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithReportFocus()}
+	p := tea.NewProgram(app, append(opts, mouse.ProgramOptions()...)...)
 	if _, runErr := p.Run(); runErr != nil {
 		return fmt.Errorf("run: %w", runErr)
 	}
@@ -242,6 +256,12 @@ func verifyAccounts(ctx context.Context, client accountVerifier, accounts []conf
 // launch directory, then the current tmux window's panes. It is the single
 // definition of "the repo I am working on" — the PR list leads with all of
 // them, and the admin/actions subcommands take the first as their target.
+//
+// It runs synchronously, before tea.NewProgram, and that is deliberate: its
+// answer decides which account the gh pre-flight authenticates (detected[0])
+// and which tabs the first frame holds, so there is nothing to draw until it
+// returns and no Update loop yet for a tmux call to stall. Every later
+// detection — the workspace sweep — runs inside a tea.Cmd.
 func detectRepos(ctx context.Context, cfg *config.Config) []string {
 	if !cfg.RepoDetectionEnabled() {
 		return nil
@@ -250,10 +270,11 @@ func detectRepos(ctx context.Context, cfg *config.Config) []string {
 	if err != nil {
 		return nil
 	}
+	d := repodetect.New(nil)
 	var found []repodetect.Result
 	if cfg.PaneDetectionEnabled() {
-		found = repodetect.DetectAll(ctx, wd)
-	} else if r := repodetect.Detect(ctx, wd); r.Found() {
+		found = d.DetectAll(ctx, wd)
+	} else if r := d.Detect(ctx, wd); r.Found() {
 		found = []repodetect.Result{r}
 	}
 	out := make([]string, 0, len(found))

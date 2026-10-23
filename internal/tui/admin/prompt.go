@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
 
 	"github.com/keyolk/ghx/internal/gh"
 	"github.com/keyolk/ghx/internal/tui"
@@ -85,29 +86,37 @@ func (p prompt) label() string {
 }
 
 // render draws the open prompt in the tab strip's row.
-func (p prompt) render(width int) string {
+func (p prompt) render(width int, km keys.Keymap) string {
 	switch p.kind {
 	case promptLogin:
-		return tui.RenderPromptBar(p.label(), p.value, width,
-			"enter", "pick", "↑/↓", "choose", "ctrl+r", "refresh", "esc", "cancel")
+		bar := tui.RenderPromptBar(p.label(), p.value, width)
+		return tui.TruncateFooter(bar+"  "+hints(km, stackLogin, max(width-tui.LipglossWidth(bar)-2, 1)), width)
 	case promptPermission:
 		// The whole set is shown with the selection marked, rather than one
 		// value that changes as tab is pressed. Five options fit in a line, and
 		// seeing them is what makes "which of these is narrower" answerable
 		// without leaving the prompt.
-		parts := make([]string, 0, len(p.choices))
-		for i, c := range p.choices {
-			if i == p.choice {
-				parts = append(parts, tui.TabActiveStyle.Render("["+c+"]"))
-				continue
-			}
-			parts = append(parts, tui.DimStyle.Render(" "+c+" "))
-		}
-		line := tui.HelpKeyStyle.Render(p.label()+": ") + strings.Join(parts, "") +
-			"  " + tui.FmtHints("tab", "next", "enter", "apply", "esc", "cancel")
-		return tui.TruncateFooter(line, width)
+		line := p.permissionPrefix() + strings.Join(p.permissionParts(), "")
+		return tui.TruncateFooter(line+"  "+hints(km, stackPermission, max(width-tui.LipglossWidth(line)-2, 1)), width)
 	}
 	return ""
+}
+
+// permissionPrefix is the label before the choices; permissionParts the
+// choices themselves, one string each. render joins them and the mouse hit
+// test measures them.
+func (p prompt) permissionPrefix() string { return tui.HelpKeyStyle.Render(p.label() + ": ") }
+
+func (p prompt) permissionParts() []string {
+	parts := make([]string, 0, len(p.choices))
+	for i, c := range p.choices {
+		if i == p.choice {
+			parts = append(parts, tui.TabActiveStyle.Render("["+c+"]"))
+			continue
+		}
+		parts = append(parts, tui.DimStyle.Render(" "+c+" "))
+	}
+	return parts
 }
 
 // handlePromptKey edits the open prompt and commits it.
@@ -118,19 +127,34 @@ func (p prompt) render(width int) string {
 func (a *App) handlePromptKey(msg tea.KeyMsg) tea.Cmd {
 	switch a.prompt.kind {
 	case promptLogin:
-		if cmd, ok := a.handlePickerKey(msg); ok {
-			return cmd
-		}
-		switch msg.Type {
-		case tea.KeyEsc:
+		// A text field: raw, so a jamo is typed rather than rewritten. Arrow
+		// and control bindings still select and refresh picker rows.
+		b, _ := a.keymap().ResolveRaw(stackLogin, msg, keys.Opts{})
+		switch b.Action {
+		case "candidate-next":
+			a.pickPane.Move(1, len(a.candidates()))
+			return nil
+		case "candidate-prev":
+			a.pickPane.Move(-1, len(a.candidates()))
+			return nil
+		case "refresh":
+			if a.peopleLoading {
+				return nil
+			}
+			return a.loadPeople(true)
+		case "cancel":
 			a.prompt = prompt{}
-		case tea.KeyEnter:
+			return nil
+		case "next":
 			return a.commitLogin()
-		case tea.KeyBackspace:
+		case "erase":
 			if r := []rune(a.prompt.value); len(r) > 0 {
 				a.prompt.value = string(r[:len(r)-1])
 				a.pickPane.Reset()
 			}
+			return nil
+		}
+		switch msg.Type {
 		case tea.KeyRunes:
 			// Spaces and the rest are accepted as typed; GitHub rejects an
 			// invalid login with a message, which is more useful than this
@@ -138,22 +162,22 @@ func (a *App) handlePromptKey(msg tea.KeyMsg) tea.Cmd {
 			a.prompt.value += string(msg.Runes)
 			a.pickPane.Reset()
 		case tea.KeySpace:
-			// "moon park" is two terms that both have to match, the same as
-			// the list filter.
 			a.prompt.value += " "
 			a.pickPane.Reset()
 		}
 		return nil
 
 	case promptPermission:
-		switch msg.String() {
-		case "esc":
+		// A shortcut menu, not text: Resolve normalizes a jamo to its key.
+		b, _ := a.keymap().Resolve(stackPermission, msg, keys.Opts{})
+		switch b.Action {
+		case "cancel":
 			a.prompt = prompt{}
-		case "tab", "j", "down", "right", "l":
+		case "next":
 			a.prompt.choice = (a.prompt.choice + 1) % len(a.prompt.choices)
-		case "shift+tab", "k", "up", "left", "h":
+		case "prev":
 			a.prompt.choice = (a.prompt.choice - 1 + len(a.prompt.choices)) % len(a.prompt.choices)
-		case "enter":
+		case "apply":
 			return a.commitPermission()
 		}
 		return nil

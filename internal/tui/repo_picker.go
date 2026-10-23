@@ -65,11 +65,12 @@ func (a *App) handleRepoPickerKey(msg tea.KeyMsg) tea.Cmd {
 	if p == nil {
 		return nil
 	}
-	switch msg.String() {
-	case "esc":
+	action, _ := a.resolveIn(stackRepos, msg, true)
+	switch action {
+	case "cancel":
 		a.repos = nil
 		return nil
-	case "enter":
+	case "open":
 		vis := p.visible()
 		if p.cursor < len(vis) {
 			slug := vis[p.cursor].Slug
@@ -83,17 +84,17 @@ func (a *App) handleRepoPickerKey(msg tea.KeyMsg) tea.Cmd {
 			return a.openRepo(slug)
 		}
 		return nil
-	case "up", "ctrl+p":
+	case "up":
 		if n := len(p.visible()); n > 0 {
 			p.cursor = clamp(p.cursor-1, 0, n-1)
 		}
 		return nil
-	case "down", "ctrl+n":
+	case "down":
 		if n := len(p.visible()); n > 0 {
 			p.cursor = clamp(p.cursor+1, 0, n-1)
 		}
 		return nil
-	case "backspace":
+	case "erase":
 		if r := []rune(p.query); len(r) > 0 {
 			p.query = string(r[:len(r)-1])
 			p.cursor = 0
@@ -127,16 +128,16 @@ func (a *App) openRepo(slug string) tea.Cmd {
 	if a.list == nil || !validRepoSlug(slug) {
 		return errCmd(fmt.Errorf("not a repository: %q", slug))
 	}
-	a.repoStore.record(slug, a.now())
+	save := a.repoStore.record(slug, a.now())
 	if i, ok := a.list.sourceForRepo(slug); ok {
-		return a.list.selectTab(i)
+		return tea.Batch(save, a.list.selectTab(i))
 	}
 	a.list.appendSource(config.SourceDef{
 		Name:  config.ShortRepoName(slug),
 		Query: "state:open",
 		Repo:  slug,
 	}, nil)
-	return a.list.selectTab(len(a.list.sources) - 1)
+	return tea.Batch(save, a.list.selectTab(len(a.list.sources)-1))
 }
 
 func (a *App) renderRepoPicker(width, height int) string {
@@ -151,7 +152,7 @@ func (a *App) renderRepoPicker(width, height int) string {
 	b.WriteString(helpKeyStyle.Render("repo: ") + p.query + blockCursor() + "\n")
 
 	vis := p.visible()
-	rows := max(boxH-5, 1)
+	rows := pickerRows(boxH)
 	if p.cursor < p.offset {
 		p.offset = p.cursor
 	}
@@ -197,7 +198,7 @@ func (a *App) renderRepoPicker(width, height int) string {
 		b.WriteString(line + "\n")
 	}
 
-	b.WriteString("\n" + fmtHints("↑↓", "move", "enter", "open", "esc", "cancel"))
+	b.WriteString("\n" + a.modalHints(stackRepos, 60))
 	return decoratedPane("open repository", b.String(), boxW, boxH, true)
 }
 

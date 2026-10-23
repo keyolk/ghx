@@ -243,7 +243,9 @@ browser: ""
 # then wl-copy, then "xclip -selection clipboard"
 clipboard: ""
 
-# List/preview split ratio
+# List/preview split: the list's initial width in percent (25-75). In the
+# list, < and > (or [ and ]) resize it, = resets it to this value, and the
+# divider can be dragged with the mouse; the result is kept in ui.json.
 diff_split_ratio: 40
 
 # Background refresh of the current tab.
@@ -294,7 +296,7 @@ Press `?` inside the TUI for the full list. Highlights:
 | `v` | visual range for multi-line comment |
 | `s` | toggle unified / side-by-side diff |
 | `h` / `l` | switch diff column (side-by-side) |
-| `o` | fold file (diff tab) / open selected PRs in browser |
+| `o` | fold file (diff tab) / open the selected check's page (Checks tab) or PR comment (Comments tab) / open selected PRs in browser |
 | `y` / `:copy` | copy the selected PRs' URLs to the clipboard (one per line) |
 | `J` / `K` | next / previous hunk (diff tab) |
 | `H` / `L` | previous / next file (diff tab; `{` `}` also) |

@@ -127,10 +127,10 @@ func TestClosingLogsReturnsToList(t *testing.T) {
 // way to ask for logs, and the UI must say so rather than silently doing nothing.
 func TestParseRunURL(t *testing.T) {
 	cases := []struct {
-		name          string
-		link          string
+		name             string
+		link             string
 		wantRun, wantJob string
-		wantOK        bool
+		wantOK           bool
 	}{
 		{
 			"run and job",
@@ -163,11 +163,16 @@ func TestParseRunURL(t *testing.T) {
 func TestCheckRowFitsWidth(t *testing.T) {
 	c := pr.Check{
 		Bucket: "fail", Name: "a-very-long-check-name-that-would-overflow-a-narrow-pane",
+		// The name is an OSC 8 link, which must take no width.
+		Link:     "https://github.com/acme/one/actions/runs/1/job/2",
 		Workflow: "some-workflow", StartedAt: time.Now().Add(-time.Minute),
 		CompletedAt: time.Now(),
 	}
 	for _, w := range []int{40, 80, 200} {
 		row := checkRow(c, w)
+		if !strings.Contains(row, "\x1b]8;;"+c.Link) {
+			t.Fatalf("width %d: the check name is not linked: %q", w, row)
+		}
 		if got := lipglossWidth(row); got > w {
 			t.Errorf("width %d: row renders %d cells", w, got)
 		}

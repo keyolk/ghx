@@ -11,6 +11,9 @@ import (
 
 // countBatch reports how many commands a tea.Cmd expands to. load() is a batch
 // of four; a targeted refresh is one.
+//
+// Callers drive a.update rather than a.Update: Update also schedules the
+// toast's expiry tick, which is a timer, not a request.
 func countBatch(cmd tea.Cmd) int {
 	if cmd == nil {
 		return 0
@@ -44,7 +47,7 @@ func TestResolvingAThreadRefetchesOnlyThreads(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	a, _ := detailForRefetch(t)
 
-	_, cmd := a.Update(threadResolvedMsg{})
+	_, cmd := a.update(threadResolvedMsg{})
 	if n := countBatch(cmd); n != 1 {
 		t.Errorf("resolving a thread issued %d requests, want 1 (threads only)", n)
 	}
@@ -56,7 +59,7 @@ func TestPostingAReviewRefetchesOnlyTheDetail(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	a, _ := detailForRefetch(t)
 
-	_, cmd := a.Update(reviewPostedMsg{action: "approve"})
+	_, cmd := a.update(reviewPostedMsg{action: "approve"})
 	if n := countBatch(cmd); n != 1 {
 		t.Errorf("approving issued %d requests, want 1 (detail only)", n)
 	}
@@ -67,7 +70,7 @@ func TestSimpleActionsRefetchOnlyTheDetail(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	a, _ := detailForRefetch(t)
 
-	_, cmd := a.Update(actionDoneMsg{label: "ready #42"})
+	_, cmd := a.update(actionDoneMsg{label: "ready #42"})
 	if n := countBatch(cmd); n != 1 {
 		t.Errorf("a ready toggle issued %d requests, want 1 (detail only)", n)
 	}

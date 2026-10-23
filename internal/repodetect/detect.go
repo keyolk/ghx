@@ -10,6 +10,7 @@ package repodetect
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"os/exec"
@@ -18,7 +19,43 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keyolk/tuikit/tmux"
 )
+
+// Detector resolves repositories from a launch directory and the panes of a
+// tmux window. It is a value so a test can hand it a tmux.Fake: the pane list
+// is the one input detection cannot take from the filesystem, and a test that
+// reached the developer's real tmux would pass or fail on whatever their
+// window happened to hold.
+type Detector struct {
+	// Tmux lists the window's panes. Outside tmux it is a Client that runs
+	// nothing and answers tmux.ErrNotInTmux.
+	Tmux tmux.Client
+	// Pane is this process's own pane ID ($TMUX_PANE). Its window is the one
+	// searched — "this task". When it is empty the window the user is looking
+	// at is asked for instead, which is what a bare `tmux list-panes` used to
+	// resolve to.
+	Pane string
+}
+
+// New returns a Detector for the tmux server this process runs under, as env
+// describes it (nil is os.Getenv).
+//
+// The per-call timeout of tmux.ExecRunner is turned off: detection already has
+// its own budget (timeout, below), sized to survive the slow first fork/exec
+// of a loaded process. A tighter per-call bound under it would reintroduce the
+// silently-empty startup that budget was raised to prevent.
+func New(env func(string) string) Detector {
+	if env == nil {
+		env = os.Getenv
+	}
+	c := tmux.New(env)
+	if tmux.InTmux(env) {
+		c = tmux.Client{Runner: tmux.ExecRunner{SocketPath: tmux.SocketFromEnv(env), Timeout: -1}}
+	}
+	return Detector{Tmux: c, Pane: tmux.PaneFromEnv(env)}
+}
 
 // Result is a detected repository and where the hint came from.
 type Result struct {
@@ -57,8 +94,8 @@ const timeout = 10 * time.Second
 // Detect returns the single repository to prioritise, or an empty Result. It is
 // the first of DetectAll's results — the working directory when it is a
 // checkout, otherwise the most relevant pane of the current tmux window.
-func Detect(ctx context.Context, startDir string) Result {
-	all := DetectAll(ctx, startDir)
+func (d Detector) Detect(ctx context.Context, startDir string) Result {
+	all := d.DetectAll(ctx, startDir)
 	if len(all) == 0 {
 		return Result{}
 	}
@@ -78,7 +115,7 @@ func Detect(ctx context.Context, startDir string) Result {
 //
 // startDir is normally the process's working directory; it is a parameter so
 // tests can drive detection without chdir.
-func DetectAll(ctx context.Context, startDir string) []Result {
+func (d Detector) DetectAll(ctx context.Context, startDir string) []Result {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -103,7 +140,7 @@ func DetectAll(ctx context.Context, startDir string) []Result {
 		candidates = append(candidates, candidate{dir: dir, source: source})
 	}
 	addDir(startDir, "cwd")
-	for _, dir := range tmuxWindowPanePaths(ctx) {
+	for _, dir := range d.windowPanePaths(ctx) {
 		addDir(dir, "tmux")
 	}
 
@@ -307,32 +344,57 @@ func isGitHubHost(host string) bool {
 	return host == "github.com" || strings.HasSuffix(host, ".github.com")
 }
 
-// tmuxWindowPanePaths returns the current window's pane directories, the active
-// pane first, or nil outside tmux.
+// windowPanePaths returns the window's pane directories, the active pane
+// first, or nil outside tmux.
 //
-// list-panes defaults to the current window, which is exactly the scope that
-// means "this task": panes in other windows belong to other work. The active
-// pane is hoisted to the front because it is the strongest single hint about
-// what the user is doing right now; the rest keep tmux's ordering so the tab
-// order does not shift between launches.
-func tmuxWindowPanePaths(ctx context.Context) []string {
-	if os.Getenv("TMUX") == "" {
+// One window is exactly the scope that means "this task": panes in other
+// windows belong to other work. The active pane is hoisted to the front because
+// it is the strongest single hint about what the user is doing right now; the
+// rest keep tmux's ordering so the tab order does not shift between launches.
+//
+// The listing goes through tuikit's tmux.Client, which reads each free-text
+// field by its byte length. The hand-rolled `#{pane_active}\t#{pane_current_path}`
+// split it replaces misread a pane whose directory held a newline: tmux prints
+// one raw, so the path became two rows, neither of them real.
+func (d Detector) windowPanePaths(ctx context.Context) []string {
+	target := d.Pane
+	if target == "" {
+		loc, err := d.Tmux.Current(ctx)
+		if err != nil {
+			logTmuxFailure(err)
+			return nil
+		}
+		target = loc.WindowID
+	}
+	panes, err := d.Tmux.Panes(ctx, tmux.PaneFilter{Target: target})
+	if err != nil {
+		logTmuxFailure(err)
 		return nil
 	}
-	out := run(ctx, "", "tmux", "list-panes", "-F", "#{pane_active}\t#{pane_current_path}")
 	var active, rest []string
-	for _, line := range strings.Split(out, "\n") {
-		flag, dir, ok := strings.Cut(strings.TrimRight(line, "\r"), "\t")
-		if !ok || dir == "" {
+	for _, p := range panes {
+		if p.Cwd == "" {
 			continue
 		}
-		if flag == "1" {
-			active = append(active, dir)
+		if p.Active {
+			active = append(active, p.Cwd)
 			continue
 		}
-		rest = append(rest, dir)
+		rest = append(rest, p.Cwd)
 	}
 	return append(active, rest...)
+}
+
+// logTmuxFailure records a pane listing that failed, unless it failed because
+// there is no tmux. Both leave detection with only the launch directory, but
+// only one of them is "not applicable": a tmux that is running and did not
+// answer is a failure, and a startup that lost its pane tabs to it should be
+// explicable from the log.
+func logTmuxFailure(err error) {
+	if errors.Is(err, tmux.ErrNotInTmux) {
+		return
+	}
+	log.Printf("repodetect: listing tmux panes failed: %v", err)
 }
 
 func gitOut(ctx context.Context, dir string, args ...string) string {
@@ -340,8 +402,8 @@ func gitOut(ctx context.Context, dir string, args ...string) string {
 }
 
 // run executes a command and returns its stdout, or "" on any failure. Detection
-// is best-effort: a missing git, a directory that is not a repo, and a tmux that
-// is not running are all ordinary outcomes, not errors to report.
+// is best-effort: a missing git and a directory that is not a repo are ordinary
+// outcomes, not errors to report.
 func run(ctx context.Context, dir, name string, args ...string) string {
 	cmd := exec.CommandContext(ctx, name, args...)
 	if dir != "" {
