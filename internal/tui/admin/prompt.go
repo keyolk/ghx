@@ -127,9 +127,21 @@ func (p prompt) permissionParts() []string {
 func (a *App) handlePromptKey(msg tea.KeyMsg) tea.Cmd {
 	switch a.prompt.kind {
 	case promptLogin:
-		// A text field: raw, so a jamo is typed rather than rewritten.
+		// A text field: raw, so a jamo is typed rather than rewritten. Arrow
+		// and control bindings still select and refresh picker rows.
 		b, _ := a.keymap().ResolveRaw(stackLogin, msg, keys.Opts{})
 		switch b.Action {
+		case "candidate-next":
+			a.pickPane.Move(1, len(a.candidates()))
+			return nil
+		case "candidate-prev":
+			a.pickPane.Move(-1, len(a.candidates()))
+			return nil
+		case "refresh":
+			if a.peopleLoading {
+				return nil
+			}
+			return a.loadPeople(true)
 		case "cancel":
 			a.prompt = prompt{}
 			return nil
@@ -138,6 +150,7 @@ func (a *App) handlePromptKey(msg tea.KeyMsg) tea.Cmd {
 		case "erase":
 			if r := []rune(a.prompt.value); len(r) > 0 {
 				a.prompt.value = string(r[:len(r)-1])
+				a.pickPane.Reset()
 			}
 			return nil
 		}
@@ -147,6 +160,10 @@ func (a *App) handlePromptKey(msg tea.KeyMsg) tea.Cmd {
 			// invalid login with a message, which is more useful than this
 			// guessing at the rules.
 			a.prompt.value += string(msg.Runes)
+			a.pickPane.Reset()
+		case tea.KeySpace:
+			a.prompt.value += " "
+			a.pickPane.Reset()
 		}
 		return nil
 
@@ -177,7 +194,7 @@ func (a *App) handlePromptKey(msg tea.KeyMsg) tea.Cmd {
 // membership does not: "member" is the answer in almost every case, and the
 // role can be changed afterwards from the member row.
 func (a *App) commitLogin() tea.Cmd {
-	login := strings.TrimSpace(a.prompt.value)
+	login := a.pickedLogin()
 	if login == "" {
 		a.prompt = prompt{}
 		return nil
@@ -185,7 +202,7 @@ func (a *App) commitLogin() tea.Cmd {
 	if slug := a.prompt.teamSlug; slug != "" {
 		a.prompt = prompt{}
 		return a.askConfirm(confirmAction{
-			kind: actAddTeamMember, user: login, teamSlug: slug,
+			kind: actAddTeamMember, user: login, who: a.personLabel(login), teamSlug: slug,
 		})
 	}
 	a.prompt = prompt{
@@ -217,7 +234,7 @@ func (a *App) commitPermission() tea.Cmd {
 		return nil
 	}
 	return a.askConfirm(confirmAction{
-		kind: actSetCollaborator, user: target, permission: level,
+		kind: actSetCollaborator, user: target, who: a.personLabel(target), permission: level,
 	})
 }
 

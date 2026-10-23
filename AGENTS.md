@@ -48,6 +48,8 @@ actions.
 - `internal/tui/admin` — `ghx admin`: People/Teams/보호규칙/릴리스/브랜치/태그/웹훅
 - `internal/tui/admin/actions.go` — admin 쓰기(협업자·팀 권한·팀 멤버)와 확인 프롬프트
 - `internal/tui/admin/prompt.go` — 로그인 입력(타이핑) / 권한 선택(순환) 프롬프트
+- `internal/tui/admin/people_picker.go` — 로그인 프롬프트의 org 멤버 검색 (이름·SSO email → login)
+- `internal/gh/org_people.go` — org 명단 (membersWithRole + SAML nameId), 디스크 캐시 24h
 - `internal/tui/keymap.go` — 단일 binding table (tuikit `keys`). dispatch·footer·`?`·`:` 팔레트가
   전부 여기서 파생된다. 핸들러는 키가 아니라 action 이름으로 switch한다(`app_keys.go`,
   `detail_keys.go`, `detail_footer.go`). 사용자 재바인딩: config.yaml `keymap:` 또는

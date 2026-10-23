@@ -62,8 +62,11 @@ func defaultKeymap() keys.Keymap {
 		keys.Binding{Action: "add", Keys: []string{"a"}, Ctx: ctxMembers, Help: "add member", Footer: 4},
 		keys.Binding{Action: "remove", Keys: []string{"d"}, Ctx: ctxMembers, Help: "remove", Footer: 5},
 
-		keys.Binding{Action: "next", Keys: []string{"enter"}, Ctx: ctxLogin, Help: "next", Footer: 1},
-		keys.Binding{Action: "cancel", Keys: []string{"esc"}, Ctx: ctxLogin, Help: "cancel", Footer: 2},
+		keys.Binding{Action: "next", Keys: []string{"enter"}, Ctx: ctxLogin, Help: "pick", Footer: 1},
+		keys.Binding{Action: "candidate-next", Keys: []string{"down", "ctrl+n"}, KeyLabel: "↑/↓", Ctx: ctxLogin, Help: "choose", Footer: 2},
+		keys.Binding{Action: "candidate-prev", Keys: []string{"up", "ctrl+p"}, Ctx: ctxLogin, Help: "previous candidate"},
+		keys.Binding{Action: "refresh", Keys: []string{"ctrl+r"}, Ctx: ctxLogin, Help: "refresh", Footer: 3},
+		keys.Binding{Action: "cancel", Keys: []string{"esc"}, Ctx: ctxLogin, Help: "cancel", Footer: 4},
 		keys.Binding{Action: "erase", Keys: []string{"backspace"}, Ctx: ctxLogin, Help: "erase a character"},
 
 		keys.Binding{Action: "next", Keys: []string{"tab", "j", "down", "right", "l"}, Ctx: ctxPermission, Help: "next", Footer: 1},

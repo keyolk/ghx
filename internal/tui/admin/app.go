@@ -87,6 +87,13 @@ type App struct {
 	// string could not express. See actions.go.
 	confirm *confirmAction
 
+	// people is the org roster the login prompt searches, nil until fetched.
+	// See people_picker.go.
+	people        []gh.OrgPerson
+	peopleErr     error
+	peopleLoading bool
+	pickPane      tui.ListPane
+
 	// busy marks a write in flight. The list stays on screen while it runs —
 	// it is still the truth about who has access — so this only gates the
 	// footer and a second keypress.
@@ -295,6 +302,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.teamMembers[msg.slug] = msg.members
 		a.pane.Reset()
+		return a, nil
+
+	case peopleMsg:
+		a.onPeople(msg)
 		return a, nil
 
 	case toastMsg:
