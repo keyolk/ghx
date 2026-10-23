@@ -78,6 +78,9 @@ func (a *App) renderContent() string {
 	if a.memberBusy {
 		return "  Loading members…"
 	}
+	if a.prompt.kind == promptLogin {
+		return a.renderPicker()
+	}
 
 	switch a.active {
 	case catCollaborators:
@@ -242,6 +245,11 @@ func (a *App) footer() string {
 	}
 	if a.busy {
 		return tui.TruncateFooter(tui.DimStyle.Render("  working…"), a.width)
+	}
+	if a.prompt.kind == promptLogin {
+		// The list under the prompt is the picker, so the footer describes it:
+		// the People list's keys and "1/149" would be about rows not on screen.
+		return tui.TruncateFooter(a.pickerStatus(), a.width)
 	}
 
 	hints := []string{"1-7", "category", "j/k", "move", "/", "search"}

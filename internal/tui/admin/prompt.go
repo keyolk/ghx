@@ -89,7 +89,7 @@ func (p prompt) render(width int) string {
 	switch p.kind {
 	case promptLogin:
 		return tui.RenderPromptBar(p.label(), p.value, width,
-			"enter", "next", "esc", "cancel")
+			"enter", "pick", "↑/↓", "choose", "ctrl+r", "refresh", "esc", "cancel")
 	case promptPermission:
 		// The whole set is shown with the selection marked, rather than one
 		// value that changes as tab is pressed. Five options fit in a line, and
@@ -118,6 +118,9 @@ func (p prompt) render(width int) string {
 func (a *App) handlePromptKey(msg tea.KeyMsg) tea.Cmd {
 	switch a.prompt.kind {
 	case promptLogin:
+		if cmd, ok := a.handlePickerKey(msg); ok {
+			return cmd
+		}
 		switch msg.Type {
 		case tea.KeyEsc:
 			a.prompt = prompt{}
@@ -126,12 +129,19 @@ func (a *App) handlePromptKey(msg tea.KeyMsg) tea.Cmd {
 		case tea.KeyBackspace:
 			if r := []rune(a.prompt.value); len(r) > 0 {
 				a.prompt.value = string(r[:len(r)-1])
+				a.pickPane.Reset()
 			}
 		case tea.KeyRunes:
 			// Spaces and the rest are accepted as typed; GitHub rejects an
 			// invalid login with a message, which is more useful than this
 			// guessing at the rules.
 			a.prompt.value += string(msg.Runes)
+			a.pickPane.Reset()
+		case tea.KeySpace:
+			// "moon park" is two terms that both have to match, the same as
+			// the list filter.
+			a.prompt.value += " "
+			a.pickPane.Reset()
 		}
 		return nil
 
@@ -160,7 +170,7 @@ func (a *App) handlePromptKey(msg tea.KeyMsg) tea.Cmd {
 // membership does not: "member" is the answer in almost every case, and the
 // role can be changed afterwards from the member row.
 func (a *App) commitLogin() tea.Cmd {
-	login := strings.TrimSpace(a.prompt.value)
+	login := a.pickedLogin()
 	if login == "" {
 		a.prompt = prompt{}
 		return nil
@@ -168,7 +178,7 @@ func (a *App) commitLogin() tea.Cmd {
 	if slug := a.prompt.teamSlug; slug != "" {
 		a.prompt = prompt{}
 		return a.askConfirm(confirmAction{
-			kind: actAddTeamMember, user: login, teamSlug: slug,
+			kind: actAddTeamMember, user: login, who: a.personLabel(login), teamSlug: slug,
 		})
 	}
 	a.prompt = prompt{
@@ -200,7 +210,7 @@ func (a *App) commitPermission() tea.Cmd {
 		return nil
 	}
 	return a.askConfirm(confirmAction{
-		kind: actSetCollaborator, user: target, permission: level,
+		kind: actSetCollaborator, user: target, who: a.personLabel(target), permission: level,
 	})
 }
 

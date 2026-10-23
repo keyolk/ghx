@@ -38,8 +38,11 @@ const (
 // it. Resolved when the key is pressed, not when y is: the row under the cursor
 // can move in between.
 type confirmAction struct {
-	kind       actionKind
-	user       string
+	kind actionKind
+	user string
+	// who is how the prompt names user: the login with the name and email the
+	// org roster knows, or "" to say only the login. See personLabel.
+	who        string
 	teamSlug   string
 	permission string
 }
@@ -51,9 +54,13 @@ func (a confirmAction) orgWide() bool {
 
 // prompt is the question, without the y/n the footer adds.
 func (a confirmAction) prompt(repo, org string) string {
+	user := a.user
+	if a.who != "" {
+		user = a.who
+	}
 	switch a.kind {
 	case actSetCollaborator:
-		return fmt.Sprintf("Give %s %s access to %s?", a.user, a.permission, repo)
+		return fmt.Sprintf("Give %s %s access to %s?", user, a.permission, repo)
 	case actRemoveCollaborator:
 		return fmt.Sprintf("Remove %s from %s?", a.user, repo)
 	case actSetTeamPermission:
@@ -64,7 +71,7 @@ func (a confirmAction) prompt(repo, org string) string {
 	case actAddTeamMember:
 		return fmt.Sprintf("ORG change — add %s to %s/%s, granting access to "+
 			"EVERY repo that team reaches, not just %s?",
-			a.user, org, a.teamSlug, repo)
+			user, org, a.teamSlug, repo)
 	case actRemoveTeamMember:
 		return fmt.Sprintf("ORG change — remove %s from %s/%s, revoking access "+
 			"to EVERY repo that team reaches, not just %s?",
@@ -191,8 +198,7 @@ func (a *App) handleWriteKey(key string) (tea.Cmd, bool) {
 func (a *App) collaboratorWriteKey(key string) (tea.Cmd, bool) {
 	switch key {
 	case "a":
-		a.prompt = prompt{kind: promptLogin}
-		return nil, true
+		return a.openLoginPrompt(""), true
 	case "d", "p":
 		rows := a.visibleCollaborators()
 		if a.pane.Cursor >= len(rows) {
@@ -254,8 +260,7 @@ func (a *App) teamWriteKey(key string) (tea.Cmd, bool) {
 func (a *App) memberWriteKey(key string) (tea.Cmd, bool) {
 	switch key {
 	case "a":
-		a.prompt = prompt{kind: promptLogin, teamSlug: a.teamSlug}
-		return nil, true
+		return a.openLoginPrompt(a.teamSlug), true
 	case "d":
 		rows := a.visibleMembers()
 		if a.pane.Cursor >= len(rows) {

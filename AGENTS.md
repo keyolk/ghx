@@ -44,6 +44,8 @@ actions.
 - `internal/tui/admin` — `ghx admin`: People/Teams/보호규칙/릴리스/브랜치/태그/웹훅
 - `internal/tui/admin/actions.go` — admin 쓰기(협업자·팀 권한·팀 멤버)와 확인 프롬프트
 - `internal/tui/admin/prompt.go` — 로그인 입력(타이핑) / 권한 선택(순환) 프롬프트
+- `internal/tui/admin/people_picker.go` — 로그인 프롬프트의 org 멤버 검색 (이름·SSO email → login)
+- `internal/gh/org_people.go` — org 명단 (membersWithRole + SAML nameId), 디스크 캐시 24h
 - `internal/tui` — Bubble Tea app (split per view, files <500 lines)
 
 ## Conventions
